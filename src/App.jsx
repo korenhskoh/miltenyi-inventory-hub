@@ -3000,17 +3000,17 @@ if(scheduledNotifs.emailEnabled){                    setNotifLog(prev=>[{id:'N-'
           if(!mapped.length){notify('Upload Failed','No valid parts found in file','warning');return;}
           setPartsCatalog(mapped);
           // Sync to DB
-          api.uploadCatalog(mapped.map(p=>({materialNo:p.m,description:p.d,category:p.c||'',sgPrice:p.sg||0,distPrice:p.dist||0,transferPrice:p.tp||0,rspEur:p.rsp||0})));
-          notify('Catalog Uploaded',`${mapped.length} parts loaded from ${file.name}`,'success');
+          const uploadResult=await api.uploadCatalog(mapped.map(p=>({materialNo:p.m,description:p.d,category:p.c||'',sgPrice:p.sg||0,distPrice:p.dist||0,transferPrice:p.tp||0,rspEur:p.rsp||0})));
+          if(uploadResult){notify('Catalog Uploaded',`${mapped.length} parts saved to database from ${file.name}`,'success');}else{notify('Upload Warning',`${mapped.length} parts loaded locally but failed to save to database`,'error');}
           e.target.value='';
         }}/>
       </label>
-      <button onClick={()=>{if(window.confirm(`Clear all ${partsCatalog.length} parts from catalog? You will need to re-upload a catalog file.`)){setPartsCatalog([]);api.clearCatalog();notify('Catalog Cleared','Parts catalog has been cleared','info');}}} style={{padding:'8px 16px',background:'#DC2626',color:'#fff',border:'none',borderRadius:8,fontSize:12,fontWeight:600,cursor:'pointer',display:'flex',alignItems:'center',gap:6}}><Trash2 size={14}/> Clear Catalog</button>
+      <button onClick={async ()=>{if(window.confirm(`Clear all ${partsCatalog.length} parts from catalog? You will need to re-upload a catalog file.`)){setPartsCatalog([]);const ok=await api.clearCatalog();if(ok){notify('Catalog Cleared','Parts catalog cleared from database','success');}else{notify('Warning','Catalog cleared locally but failed to clear from database. Changes may not persist.','error');}}}} style={{padding:'8px 16px',background:'#DC2626',color:'#fff',border:'none',borderRadius:8,fontSize:12,fontWeight:600,cursor:'pointer',display:'flex',alignItems:'center',gap:6}}><Trash2 size={14}/> Clear Catalog</button>
       <button onClick={async ()=>{const cat=await api.getCatalog();if(cat.length){setPartsCatalog(cat.map(p=>({m:p.materialNo,d:p.description,c:p.category,sg:p.sgPrice,dist:p.distPrice,tp:p.transferPrice,rsp:p.rspEur})));notify('Catalog Reloaded',`${cat.length} parts loaded from database`,'success');}else{notify('No Catalog','No parts found in database. Please upload a catalog file.','error');}}} style={{padding:'8px 16px',background:'#059669',color:'#fff',border:'none',borderRadius:8,fontSize:12,fontWeight:600,cursor:'pointer',display:'flex',alignItems:'center',gap:6}}><RefreshCw size={14}/> Reload from DB</button>
     </div>
   </div>}
 
-  <div style={{display:'flex',gap:10}}><button className="bp" onClick={async ()=>{await Promise.all([api.setConfigKey('emailConfig',emailConfig),api.setConfigKey('emailTemplates',emailTemplates),api.setConfigKey('priceConfig',priceConfig),api.setConfigKey('waNotifyRules',waNotifyRules),api.setConfigKey('scheduledNotifs',scheduledNotifs),api.setConfigKey('customLogo',customLogo)]);notify('Saved','All settings saved to database','success');}}>Save</button><button className="bs">Reset</button></div>
+  <div style={{display:'flex',gap:10}}><button className="bp" onClick={async ()=>{const results=await Promise.all([api.setConfigKey('emailConfig',emailConfig),api.setConfigKey('emailTemplates',emailTemplates),api.setConfigKey('priceConfig',priceConfig),api.setConfigKey('waNotifyRules',waNotifyRules),api.setConfigKey('scheduledNotifs',scheduledNotifs),api.setConfigKey('customLogo',customLogo)]);const failed=results.filter(r=>!r).length;if(failed===0){notify('Saved','All settings saved to database','success');}else if(failed===results.length){notify('Save Failed','Could not connect to database. Settings saved locally only.','error');}else{notify('Partial Save',`${results.length-failed}/${results.length} settings saved to database`,'warning');}}}>Save</button><button className="bs">Reset</button></div>
 </div>)}
 
         </div>
