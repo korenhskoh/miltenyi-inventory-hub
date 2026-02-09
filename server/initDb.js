@@ -19,58 +19,12 @@ export async function initDatabase() {
     const userCount = parseInt(usersResult.rows[0].count, 10);
 
     if (userCount === 0) {
-      const defaultUsers = [
-        {
-          id: 'U001',
-          username: 'admin',
-          password: bcryptjs.hashSync('admin123', 10),
-          name: 'System Admin',
-          email: 'admin@miltenyibiotec.com',
-          role: 'admin',
-          status: 'active',
-          phone: '+65 6221 0001'
-        },
-        {
-          id: 'U002',
-          username: 'fusiong',
-          password: bcryptjs.hashSync('fs2025', 10),
-          name: 'Fu Siong',
-          email: 'fusiong@miltenyibiotec.com',
-          role: 'user',
-          status: 'active',
-          phone: '+65 9111 2222'
-        },
-        {
-          id: 'U003',
-          username: 'weeboon',
-          password: bcryptjs.hashSync('wb2025', 10),
-          name: 'Wee Boon',
-          email: 'weeboon@miltenyibiotec.com',
-          role: 'user',
-          status: 'active',
-          phone: '+65 9333 4444'
-        },
-        {
-          id: 'U004',
-          username: 'sarah',
-          password: bcryptjs.hashSync('sarah2025', 10),
-          name: 'Sarah Tan',
-          email: 'sarah@miltenyibiotec.com',
-          role: 'user',
-          status: 'active',
-          phone: '+65 9555 6666'
-        }
-      ];
-
-      for (const user of defaultUsers) {
-        await query(
-          `INSERT INTO users (id, username, password, name, email, role, status, phone)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-          [user.id, user.username, user.password, user.name, user.email, user.role, user.status, user.phone]
-        );
-      }
-
-      console.log('Default users seeded successfully');
+      await query(
+        `INSERT INTO users (id, username, password_hash, name, email, role, status, phone)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+        ['U001', 'admin', bcryptjs.hashSync('admin123', 10), 'System Admin', 'admin@miltenyibiotec.com', 'admin', 'active', '']
+      );
+      console.log('Default admin user seeded');
     }
 
     // --- 3. Seed default app_config entries (only if app_config is empty) ---
