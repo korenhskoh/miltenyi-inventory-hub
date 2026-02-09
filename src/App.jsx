@@ -1296,17 +1296,17 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
         </div>
         <nav style={{ padding:'12px 10px', flex:1, overflowY:'auto' }}>
           {navItems.map(item=>(
-            <div key={item.id} className={`ni ${page===item.id?'a':''}`} onClick={()=>{setPage(item.id);setCatalogPage(0);setSidebarOpen(false);}} title={item.label}>
+            <div key={item.id} className={`ni ${page===item.id?'a':''}`} onClick={()=>{setPage(item.id);setCatalogPage(0);if(window.innerWidth<=768)setSidebarOpen(false);}} title={item.label}>
               <item.icon size={18}/>
-              <span>{item.label}</span>
-              {item.id==='catalog' && <span style={{marginLeft:'auto',fontSize:10,background:'#E6F4ED',color:'#0B7A3E',padding:'2px 6px',borderRadius:8,fontWeight:700}}>{partsCatalog.length}</span>}
-              {item.id==='whatsapp' && <span style={{marginLeft:'auto',width:8,height:8,borderRadius:'50%',background:waConnected?'#25D366':'#E2E8F0'}}/>}
-              {item.id==='users'&&pendingUsers.length>0 && <span style={{marginLeft:'auto',fontSize:10,background:'#FEE2E2',color:'#DC2626',padding:'2px 6px',borderRadius:8,fontWeight:700}}>{pendingUsers.length}</span>}
+              {sidebarOpen && <span>{item.label}</span>}
+              {item.id==='catalog'&&sidebarOpen && <span style={{marginLeft:'auto',fontSize:10,background:'#E6F4ED',color:'#0B7A3E',padding:'2px 6px',borderRadius:8,fontWeight:700}}>{partsCatalog.length}</span>}
+              {item.id==='whatsapp'&&sidebarOpen && <span style={{marginLeft:'auto',width:8,height:8,borderRadius:'50%',background:waConnected?'#25D366':'#E2E8F0'}}/>}
+              {item.id==='users'&&sidebarOpen&&pendingUsers.length>0 && <span style={{marginLeft:'auto',fontSize:10,background:'#FEE2E2',color:'#DC2626',padding:'2px 6px',borderRadius:8,fontWeight:700}}>{pendingUsers.length}</span>}
             </div>
           ))}
         </nav>
         <div style={{ padding:'12px 10px', borderTop:'1px solid #F0F2F5' }}>
-          <div className="ni" onClick={()=>setSidebarOpen(!sidebarOpen)}><Menu size={18}/><span style={{fontSize:12}}>Collapse</span></div>
+          <div className="ni" onClick={()=>setSidebarOpen(!sidebarOpen)}><Menu size={18}/>{sidebarOpen&&<span style={{fontSize:12}}>Collapse</span>}</div>
         </div>
       </aside>
 
