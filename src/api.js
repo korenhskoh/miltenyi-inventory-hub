@@ -239,7 +239,7 @@ async function updateStockCheck(id, updates) {
 
 async function getNotifLog() {
   try {
-    const res = await fetch(`${BASE}/api/notifications`);
+    const res = await fetch(`${BASE}/api/notif-log`);
     if (!res.ok) return [];
     return await res.json();
   } catch {
@@ -249,7 +249,7 @@ async function getNotifLog() {
 
 async function createNotifEntry(entry) {
   try {
-    const res = await fetch(`${BASE}/api/notifications`, {
+    const res = await fetch(`${BASE}/api/notif-log`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(entry),

@@ -4,6 +4,13 @@ import { snakeToCamel, camelToSnake } from '../utils.js';
 
 const router = Router();
 
+// Allowed columns for ORDER BY (prevents SQL injection)
+const ALLOWED_ORDER_COLUMNS = new Set([
+  'id', 'material_no', 'description', 'quantity', 'list_price', 'total_cost',
+  'order_date', 'order_by', 'remark', 'arrival_date', 'qty_received',
+  'back_order', 'engineer', 'status', 'approval_status', 'month', 'year', 'created_at'
+]);
+
 // GET / - list all orders, optional query params: status, month, orderBy
 router.get('/', async (req, res) => {
   try {
@@ -27,8 +34,13 @@ router.get('/', async (req, res) => {
     }
 
     if (orderBy) {
-      const snakeCol = camelToSnake(orderBy);
-      sql += ` ORDER BY ${snakeCol}`;
+      // Convert camelCase to snake_case safely
+      const snakeCol = orderBy.replace(/[A-Z]/g, c => '_' + c.toLowerCase());
+      if (ALLOWED_ORDER_COLUMNS.has(snakeCol)) {
+        sql += ` ORDER BY ${snakeCol}`;
+      } else {
+        sql += ' ORDER BY id DESC';
+      }
     } else {
       sql += ' ORDER BY id DESC';
     }
