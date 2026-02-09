@@ -51,7 +51,7 @@ const Toast = ({ items, onDismiss }) => <div style={{ position:'fixed',top:80,ri
 
 // ════════════════════════════ BATCH ACTION BAR ══════════════════════
 const BatchBar = ({ count, onClear, children }) => count > 0 ? (
-  <div style={{display:'flex',alignItems:'center',gap:10,padding:'10px 16px',background:'linear-gradient(135deg,#1E293B,#334155)',borderRadius:10,marginBottom:12,color:'#fff',fontSize:13,flexWrap:'wrap',animation:'slideIn 0.2s'}}>
+  <div className="batch-bar" style={{display:'flex',alignItems:'center',gap:10,padding:'10px 16px',background:'linear-gradient(135deg,#1E293B,#334155)',borderRadius:10,marginBottom:12,color:'#fff',fontSize:13,flexWrap:'wrap',animation:'slideIn 0.2s'}}>
     <span style={{fontWeight:700,minWidth:90}}>{count} selected</span>
     <div style={{display:'flex',gap:6,flex:1,flexWrap:'wrap'}}>{children}</div>
     <button onClick={onClear} style={{background:'rgba(255,255,255,0.15)',border:'none',color:'#fff',padding:'5px 12px',borderRadius:6,fontSize:11,fontWeight:600,cursor:'pointer',display:'flex',alignItems:'center',gap:4}}>Clear</button>
@@ -1143,7 +1143,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
           {/* Quantity Info */}
           <div style={{ padding:20,borderRadius:12,background:'#F0FDF4',border:'1px solid #BBF7D0',marginBottom:24 }}>
             <div style={{ display:'flex',alignItems:'center',gap:8,marginBottom:16 }}><Package size={18} color="#059669"/><span style={{ fontWeight:700,fontSize:14,color:'#059669' }}>Quantity Status</span></div>
-            <div style={{ display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:16 }}>
+            <div className="grid-3" style={{ display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:16 }}>
               <div style={{ textAlign:'center' }}>
                 <div style={{ fontSize:11,color:'#64748B',marginBottom:4 }}>Ordered</div>
                 <div className="mono" style={{ fontSize:28,fontWeight:700 }}>{o.quantity}</div>
@@ -1162,7 +1162,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
           </div>
 
           {/* Price & Details Grid */}
-          <div style={{ display:'grid',gridTemplateColumns:'repeat(2,1fr)',gap:12,marginBottom:24 }}>
+          <div className="grid-2" style={{ display:'grid',gridTemplateColumns:'repeat(2,1fr)',gap:12,marginBottom:24 }}>
             {[
               {l:'Unit Price',v:o.listPrice>0?fmt(o.listPrice):'—',icon:DollarSign,c:'#0B7A3E'},
               {l:'Total Cost',v:o.totalCost>0?fmt(o.totalCost):'—',icon:DollarSign,c:'#2563EB'},
@@ -1209,7 +1209,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
     return (
       <div style={{ minHeight:'100vh', background:'linear-gradient(135deg, #003020 0%, #006837 40%, #00A550 100%)', display:'flex', alignItems:'center', justifyContent:'center', fontFamily:"'DM Sans',system-ui,sans-serif" }}>
         <style>{`@import url('https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,600;9..40,700&family=JetBrains+Mono:wght@400;500&display=swap'); @keyframes fadeUp { from { opacity:0;transform:translateY(20px); } to { opacity:1;transform:translateY(0); } } input{font-family:inherit;font-size:13px;padding:11px 14px;border:1.5px solid #E2E8F0;border-radius:10px;outline:none;transition:border-color 0.2s;color:#1A202C;background:#fff;width:100%;box-sizing:border-box;} input:focus{border-color:#0B7A3E;box-shadow:0 0 0 3px rgba(11,122,62,0.15);}`}</style>
-        <div style={{ animation:'fadeUp 0.5s ease', width:420, background:'#fff', borderRadius:20, padding:'40px 36px', boxShadow:'0 24px 80px rgba(0,0,0,0.3)' }}>
+        <div className="login-box" style={{ animation:'fadeUp 0.5s ease', width:420, maxWidth:'92vw', background:'#fff', borderRadius:20, padding:'40px 36px', boxShadow:'0 24px 80px rgba(0,0,0,0.3)' }}>
           <div style={{ textAlign:'center', marginBottom:32 }}>
             <div style={{ width:56,height:56,borderRadius:16,background:'linear-gradient(135deg,#006837,#00A550)',display:'inline-flex',alignItems:'center',justifyContent:'center',marginBottom:16 }}><Package size={28} color="#fff"/></div>
             <h1 style={{ fontSize:22,fontWeight:700,color:'#0F172A',letterSpacing:-0.5 }}>Miltenyi Inventory Hub</h1>
@@ -1234,7 +1234,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
               <div style={{ marginBottom:14 }}><label style={{display:'block',fontSize:12,fontWeight:600,color:'#4A5568',marginBottom:6}}>Full Name *</label><input value={regForm.name} onChange={e=>setRegForm(p=>({...p,name:e.target.value}))} placeholder="Your full name"/></div>
               <div style={{ marginBottom:14 }}><label style={{display:'block',fontSize:12,fontWeight:600,color:'#4A5568',marginBottom:6}}>Email *</label><input type="email" value={regForm.email} onChange={e=>setRegForm(p=>({...p,email:e.target.value}))} placeholder="name@miltenyibiotec.com"/></div>
               <div style={{ marginBottom:14 }}><label style={{display:'block',fontSize:12,fontWeight:600,color:'#4A5568',marginBottom:6}}>Phone</label><input value={regForm.phone} onChange={e=>setRegForm(p=>({...p,phone:e.target.value}))} placeholder="+65 9XXX XXXX"/></div>
-              <div style={{ display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:14 }}>
+              <div className="grid-2" style={{ display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:14 }}>
                 <div><label style={{display:'block',fontSize:12,fontWeight:600,color:'#4A5568',marginBottom:6}}>Username *</label><input value={regForm.username} onChange={e=>setRegForm(p=>({...p,username:e.target.value}))} placeholder="Choose username"/></div>
                 <div><label style={{display:'block',fontSize:12,fontWeight:600,color:'#4A5568',marginBottom:6}}>Password *</label><input type="password" value={regForm.password} onChange={e=>setRegForm(p=>({...p,password:e.target.value}))} placeholder="Create password"/></div>
               </div>
@@ -1285,56 +1285,62 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
 
       <Toast items={notifs} onDismiss={i=>setNotifs(p=>p.filter((_,j)=>j!==i))}/>
 
+      {/* MOBILE SIDEBAR OVERLAY */}
+      <div className={`sidebar-overlay${sidebarOpen?'':' hidden'}`} onClick={()=>setSidebarOpen(false)}/>
+
       {/* SIDEBAR */}
-      <aside style={{ width:sidebarOpen?250:68, background:'#fff', borderRight:'1px solid #E8ECF0', display:'flex', flexDirection:'column', transition:'width .25s', flexShrink:0, zIndex:50 }}>
+      <aside className={`app-sidebar${sidebarOpen?' open':''}`} style={{ width:sidebarOpen?250:68, background:'#fff', borderRight:'1px solid #E8ECF0', display:'flex', flexDirection:'column', transition:'width .25s', flexShrink:0, zIndex:50 }}>
         <div style={{ padding:sidebarOpen?'20px 18px 16px':'20px 12px 16px', borderBottom:'1px solid #F0F2F5', display:'flex', alignItems:'center', gap:10 }}>
           <div style={{ width:36,height:36,borderRadius:10,background:customLogo?'#fff':'linear-gradient(135deg,#006837,#00A550)',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,overflow:'hidden' }}>{customLogo?<img src={customLogo} alt="Logo" style={{width:'100%',height:'100%',objectFit:'contain'}}/>:<Package size={18} color="#fff"/>}</div>
           {sidebarOpen && <div><div style={{fontWeight:700,fontSize:14,color:'#006837'}}>Miltenyi</div><div style={{fontSize:10,color:'#94A3B8',fontWeight:500,letterSpacing:.5,textTransform:'uppercase'}}>Inventory Hub SG</div></div>}
         </div>
         <nav style={{ padding:'12px 10px', flex:1, overflowY:'auto' }}>
           {navItems.map(item=>(
-            <div key={item.id} className={`ni ${page===item.id?'a':''}`} onClick={()=>{setPage(item.id);setCatalogPage(0);}} title={item.label}>
+            <div key={item.id} className={`ni ${page===item.id?'a':''}`} onClick={()=>{setPage(item.id);setCatalogPage(0);setSidebarOpen(false);}} title={item.label}>
               <item.icon size={18}/>
-              {sidebarOpen && <span>{item.label}</span>}
-              {item.id==='catalog'&&sidebarOpen && <span style={{marginLeft:'auto',fontSize:10,background:'#E6F4ED',color:'#0B7A3E',padding:'2px 6px',borderRadius:8,fontWeight:700}}>{partsCatalog.length}</span>}
-              {item.id==='whatsapp'&&sidebarOpen && <span style={{marginLeft:'auto',width:8,height:8,borderRadius:'50%',background:waConnected?'#25D366':'#E2E8F0'}}/>}
-              {item.id==='users'&&sidebarOpen&&pendingUsers.length>0 && <span style={{marginLeft:'auto',fontSize:10,background:'#FEE2E2',color:'#DC2626',padding:'2px 6px',borderRadius:8,fontWeight:700}}>{pendingUsers.length}</span>}
+              <span>{item.label}</span>
+              {item.id==='catalog' && <span style={{marginLeft:'auto',fontSize:10,background:'#E6F4ED',color:'#0B7A3E',padding:'2px 6px',borderRadius:8,fontWeight:700}}>{partsCatalog.length}</span>}
+              {item.id==='whatsapp' && <span style={{marginLeft:'auto',width:8,height:8,borderRadius:'50%',background:waConnected?'#25D366':'#E2E8F0'}}/>}
+              {item.id==='users'&&pendingUsers.length>0 && <span style={{marginLeft:'auto',fontSize:10,background:'#FEE2E2',color:'#DC2626',padding:'2px 6px',borderRadius:8,fontWeight:700}}>{pendingUsers.length}</span>}
             </div>
           ))}
         </nav>
         <div style={{ padding:'12px 10px', borderTop:'1px solid #F0F2F5' }}>
-          <div className="ni" onClick={()=>setSidebarOpen(!sidebarOpen)}><Menu size={18}/>{sidebarOpen&&<span style={{fontSize:12}}>Collapse</span>}</div>
+          <div className="ni" onClick={()=>setSidebarOpen(!sidebarOpen)}><Menu size={18}/><span style={{fontSize:12}}>Collapse</span></div>
         </div>
       </aside>
 
       {/* MAIN */}
       <main style={{ flex:1, overflow:'auto', maxHeight:'100vh' }}>
-        <header style={{ background:'#fff', borderBottom:'1px solid #E8ECF0', padding:'14px 28px', display:'flex', alignItems:'center', justifyContent:'space-between', position:'sticky', top:0, zIndex:40 }}>
-          <div>
-            <h1 style={{fontSize:20,fontWeight:700,color:'#0F172A',letterSpacing:-.5}}>{navItems.find(n=>n.id===page)?.label||'Dashboard'}</h1>
-            <p style={{fontSize:12,color:'#94A3B8',marginTop:2}}>Logged in as <strong style={{color:'#0B7A3E'}}>{currentUser.name}</strong> ({currentUser.role}) • Prices {priceConfig.year}</p>
+        <header className="app-header" style={{ background:'#fff', borderBottom:'1px solid #E8ECF0', padding:'14px 28px', display:'flex', alignItems:'center', justifyContent:'space-between', position:'sticky', top:0, zIndex:40 }}>
+          <div style={{display:'flex',alignItems:'center',gap:10}}>
+            <button className="mobile-menu-btn" onClick={()=>setSidebarOpen(true)} style={{background:'none',border:'none',cursor:'pointer',padding:4,alignItems:'center',justifyContent:'center'}}><Menu size={22} color="#0F172A"/></button>
+            <div>
+              <h1 style={{fontSize:20,fontWeight:700,color:'#0F172A',letterSpacing:-.5}}>{navItems.find(n=>n.id===page)?.label||'Dashboard'}</h1>
+              <p className="header-subtitle" style={{fontSize:12,color:'#94A3B8',marginTop:2}}>Logged in as <strong style={{color:'#0B7A3E'}}>{currentUser.name}</strong> ({currentUser.role}) • Prices {priceConfig.year}</p>
+            </div>
           </div>
-          <div style={{ display:'flex', alignItems:'center', gap:12 }}>
-            <div style={{ position:'relative' }}><Search size={15} style={{position:'absolute',left:10,top:10,color:'#94A3B8'}}/><input type="text" placeholder="Search..." value={search} onChange={e=>setSearch(e.target.value)} style={{paddingLeft:32,width:220,height:36}}/></div>
-            {isAdmin && <Pill bg="#DBEAFE" color="#2563EB"><Shield size={11}/> Admin</Pill>}
-            <button onClick={()=>setAiPanelOpen(!aiPanelOpen)} className="bs" style={{padding:'8px 12px',display:'flex',alignItems:'center',gap:6,background:aiPanelOpen?'#E6F4ED':'#F8FAFB',border:aiPanelOpen?'1.5px solid #0B7A3E':'1.5px solid #E2E8F0'}} title="AI Assistant">{aiPanelOpen?<PanelRightClose size={16} color="#0B7A3E"/>:<Bot size={16}/>} <span style={{fontSize:12,fontWeight:600,color:aiPanelOpen?'#0B7A3E':'#64748B'}}>AI</span></button>
+          <div className="header-actions" style={{ display:'flex', alignItems:'center', gap:12 }}>
+            <div style={{ position:'relative' }}><Search size={15} style={{position:'absolute',left:10,top:10,color:'#94A3B8'}}/><input className="header-search" type="text" placeholder="Search..." value={search} onChange={e=>setSearch(e.target.value)} style={{paddingLeft:32,width:220,height:36}}/></div>
+            {isAdmin && <span className="admin-pill"><Pill bg="#DBEAFE" color="#2563EB"><Shield size={11}/> Admin</Pill></span>}
+            <button onClick={()=>setAiPanelOpen(!aiPanelOpen)} className="bs" style={{padding:'8px 12px',display:'flex',alignItems:'center',gap:6,background:aiPanelOpen?'#E6F4ED':'#F8FAFB',border:aiPanelOpen?'1.5px solid #0B7A3E':'1.5px solid #E2E8F0'}} title="AI Assistant">{aiPanelOpen?<PanelRightClose size={16} color="#0B7A3E"/>:<Bot size={16}/>} <span className="ai-label" style={{fontSize:12,fontWeight:600,color:aiPanelOpen?'#0B7A3E':'#64748B'}}>AI</span></button>
             <div style={{display:'flex',alignItems:'center',gap:8}}>
               <div style={{width:34,height:34,borderRadius:'50%',background:'linear-gradient(135deg,#006837,#00A550)',display:'flex',alignItems:'center',justifyContent:'center',color:'#fff',fontSize:12,fontWeight:700}}>{currentUser.name.split(' ').map(w=>w[0]).join('')}</div>
-              <button className="bs" style={{padding:'8px 12px',fontSize:12}} onClick={()=>{setCurrentUser(null);setLoginForm({username:'',password:''});}}><LogOut size={14}/>{sidebarOpen?'Logout':''}</button>
+              <button className="bs" style={{padding:'8px 12px',fontSize:12}} onClick={()=>{setCurrentUser(null);setLoginForm({username:'',password:''});}}><LogOut size={14}/><span className="logout-text">{sidebarOpen?'Logout':''}</span></button>
             </div>
           </div>
         </header>
 
-        <div style={{ padding:'24px 28px', animation:'fadeIn .3s' }}>
+        <div className="app-content" style={{ padding:'24px 28px', animation:'fadeIn .3s' }}>
 
 {/* ═══════════ DASHBOARD ═══════════ */}
 {page==='dashboard'&&(<div>
-  <div style={{display:'grid',gridTemplateColumns:'repeat(5,1fr)',gap:14,marginBottom:24}}>
+  <div className="grid-5" style={{display:'grid',gridTemplateColumns:'repeat(5,1fr)',gap:14,marginBottom:24}}>
     {[{l:'Catalog',v:fmtNum(partsCatalog.length),i:Database,bg:'linear-gradient(135deg,#4338CA,#6366F1)'},{l:'Orders',v:stats.total,i:Package,bg:'linear-gradient(135deg,#006837,#0B9A4E)'},{l:'Spend',v:fmt(stats.totalCost),i:DollarSign,bg:'linear-gradient(135deg,#1E40AF,#3B82F6)'},{l:'Fulfillment',v:`${stats.fulfillmentRate}%`,i:TrendingUp,bg:'linear-gradient(135deg,#047857,#10B981)'},{l:'Back Orders',v:stats.backOrder,i:AlertTriangle,bg:'linear-gradient(135deg,#B91C1C,#EF4444)'}].map((s,i)=>(
       <div key={i} className="sc" style={{background:s.bg}}><div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start'}}><div><div style={{fontSize:11,fontWeight:500,opacity:.85,marginBottom:6,textTransform:'uppercase',letterSpacing:.8}}>{s.l}</div><div className="mono" style={{fontSize:24,fontWeight:700,letterSpacing:-1}}>{s.v}</div></div><div style={{background:'rgba(255,255,255,.15)',borderRadius:10,padding:8}}><s.i size={18}/></div></div></div>
     ))}
   </div>
-  <div style={{display:'grid',gridTemplateColumns:'2fr 1fr',gap:16,marginBottom:24}}>
+  <div className="grid-2" style={{display:'grid',gridTemplateColumns:'2fr 1fr',gap:16,marginBottom:24}}>
     <div className="card" style={{padding:'20px 24px'}}><div style={{display:'flex',justifyContent:'space-between',marginBottom:16}}><h3 style={{fontSize:15,fontWeight:600}}>Monthly Trends</h3><span style={{fontSize:11,color:'#94A3B8'}}>Feb 2025 — Jan 2026</span></div>
       <ResponsiveContainer width="100%" height={250}><AreaChart data={monthlyData}><defs><linearGradient id="g1" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#0B7A3E" stopOpacity={.15}/><stop offset="95%" stopColor="#0B7A3E" stopOpacity={0}/></linearGradient><linearGradient id="g2" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#DC2626" stopOpacity={.15}/><stop offset="95%" stopColor="#DC2626" stopOpacity={0}/></linearGradient></defs><CartesianGrid strokeDasharray="3 3" stroke="#F0F2F5"/><XAxis dataKey="name" tick={{fontSize:11,fill:'#94A3B8'}} axisLine={false} tickLine={false}/><YAxis tick={{fontSize:11,fill:'#94A3B8'}} axisLine={false} tickLine={false}/><Tooltip contentStyle={{borderRadius:10,border:'none',fontSize:12}}/><Area type="monotone" dataKey="received" stroke="#0B7A3E" fillOpacity={1} fill="url(#g1)" name="Received" strokeWidth={2}/><Area type="monotone" dataKey="backOrder" stroke="#DC2626" fillOpacity={1} fill="url(#g2)" name="Back Order" strokeWidth={2}/></AreaChart></ResponsiveContainer>
     </div>
@@ -1343,7 +1349,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
       <div style={{display:'flex',justifyContent:'center',gap:14,marginTop:8}}>{statusPieData.map((s,i)=><div key={i} style={{display:'flex',alignItems:'center',gap:5,fontSize:11,color:'#64748B'}}><div style={{width:8,height:8,borderRadius:'50%',background:s.color}}/>{s.name} ({s.value})</div>)}</div>
     </div>
   </div>
-  <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16}}>
+  <div className="grid-2" style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16}}>
     <div className="card" style={{padding:'20px 24px'}}><h3 style={{fontSize:15,fontWeight:600,marginBottom:16}}>Top Items by Cost</h3><ResponsiveContainer width="100%" height={260}><BarChart data={topItems} layout="vertical" margin={{left:140}}><CartesianGrid strokeDasharray="3 3" stroke="#F0F2F5" horizontal={false}/><XAxis type="number" tick={{fontSize:10,fill:'#94A3B8'}} axisLine={false} tickLine={false} tickFormatter={v=>`$${(v/1000).toFixed(0)}k`}/><YAxis type="category" dataKey="name" tick={{fontSize:10,fill:'#4A5568'}} axisLine={false} tickLine={false} width={135}/><Tooltip formatter={v=>fmt(v)} contentStyle={{borderRadius:10,border:'none',fontSize:12}}/><Bar dataKey="cost" fill="#0B7A3E" radius={[0,6,6,0]} barSize={16}/></BarChart></ResponsiveContainer></div>
     <div className="card" style={{padding:'20px 24px'}}><h3 style={{fontSize:15,fontWeight:600,marginBottom:16}}>Avg Price: SG vs Distributor</h3><ResponsiveContainer width="100%" height={260}><BarChart data={catPriceData}><CartesianGrid strokeDasharray="3 3" stroke="#F0F2F5"/><XAxis dataKey="name" tick={{fontSize:10,fill:'#94A3B8'}} axisLine={false} tickLine={false}/><YAxis tick={{fontSize:10,fill:'#94A3B8'}} axisLine={false} tickLine={false} tickFormatter={v=>`$${(v/1000).toFixed(0)}k`}/><Tooltip formatter={v=>fmt(v)} contentStyle={{borderRadius:10,border:'none',fontSize:12}}/><Bar dataKey="sg" name="Singapore" fill="#0B7A3E" radius={[4,4,0,0]} barSize={14}/><Bar dataKey="dist" name="Distributor" fill="#2563EB" radius={[4,4,0,0]} barSize={14}/><Legend iconSize={10} wrapperStyle={{fontSize:11}}/></BarChart></ResponsiveContainer></div>
   </div>
@@ -1351,7 +1357,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
 
 {/* ═══════════ CATALOG ═══════════ */}
 {page==='catalog'&&(<div>
-  <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:14,marginBottom:20}}>
+  <div className="grid-4" style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:14,marginBottom:20}}>
     {[{l:'Total Parts',v:fmtNum(catalogStats.total),i:Database,c:'#4338CA'},{l:'Avg SG',v:fmt(catalogStats.avgSg),i:DollarSign,c:'#0B7A3E'},{l:'Avg Dist',v:fmt(catalogStats.avgDist),i:Tag,c:'#2563EB'},{l:'Categories',v:Object.keys(catalogStats.catCounts).length,i:Archive,c:'#D97706'}].map((s,i)=>(
       <div key={i} className="card" style={{padding:'16px 20px'}}><div style={{display:'flex',justifyContent:'space-between'}}><div><div style={{fontSize:11,color:'#94A3B8',textTransform:'uppercase',letterSpacing:.5,marginBottom:4}}>{s.l}</div><div className="mono" style={{fontSize:22,fontWeight:700,color:s.c}}>{s.v}</div></div><div style={{padding:10,background:`${s.c}10`,borderRadius:10}}><s.i size={18} color={s.c}/></div></div></div>
     ))}
@@ -1361,7 +1367,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
     <select value={catFilter} onChange={e=>{setCatFilter(e.target.value);setCatalogPage(0);}} style={{height:36}}><option value="All">All Categories</option>{Object.entries(CATEGORIES).map(([k,v])=><option key={k} value={k}>{v.label} ({catalogStats.catCounts[k]||0})</option>)}</select>
     <span style={{fontSize:12,color:'#94A3B8',marginLeft:'auto'}}>{catalog.length} parts</span>
   </div>
-  <div className="card" style={{overflow:'hidden'}}><div style={{overflowX:'auto'}}><table style={{width:'100%',borderCollapse:'collapse',fontSize:12.5}}>
+  <div className="card" style={{overflow:'hidden'}}><div className="table-wrap" style={{overflowX:'auto'}}><table style={{width:'100%',borderCollapse:'collapse',fontSize:12.5}}>
     <thead><tr style={{background:'#F8FAFB'}}>
       <th className="th" style={{width:120}}>Material No.</th><th className="th">Description</th><th className="th" style={{width:120}}>Category</th>
       {[{k:'tp',l:'Transfer'},{k:'sg',l:'SG Price'},{k:'dist',l:'Dist Price'}].map(h=><th key={h.k} className="th" style={{width:110,textAlign:'right',cursor:'pointer'}} onClick={()=>setCatalogSort(s=>({key:h.k,dir:s.key===h.k&&s.dir==='desc'?'asc':'desc'}))}>{h.l} {catalogSort.key===h.k?(catalogSort.dir==='desc'?'↓':'↑'):''}</th>)}
@@ -1397,7 +1403,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
     <BatchBtn onClick={()=>batchStatusOrders('Pending')} bg="#6366F1" icon={Clock}>Pending</BatchBtn>
     <BatchBtn onClick={batchDeleteOrders} bg="#DC2626" icon={Trash2}>Delete</BatchBtn>
   </BatchBar>
-  <div className="card" style={{overflow:'hidden'}}><div style={{overflowX:'auto'}}><table style={{width:'100%',borderCollapse:'collapse',fontSize:12.5}}>
+  <div className="card" style={{overflow:'hidden'}}><div className="table-wrap" style={{overflowX:'auto'}}><table style={{width:'100%',borderCollapse:'collapse',fontSize:12.5}}>
     <thead><tr style={{background:'#F8FAFB'}}><th className="th" style={{width:36}}><SelBox checked={selOrders.size===filteredOrders.length&&filteredOrders.length>0} onChange={()=>toggleAll(selOrders,setSelOrders,filteredOrders.map(o=>o.id))}/></th>{['Material No.','Description','Qty','Price','Total','Ordered','By','Recv','B/O','Status','Actions'].map(h=><th key={h} className="th">{h}</th>)}</tr></thead>
     <tbody>{filteredOrders.map((o,i)=>(
       <tr key={o.id} className="tr" style={{borderBottom:'1px solid #F7FAFC',background:selOrders.has(o.id)?'#E6F4ED':i%2===0?'#fff':'#FCFCFD',cursor:'pointer'}} onClick={()=>openOrderInNewTab(o)}>
@@ -1429,7 +1435,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
     <p style={{fontSize:13,color:'#64748B'}}>Create and manage monthly grouped bulk orders for easier tracking</p>
     <button className="bp" onClick={()=>setShowBulkOrder(true)}><FolderPlus size={14}/> Create Bulk Order</button>
   </div>
-  <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:14,marginBottom:24}}>
+  <div className="grid-3" style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:14,marginBottom:24}}>
     {[{l:'Total Batches',v:bulkGroups.length,i:Layers,c:'#4338CA'},{l:'Total Items',v:bulkGroups.reduce((s,g)=>s+g.items,0),i:Package,c:'#0B7A3E'},{l:'Total Value',v:fmt(bulkGroups.reduce((s,g)=>s+g.totalCost,0)),i:DollarSign,c:'#2563EB'}].map((s,i)=>(
       <div key={i} className="card" style={{padding:'18px 22px'}}><div style={{display:'flex',justifyContent:'space-between'}}><div><div style={{fontSize:11,color:'#94A3B8',textTransform:'uppercase',letterSpacing:.5,marginBottom:4}}>{s.l}</div><div className="mono" style={{fontSize:28,fontWeight:700,color:s.c}}>{s.v}</div></div><div style={{padding:10,background:`${s.c}10`,borderRadius:10}}><s.i size={20} color={s.c}/></div></div></div>
     ))}
@@ -1467,13 +1473,13 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
   {/* Orders grouped by month batch */}
   <div className="card" style={{padding:'20px 24px',marginTop:16}}>
     <h3 style={{fontSize:15,fontWeight:600,marginBottom:16}}>Orders by Month Batch <span style={{fontWeight:400,fontSize:12,color:'#64748B'}}>(Click to view orders)</span></h3>
-    <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:12}}>
+    <div className="grid-4" style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:12}}>
       {[...new Set(orders.map(o=>o.month))].slice(0,16).map(month=>{
         const mo = orders.filter(o=>o.month===month);
         const createdByUsers = [...new Set(mo.map(o=>o.orderBy).filter(Boolean))];
         return <div key={month} onClick={()=>setExpandedMonth(expandedMonth===month?null:month)} style={{padding:14,borderRadius:10,background:expandedMonth===month?'#E6F4ED':'#F8FAFB',border:expandedMonth===month?'2px solid #0B7A3E':'1px solid #E8ECF0',cursor:'pointer',transition:'all 0.2s'}}>
           <div style={{fontWeight:600,fontSize:12,marginBottom:8,color:'#0B7A3E',display:'flex',alignItems:'center',gap:6}}><Calendar size={12}/> {month}</div>
-          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:4,fontSize:11}}>
+          <div className="grid-2" style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:4,fontSize:11}}>
             <div>Orders: <strong>{mo.length}</strong></div>
             <div>Qty: <strong>{mo.reduce((s,o)=>s+o.quantity,0)}</strong></div>
             <div style={{gridColumn:'span 2'}}>Cost: <strong className="mono">{fmt(mo.reduce((s,o)=>s+o.totalCost,0))}</strong></div>
@@ -1528,11 +1534,11 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
 
 {/* ═══════════ ANALYTICS ═══════════ */}
 {page==='analytics'&&(<div>
-  <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16,marginBottom:24}}>
+  <div className="grid-2" style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16,marginBottom:24}}>
     <div className="card" style={{padding:'20px 24px'}}><h3 style={{fontSize:15,fontWeight:600,marginBottom:16}}>Monthly Spend</h3><ResponsiveContainer width="100%" height={270}><BarChart data={monthlyData}><CartesianGrid strokeDasharray="3 3" stroke="#F0F2F5"/><XAxis dataKey="name" tick={{fontSize:11,fill:'#94A3B8'}} axisLine={false} tickLine={false}/><YAxis tick={{fontSize:11,fill:'#94A3B8'}} axisLine={false} tickLine={false} tickFormatter={v=>`$${(v/1000).toFixed(0)}k`}/><Tooltip formatter={v=>fmt(v)} contentStyle={{borderRadius:10,border:'none',fontSize:12}}/><Bar dataKey="cost" radius={[6,6,0,0]} barSize={22}>{monthlyData.map((_,i)=><Cell key={i} fill={i===monthlyData.length-1?'#00A550':'#0B7A3E'}/>)}</Bar></BarChart></ResponsiveContainer></div>
     <div className="card" style={{padding:'20px 24px'}}><h3 style={{fontSize:15,fontWeight:600,marginBottom:16}}>Order Volume vs Received</h3><ResponsiveContainer width="100%" height={270}><LineChart data={monthlyData}><CartesianGrid strokeDasharray="3 3" stroke="#F0F2F5"/><XAxis dataKey="name" tick={{fontSize:11,fill:'#94A3B8'}} axisLine={false} tickLine={false}/><YAxis tick={{fontSize:11,fill:'#94A3B8'}} axisLine={false} tickLine={false}/><Tooltip/><Line type="monotone" dataKey="orders" stroke="#0B7A3E" strokeWidth={2.5} dot={{r:4}} name="Orders"/><Line type="monotone" dataKey="received" stroke="#2563EB" strokeWidth={2} strokeDasharray="5 5" dot={{r:3}} name="Received"/></LineChart></ResponsiveContainer></div>
   </div>
-  <div className="card" style={{padding:'20px 24px'}}><h3 style={{fontSize:15,fontWeight:600,marginBottom:16}}>Engineer Activity</h3><div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16}}>{[...new Set(orders.flatMap(o=>[o.orderBy,o.engineer]).filter(Boolean))].map(eng=>{const eo=orders.filter(o=>o.orderBy===eng||o.engineer===eng);return(<div key={eng} style={{padding:16,borderRadius:12,background:'#F8FAFB'}}><div style={{display:'flex',alignItems:'center',gap:10,marginBottom:12}}><div style={{width:36,height:36,borderRadius:'50%',background:'linear-gradient(135deg,#006837,#00A550)',display:'flex',alignItems:'center',justifyContent:'center',color:'#fff',fontSize:13,fontWeight:700}}>{eng.split(' ').map(w=>w[0]).join('')}</div><div><div style={{fontWeight:600,fontSize:14}}>{eng}</div><div style={{fontSize:11,color:'#94A3B8'}}>User</div></div></div><div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:8}}><div><div style={{fontSize:10,color:'#94A3B8',textTransform:'uppercase'}}>Orders</div><div className="mono" style={{fontSize:18,fontWeight:700}}>{eo.length}</div></div><div><div style={{fontSize:10,color:'#94A3B8',textTransform:'uppercase'}}>Checked</div><div className="mono" style={{fontSize:18,fontWeight:700,color:'#0B7A3E'}}>{eo.filter(o=>o.engineer===eng).length}</div></div><div><div style={{fontSize:10,color:'#94A3B8',textTransform:'uppercase'}}>Value</div><div className="mono" style={{fontSize:14,fontWeight:700}}>{fmt(eo.reduce((s,o)=>s+o.totalCost,0))}</div></div></div></div>);})}</div></div>
+  <div className="card" style={{padding:'20px 24px'}}><h3 style={{fontSize:15,fontWeight:600,marginBottom:16}}>Engineer Activity</h3><div className="grid-2" style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16}}>{[...new Set(orders.flatMap(o=>[o.orderBy,o.engineer]).filter(Boolean))].map(eng=>{const eo=orders.filter(o=>o.orderBy===eng||o.engineer===eng);return(<div key={eng} style={{padding:16,borderRadius:12,background:'#F8FAFB'}}><div style={{display:'flex',alignItems:'center',gap:10,marginBottom:12}}><div style={{width:36,height:36,borderRadius:'50%',background:'linear-gradient(135deg,#006837,#00A550)',display:'flex',alignItems:'center',justifyContent:'center',color:'#fff',fontSize:13,fontWeight:700}}>{eng.split(' ').map(w=>w[0]).join('')}</div><div><div style={{fontWeight:600,fontSize:14}}>{eng}</div><div style={{fontSize:11,color:'#94A3B8'}}>User</div></div></div><div className="grid-3" style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:8}}><div><div style={{fontSize:10,color:'#94A3B8',textTransform:'uppercase'}}>Orders</div><div className="mono" style={{fontSize:18,fontWeight:700}}>{eo.length}</div></div><div><div style={{fontSize:10,color:'#94A3B8',textTransform:'uppercase'}}>Checked</div><div className="mono" style={{fontSize:18,fontWeight:700,color:'#0B7A3E'}}>{eo.filter(o=>o.engineer===eng).length}</div></div><div><div style={{fontSize:10,color:'#94A3B8',textTransform:'uppercase'}}>Value</div><div className="mono" style={{fontSize:14,fontWeight:700}}>{fmt(eo.reduce((s,o)=>s+o.totalCost,0))}</div></div></div></div>);})}</div></div>
 </div>)}
 
 {/* ═══════════ STOCK CHECK ═══════════ */}
@@ -1542,7 +1548,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
   </div>
 
   {/* Stats */}
-  <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:14,marginBottom:24}}>
+  <div className="grid-4" style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:14,marginBottom:24}}>
     {[
       {l:'Total Checks',v:stockChecks.length,c:'#4338CA'},
       {l:'Completed',v:stockChecks.filter(s=>s.status==='Completed').length,c:'#0B7A3E'},
@@ -1557,7 +1563,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
       <h3 style={{fontSize:15,fontWeight:700,marginBottom:8}}>Start New Stock Check</h3>
       <p style={{fontSize:12,color:'#64748B',marginBottom:20}}>Upload an Excel (.xlsx) or CSV file with your stock list. File should contain columns: Material No, Description, System Qty</p>
 
-      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:20}}>
+      <div className="grid-2" style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:20}}>
         {/* File Upload */}
         <label style={{
           display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',
@@ -1738,7 +1744,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
   </div>
 
   {/* Stats Cards */}
-  <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:14,marginBottom:24}}>
+  <div className="grid-4" style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:14,marginBottom:24}}>
     {[
       {l:'Awaiting Arrival',v:orders.filter(o=>o.status==='Back Order'||o.status==='Pending').length,c:'#D97706'},
       {l:'Fully Received',v:orders.filter(o=>o.qtyReceived>=o.quantity&&o.quantity>0).length,c:'#0B7A3E'},
@@ -1883,7 +1889,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
 
 {/* ═══════════ WHATSAPP BAILEYS ═══════════ */}
 {page==='whatsapp'&&(<div>
-  <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:24}}>
+  <div className="grid-2" style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:24}}>
     {/* Connection Panel */}
     <div>
       <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:16}}>
@@ -1906,7 +1912,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
 
         {waConnected && waSessionInfo && (
           <div style={{padding:12,borderRadius:8,background:'#F0FDF4',marginBottom:16,fontSize:12}}>
-            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
+            <div className="grid-2" style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
               <div>Phone: <strong className="mono">{waSessionInfo.phone}</strong></div>
               <div>Name: <strong>{waSessionInfo.name}</strong></div>
               <div>Protocol: <strong className="mono" style={{fontSize:10}}>{waSessionInfo.protocol}</strong></div>
@@ -1977,7 +1983,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
         {scheduledNotifs.enabled && (
           <div style={{display:'grid',gap:14}}>
             {/* Schedule Frequency */}
-            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
+            <div className="grid-2" style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
               <div>
                 <label style={{display:'block',fontSize:11,fontWeight:600,color:'#64748B',marginBottom:6}}>Frequency</label>
                 <select value={scheduledNotifs.frequency} onChange={e=>setScheduledNotifs(prev=>({...prev,frequency:e.target.value}))} style={{width:'100%',padding:'8px 10px',borderRadius:6,border:'1px solid #E2E8F0',fontSize:12}}>
@@ -2033,7 +2039,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
             {/* Report Types */}
             <div>
               <label style={{display:'block',fontSize:11,fontWeight:600,color:'#64748B',marginBottom:8}}>Reports to Include</label>
-              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
+              <div className="grid-2" style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
                 {[
                   {key:'monthlySummary',label:'Order Summary',desc:'Total orders, costs, status breakdown'},
                   {key:'backOrderReport',label:'Back Order Report',desc:'Pending items awaiting delivery'},
@@ -2170,7 +2176,7 @@ if(scheduledNotifs.emailEnabled){                    setNotifLog(prev=>[{id:'N-'
 
 {/* ═══════════ NOTIFICATIONS ═══════════ */}
 {page==='notifications'&&(<div>
-  <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:24,marginBottom:24}}>
+  <div className="grid-2" style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:24,marginBottom:24}}>
     <div>
       <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:16}}><div style={{padding:8,background:'#DBEAFE',borderRadius:10}}><Mail size={18} color="#2563EB"/></div><div><h3 style={{fontSize:15,fontWeight:600}}>Email Notifications</h3></div></div>
       <div className="card" style={{padding:'18px 20px',marginBottom:12}}><h4 style={{fontSize:13,fontWeight:600,marginBottom:12}}>Quick Compose</h4><div style={{display:'flex',flexDirection:'column',gap:10}}><select style={{width:'100%'}}><option>Monthly Full Received</option><option>Back Order Alert</option><option>Delivery Confirmation</option><option>Price List Update</option></select><input type="email" placeholder="Recipients" style={{width:'100%'}}/><textarea placeholder="Notes..." rows={3} style={{width:'100%',resize:'vertical'}}/><button className="be" onClick={()=>{notify('Email Sent','Dispatched','success');setNotifLog(p=>[{id:`N-${String(p.length+1).padStart(3,'0')}`,type:'email',to:'service-sg@miltenyibiotec.com',subject:'Update',date:new Date().toISOString().slice(0,10),status:'Sent'},...p]);}}><Send size={14}/> Send</button></div></div>
@@ -2257,7 +2263,7 @@ if(scheduledNotifs.emailEnabled){                    setNotifLog(prev=>[{id:'N-'
 
 {/* Edit User Modal */}
 {selectedUser&&(<div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.5)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:9999}} onClick={()=>setSelectedUser(null)}>
-  <div onClick={e=>e.stopPropagation()} style={{background:'#fff',borderRadius:16,padding:24,width:420,maxHeight:'80vh',overflow:'auto',boxShadow:'0 25px 50px -12px rgba(0,0,0,0.25)'}}>
+  <div className="modal-box" onClick={e=>e.stopPropagation()} style={{background:'#fff',borderRadius:16,padding:24,width:420,maxWidth:'94vw',maxHeight:'80vh',overflow:'auto',boxShadow:'0 25px 50px -12px rgba(0,0,0,0.25)'}}>
     <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:20}}>
       <h3 style={{fontSize:16,fontWeight:700}}>Edit User Profile</h3>
       <button onClick={()=>setSelectedUser(null)} style={{background:'none',border:'none',cursor:'pointer'}}><X size={20} color="#64748B"/></button>
@@ -2279,7 +2285,7 @@ if(scheduledNotifs.emailEnabled){                    setNotifLog(prev=>[{id:'N-'
         <label style={{display:'block',fontSize:12,fontWeight:600,color:'#4A5568',marginBottom:6}}>Phone Number</label>
         <input value={selectedUser.phone||''} onChange={e=>setSelectedUser(prev=>({...prev,phone:e.target.value}))} placeholder="+65 XXXX XXXX" style={{width:'100%',padding:'10px 12px',borderRadius:8,border:'1.5px solid #E2E8F0',fontSize:13,boxSizing:'border-box'}}/>
       </div>
-      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
+      <div className="grid-2" style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
         <div>
           <label style={{display:'block',fontSize:12,fontWeight:600,color:'#4A5568',marginBottom:6}}>Role</label>
           <select value={selectedUser.role} onChange={e=>setSelectedUser(prev=>({...prev,role:e.target.value}))} style={{width:'100%',padding:'10px 12px',borderRadius:8,border:'1.5px solid #E2E8F0',fontSize:13}}>
@@ -2305,7 +2311,7 @@ if(scheduledNotifs.emailEnabled){                    setNotifLog(prev=>[{id:'N-'
 
 {/* Edit Bulk Order Modal */}
 {selectedBulkGroup&&(<div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.5)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:9999}} onClick={()=>setSelectedBulkGroup(null)}>
-  <div onClick={e=>e.stopPropagation()} style={{background:'#fff',borderRadius:16,padding:24,width:500,maxHeight:'80vh',overflow:'auto',boxShadow:'0 25px 50px -12px rgba(0,0,0,0.25)'}}>
+  <div className="modal-box" onClick={e=>e.stopPropagation()} style={{background:'#fff',borderRadius:16,padding:24,width:500,maxWidth:'94vw',maxHeight:'80vh',overflow:'auto',boxShadow:'0 25px 50px -12px rgba(0,0,0,0.25)'}}>
     <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:20}}>
       <h3 style={{fontSize:16,fontWeight:700,display:'flex',alignItems:'center',gap:8}}><Layers size={18} color="#4338CA"/> Edit Bulk Order</h3>
       <button onClick={()=>setSelectedBulkGroup(null)} style={{background:'none',border:'none',cursor:'pointer'}}><X size={20} color="#64748B"/></button>
@@ -2315,7 +2321,7 @@ if(scheduledNotifs.emailEnabled){                    setNotifLog(prev=>[{id:'N-'
         <div style={{fontSize:11,color:'#64748B',marginBottom:4}}>Batch ID</div>
         <div className="mono" style={{fontWeight:700,color:'#4338CA'}}>{selectedBulkGroup.id}</div>
       </div>
-      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
+      <div className="grid-2" style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
         <div>
           <label style={{display:'block',fontSize:12,fontWeight:600,color:'#4A5568',marginBottom:6}}>Month</label>
           <input value={selectedBulkGroup.month} onChange={e=>setSelectedBulkGroup(prev=>({...prev,month:e.target.value}))} style={{width:'100%',padding:'10px 12px',borderRadius:8,border:'1.5px solid #E2E8F0',fontSize:13,boxSizing:'border-box'}}/>
@@ -2327,7 +2333,7 @@ if(scheduledNotifs.emailEnabled){                    setNotifLog(prev=>[{id:'N-'
           </select>
         </div>
       </div>
-      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
+      <div className="grid-2" style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
         <div>
           <label style={{display:'block',fontSize:12,fontWeight:600,color:'#4A5568',marginBottom:6}}>Items Count</label>
           <input type="number" value={selectedBulkGroup.items} onChange={e=>setSelectedBulkGroup(prev=>({...prev,items:parseInt(e.target.value)||0}))} style={{width:'100%',padding:'10px 12px',borderRadius:8,border:'1.5px solid #E2E8F0',fontSize:13,boxSizing:'border-box'}}/>
@@ -2337,7 +2343,7 @@ if(scheduledNotifs.emailEnabled){                    setNotifLog(prev=>[{id:'N-'
           <input type="number" step="0.01" value={selectedBulkGroup.totalCost} onChange={e=>setSelectedBulkGroup(prev=>({...prev,totalCost:parseFloat(e.target.value)||0}))} style={{width:'100%',padding:'10px 12px',borderRadius:8,border:'1.5px solid #E2E8F0',fontSize:13,boxSizing:'border-box'}}/>
         </div>
       </div>
-      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
+      <div className="grid-2" style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
         <div>
           <label style={{display:'block',fontSize:12,fontWeight:600,color:'#4A5568',marginBottom:6}}>Status</label>
           <select value={selectedBulkGroup.status} onChange={e=>setSelectedBulkGroup(prev=>({...prev,status:e.target.value}))} style={{width:'100%',padding:'10px 12px',borderRadius:8,border:'1.5px solid #E2E8F0',fontSize:13}}>
@@ -2371,7 +2377,7 @@ if(scheduledNotifs.emailEnabled){                    setNotifLog(prev=>[{id:'N-'
 
 {/* Edit Order Modal */}
 {editingOrder&&(<div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.5)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:9999}} onClick={()=>setEditingOrder(null)}>
-  <div onClick={e=>e.stopPropagation()} style={{background:'#fff',borderRadius:16,padding:24,width:600,maxHeight:'90vh',overflow:'auto',boxShadow:'0 25px 50px -12px rgba(0,0,0,0.25)'}}>
+  <div className="modal-box" onClick={e=>e.stopPropagation()} style={{background:'#fff',borderRadius:16,padding:24,width:600,maxWidth:'94vw',maxHeight:'90vh',overflow:'auto',boxShadow:'0 25px 50px -12px rgba(0,0,0,0.25)'}}>
     <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:20}}>
       <h3 style={{fontSize:16,fontWeight:700,display:'flex',alignItems:'center',gap:8}}><Edit3 size={18} color="#2563EB"/> Edit Order</h3>
       <button onClick={()=>setEditingOrder(null)} style={{background:'none',border:'none',cursor:'pointer'}}><X size={20} color="#64748B"/></button>
@@ -2397,7 +2403,7 @@ if(scheduledNotifs.emailEnabled){                    setNotifLog(prev=>[{id:'N-'
         <Badge status={editingOrder.status}/>
       </div>
 
-      <div style={{display:'grid',gridTemplateColumns:'1fr 2fr',gap:12}}>
+      <div className="grid-2" style={{display:'grid',gridTemplateColumns:'1fr 2fr',gap:12}}>
         <div>
           <label style={{display:'block',fontSize:12,fontWeight:600,color:'#4A5568',marginBottom:6}}>Material No</label>
           <input value={editingOrder.materialNo||''} onChange={e=>setEditingOrder(prev=>({...prev,materialNo:e.target.value}))} style={{width:'100%',padding:'10px 12px',borderRadius:8,border:'1.5px solid #E2E8F0',fontSize:13,boxSizing:'border-box'}} placeholder="130-XXX-XXX"/>
@@ -2408,7 +2414,7 @@ if(scheduledNotifs.emailEnabled){                    setNotifLog(prev=>[{id:'N-'
         </div>
       </div>
 
-      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:12}}>
+      <div className="grid-3" style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:12}}>
         <div>
           <label style={{display:'block',fontSize:12,fontWeight:600,color:'#4A5568',marginBottom:6}}>Quantity</label>
           <input type="number" min="1" value={editingOrder.quantity||1} onChange={e=>{const qty=parseInt(e.target.value)||1;setEditingOrder(prev=>({...prev,quantity:qty,totalCost:qty*(prev.listPrice||0),backOrder:(prev.qtyReceived||0)-qty}));}} style={{width:'100%',padding:'10px 12px',borderRadius:8,border:'1.5px solid #E2E8F0',fontSize:13,boxSizing:'border-box'}}/>
@@ -2423,7 +2429,7 @@ if(scheduledNotifs.emailEnabled){                    setNotifLog(prev=>[{id:'N-'
         </div>
       </div>
 
-      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
+      <div className="grid-2" style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
         <div>
           <label style={{display:'block',fontSize:12,fontWeight:600,color:'#4A5568',marginBottom:6}}>Ordered By</label>
           <select value={editingOrder.orderBy||''} onChange={e=>setEditingOrder(prev=>({...prev,orderBy:e.target.value}))} style={{width:'100%',padding:'10px 12px',borderRadius:8,border:'1.5px solid #E2E8F0',fontSize:13}}>
@@ -2445,7 +2451,7 @@ if(scheduledNotifs.emailEnabled){                    setNotifLog(prev=>[{id:'N-'
         </div>
       </div>
 
-      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:12}}>
+      <div className="grid-3" style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:12}}>
         <div>
           <label style={{display:'block',fontSize:12,fontWeight:600,color:'#4A5568',marginBottom:6}}>Order Date</label>
           <input type="date" value={editingOrder.orderDate||''} onChange={e=>setEditingOrder(prev=>({...prev,orderDate:e.target.value}))} style={{width:'100%',padding:'10px 12px',borderRadius:8,border:'1.5px solid #E2E8F0',fontSize:13,boxSizing:'border-box'}}/>
@@ -2460,7 +2466,7 @@ if(scheduledNotifs.emailEnabled){                    setNotifLog(prev=>[{id:'N-'
         </div>
       </div>
 
-      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
+      <div className="grid-2" style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
         <div>
           <label style={{display:'block',fontSize:12,fontWeight:600,color:'#4A5568',marginBottom:6}}>Month Batch</label>
           <input value={editingOrder.month||''} onChange={e=>setEditingOrder(prev=>({...prev,month:e.target.value}))} placeholder="Feb 2026" style={{width:'100%',padding:'10px 12px',borderRadius:8,border:'1.5px solid #E2E8F0',fontSize:13,boxSizing:'border-box'}}/>
@@ -2492,7 +2498,7 @@ if(scheduledNotifs.emailEnabled){                    setNotifLog(prev=>[{id:'N-'
 
 {/* History Import Preview Modal */}
 {historyImportPreview&&historyImportData.length>0&&(<div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.5)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:9999}} onClick={()=>{setHistoryImportPreview(false);setHistoryImportData([]);}}>
-  <div onClick={e=>e.stopPropagation()} style={{background:'#fff',borderRadius:16,padding:24,width:'90%',maxWidth:1000,maxHeight:'85vh',overflow:'auto',boxShadow:'0 25px 50px -12px rgba(0,0,0,0.25)'}}>
+  <div className="modal-box" onClick={e=>e.stopPropagation()} style={{background:'#fff',borderRadius:16,padding:24,width:'90%',maxWidth:1000,maxHeight:'85vh',overflow:'auto',boxShadow:'0 25px 50px -12px rgba(0,0,0,0.25)'}}>
     <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:20}}>
       <div style={{display:'flex',alignItems:'center',gap:12}}>
         <div style={{padding:10,background:'linear-gradient(135deg,#4338CA,#6366F1)',borderRadius:12}}><Database size={20} color="#fff"/></div>
@@ -2730,8 +2736,8 @@ if(scheduledNotifs.emailEnabled){                    setNotifLog(prev=>[{id:'N-'
     </div>
   </div>}
 
-  <div className="card" style={{padding:'24px 28px',marginBottom:16}}><h3 style={{fontSize:15,fontWeight:600,marginBottom:20}}>General</h3><div style={{display:'flex',flexDirection:'column',gap:16}}><div><label style={{display:'block',fontSize:12,fontWeight:600,color:'#4A5568',marginBottom:6}}>Company</label><input type="text" defaultValue="Miltenyi Biotec Asia Pacific Pte Ltd" style={{width:'100%'}}/></div><div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}><div><label style={{display:'block',fontSize:12,fontWeight:600,color:'#4A5568',marginBottom:6}}>Region</label><select defaultValue="Singapore" style={{width:'100%'}}><option>Singapore</option><option>Malaysia</option></select></div><div><label style={{display:'block',fontSize:12,fontWeight:600,color:'#4A5568',marginBottom:6}}>Currency</label><select defaultValue="SGD" style={{width:'100%'}}><option>SGD</option><option>USD</option><option>EUR</option></select></div></div></div></div>
-  <div className="card" style={{padding:'24px 28px',marginBottom:16}}><h3 style={{fontSize:15,fontWeight:600,marginBottom:20}}>Price Config (Yearly Update)</h3><div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16}}>{[{l:'Year',k:'year',s:1},{l:'EUR/SGD Rate',k:'exchangeRate',s:.01},{l:'SG Markup',k:'sgMarkup',s:.1},{l:'GST',k:'gst',s:.01},{l:'Dist Markup',k:'distMarkup',s:.1},{l:'Special Rate',k:'specialRate',s:.1}].map(f=><div key={f.k}><label style={{display:'block',fontSize:12,fontWeight:600,color:'#4A5568',marginBottom:6}}>{f.l}</label><input type="number" step={f.s} value={priceConfig[f.k]} onChange={e=>setPriceConfig(p=>({...p,[f.k]:parseFloat(e.target.value)}))} style={{width:'100%'}}/></div>)}</div></div>
+  <div className="card" style={{padding:'24px 28px',marginBottom:16}}><h3 style={{fontSize:15,fontWeight:600,marginBottom:20}}>General</h3><div style={{display:'flex',flexDirection:'column',gap:16}}><div><label style={{display:'block',fontSize:12,fontWeight:600,color:'#4A5568',marginBottom:6}}>Company</label><input type="text" defaultValue="Miltenyi Biotec Asia Pacific Pte Ltd" style={{width:'100%'}}/></div><div className="grid-2" style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}><div><label style={{display:'block',fontSize:12,fontWeight:600,color:'#4A5568',marginBottom:6}}>Region</label><select defaultValue="Singapore" style={{width:'100%'}}><option>Singapore</option><option>Malaysia</option></select></div><div><label style={{display:'block',fontSize:12,fontWeight:600,color:'#4A5568',marginBottom:6}}>Currency</label><select defaultValue="SGD" style={{width:'100%'}}><option>SGD</option><option>USD</option><option>EUR</option></select></div></div></div></div>
+  <div className="card" style={{padding:'24px 28px',marginBottom:16}}><h3 style={{fontSize:15,fontWeight:600,marginBottom:20}}>Price Config (Yearly Update)</h3><div className="grid-2" style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16}}>{[{l:'Year',k:'year',s:1},{l:'EUR/SGD Rate',k:'exchangeRate',s:.01},{l:'SG Markup',k:'sgMarkup',s:.1},{l:'GST',k:'gst',s:.01},{l:'Dist Markup',k:'distMarkup',s:.1},{l:'Special Rate',k:'specialRate',s:.1}].map(f=><div key={f.k}><label style={{display:'block',fontSize:12,fontWeight:600,color:'#4A5568',marginBottom:6}}>{f.l}</label><input type="number" step={f.s} value={priceConfig[f.k]} onChange={e=>setPriceConfig(p=>({...p,[f.k]:parseFloat(e.target.value)}))} style={{width:'100%'}}/></div>)}</div></div>
   <div className="card" style={{padding:'24px 28px',marginBottom:16}}><h3 style={{fontSize:15,fontWeight:600,marginBottom:20}}>WhatsApp Baileys Config</h3><div style={{display:'flex',flexDirection:'column',gap:16}}><div style={{display:'flex',alignItems:'center',justifyContent:'space-between'}}><span style={{fontSize:13}}>Session Status</span><Pill bg={waConnected?'#D1FAE5':'#FEE2E2'} color={waConnected?'#059669':'#DC2626'}>{waConnected?'Connected':'Disconnected'}</Pill></div><div style={{fontSize:12,color:'#64748B',lineHeight:1.6}}>Baileys WhiskeySockets connects to WhatsApp via the Multi-Device protocol. The admin must scan a QR code to authorize the session. Go to <button onClick={()=>setPage('whatsapp')} style={{background:'none',border:'none',color:'#0B7A3E',cursor:'pointer',fontFamily:'inherit',fontSize:12,fontWeight:600}}>WhatsApp page</button> to manage.</div></div></div>
 
   {/* Email Configuration - Admin Only */}
@@ -2742,7 +2748,7 @@ if(scheduledNotifs.emailEnabled){                    setNotifLog(prev=>[{id:'N-'
         <span style={{fontSize:13}}>Email Notifications</span>
         <Toggle active={emailConfig.enabled} onClick={()=>setEmailConfig(prev=>({...prev,enabled:!prev.enabled}))} color="#0B7A3E"/>
       </div>
-      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
+      <div className="grid-2" style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
         <div>
           <label style={{display:'block',fontSize:12,fontWeight:600,color:'#4A5568',marginBottom:6}}>Sender Name</label>
           <input type="text" value={emailConfig.senderName} onChange={e=>setEmailConfig(prev=>({...prev,senderName:e.target.value}))} placeholder="Company Name" style={{width:'100%'}}/>
@@ -2752,7 +2758,7 @@ if(scheduledNotifs.emailEnabled){                    setNotifLog(prev=>[{id:'N-'
           <input type="email" value={emailConfig.senderEmail} onChange={e=>setEmailConfig(prev=>({...prev,senderEmail:e.target.value}))} placeholder="noreply@company.com" style={{width:'100%'}}/>
         </div>
       </div>
-      <div style={{display:'grid',gridTemplateColumns:'2fr 1fr',gap:12}}>
+      <div className="grid-2" style={{display:'grid',gridTemplateColumns:'2fr 1fr',gap:12}}>
         <div>
           <label style={{display:'block',fontSize:12,fontWeight:600,color:'#4A5568',marginBottom:6}}>SMTP Host (Optional)</label>
           <input type="text" value={emailConfig.smtpHost} onChange={e=>setEmailConfig(prev=>({...prev,smtpHost:e.target.value}))} placeholder="smtp.gmail.com" style={{width:'100%'}}/>
@@ -2937,7 +2943,7 @@ if(scheduledNotifs.emailEnabled){                    setNotifLog(prev=>[{id:'N-'
 
     <div style={{padding:14,background:'#F8FAFB',borderRadius:10,fontSize:12}}>
       <div style={{fontWeight:600,marginBottom:8,color:'#374151'}}>Expected CSV Columns:</div>
-      <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:6,fontSize:11,color:'#64748B'}}>
+      <div className="grid-3" style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:6,fontSize:11,color:'#64748B'}}>
         <div>• Material No</div>
         <div>• Description</div>
         <div>• Quantity</div>
@@ -3010,16 +3016,16 @@ if(scheduledNotifs.emailEnabled){                    setNotifLog(prev=>[{id:'N-'
       </main>
 
       {/* ═══ NEW ORDER MODAL ═══ */}
-      {showNewOrder&&<div className="mo" onClick={()=>setShowNewOrder(false)}><div onClick={e=>e.stopPropagation()} style={{background:'#fff',borderRadius:16,padding:'28px 32px',width:520,maxHeight:'85vh',overflow:'auto',boxShadow:'0 20px 60px rgba(0,0,0,.2)'}}>
+      {showNewOrder&&<div className="mo" onClick={()=>setShowNewOrder(false)}><div className="modal-box" onClick={e=>e.stopPropagation()} style={{background:'#fff',borderRadius:16,padding:'28px 32px',width:520,maxWidth:'94vw',maxHeight:'85vh',overflow:'auto',boxShadow:'0 20px 60px rgba(0,0,0,.2)'}}>
         <div style={{display:'flex',justifyContent:'space-between',marginBottom:24}}><h2 style={{fontSize:18,fontWeight:700}}>New Order</h2><button onClick={()=>setShowNewOrder(false)} style={{background:'none',border:'none',cursor:'pointer',color:'#94A3B8'}}><X size={20}/></button></div>
         <div style={{display:'flex',flexDirection:'column',gap:14}}>
           <div><label style={{display:'block',fontSize:12,fontWeight:600,color:'#4A5568',marginBottom:6}}>Material No. *</label><input value={newOrder.materialNo} onChange={e=>{setNewOrder(p=>({...p,materialNo:e.target.value}));if(e.target.value.length>=10)handleMaterialLookup(e.target.value);}} placeholder="e.g. 130-097-866" style={{width:'100%'}}/></div>
           <div><label style={{display:'block',fontSize:12,fontWeight:600,color:'#4A5568',marginBottom:6}}>Description</label><input value={newOrder.description} onChange={e=>setNewOrder(p=>({...p,description:e.target.value}))} style={{width:'100%'}}/></div>
-          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
+          <div className="grid-2" style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
             <div><label style={{display:'block',fontSize:12,fontWeight:600,color:'#4A5568',marginBottom:6}}>Quantity</label><input type="number" min="1" value={newOrder.quantity} onChange={e=>setNewOrder(p=>({...p,quantity:e.target.value}))} style={{width:'100%'}}/></div>
             <div><label style={{display:'block',fontSize:12,fontWeight:600,color:'#4A5568',marginBottom:6}}>Transfer Price</label><input type="number" step=".01" value={newOrder.listPrice} onChange={e=>setNewOrder(p=>({...p,listPrice:e.target.value}))} style={{width:'100%'}}/></div>
           </div>
-          {newOrder.materialNo&&catalogLookup[newOrder.materialNo]&&<div style={{padding:12,borderRadius:8,background:'#F0FDF4',border:'1px solid #BBF7D0',fontSize:12}}><strong style={{color:'#0B7A3E'}}>✓ Catalog Match</strong><div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:8,marginTop:6}}>
+          {newOrder.materialNo&&catalogLookup[newOrder.materialNo]&&<div style={{padding:12,borderRadius:8,background:'#F0FDF4',border:'1px solid #BBF7D0',fontSize:12}}><strong style={{color:'#0B7A3E'}}>✓ Catalog Match</strong><div className="grid-3" style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:8,marginTop:6}}>
             <div>SG: <strong className="mono">{fmt(catalogLookup[newOrder.materialNo].sg)}</strong></div><div>Dist: <strong className="mono">{fmt(catalogLookup[newOrder.materialNo].dist)}</strong></div><div>TP: <strong className="mono">{fmt(catalogLookup[newOrder.materialNo].tp)}</strong></div></div></div>}
           <div><label style={{display:'block',fontSize:12,fontWeight:600,color:'#4A5568',marginBottom:6}}>Order By</label><select value={newOrder.orderBy} onChange={e=>setNewOrder(p=>({...p,orderBy:e.target.value}))} style={{width:'100%'}}>{users.filter(u=>u.status==='active'&&u.role!=='admin').map(u=><option key={u.id}>{u.name}</option>)}</select></div>
           <div><label style={{display:'block',fontSize:12,fontWeight:600,color:'#4A5568',marginBottom:6}}>Remark</label><textarea value={newOrder.remark} onChange={e=>setNewOrder(p=>({...p,remark:e.target.value}))} rows={2} style={{width:'100%',resize:'vertical'}}/></div>
@@ -3045,12 +3051,12 @@ if(scheduledNotifs.emailEnabled){                    setNotifLog(prev=>[{id:'N-'
       </div></div>}
 
       {/* ═══ BULK ORDER MODAL ═══ */}
-      {showBulkOrder&&<div className="mo" onClick={()=>setShowBulkOrder(false)}><div onClick={e=>e.stopPropagation()} style={{background:'#fff',borderRadius:16,padding:'28px 32px',width:700,maxHeight:'90vh',overflow:'auto',boxShadow:'0 20px 60px rgba(0,0,0,.2)'}}>
+      {showBulkOrder&&<div className="mo" onClick={()=>setShowBulkOrder(false)}><div className="modal-box" onClick={e=>e.stopPropagation()} style={{background:'#fff',borderRadius:16,padding:'28px 32px',width:700,maxWidth:'94vw',maxHeight:'90vh',overflow:'auto',boxShadow:'0 20px 60px rgba(0,0,0,.2)'}}>
         <div style={{display:'flex',justifyContent:'space-between',marginBottom:20}}>
           <div><h2 style={{fontSize:18,fontWeight:700}}>Create Monthly Bulk Order</h2><p style={{fontSize:12,color:'#94A3B8',marginTop:4}}>Group multiple items under one monthly batch</p></div>
           <button onClick={()=>setShowBulkOrder(false)} style={{background:'none',border:'none',cursor:'pointer',color:'#94A3B8'}}><X size={20}/></button>
         </div>
-        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:12,marginBottom:20}}>
+        <div className="grid-3" style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:12,marginBottom:20}}>
           <div><label style={{display:'block',fontSize:12,fontWeight:600,color:'#4A5568',marginBottom:6}}>Month Group *</label><select value={bulkMonth} onChange={e=>setBulkMonth(e.target.value)} style={{width:'100%'}}>{MONTH_OPTIONS.map(m=><option key={m}>{m}</option>)}</select></div>
           <div><label style={{display:'block',fontSize:12,fontWeight:600,color:'#4A5568',marginBottom:6}}>Order By</label><select value={bulkOrderBy} onChange={e=>setBulkOrderBy(e.target.value)} style={{width:'100%'}}>{users.filter(u=>u.status==='active'&&u.role!=='admin').map(u=><option key={u.id}>{u.name}</option>)}</select></div>
           <div><label style={{display:'block',fontSize:12,fontWeight:600,color:'#4A5568',marginBottom:6}}>Batch Remark</label><input value={bulkRemark} onChange={e=>setBulkRemark(e.target.value)} placeholder="e.g. Quarterly restock" style={{width:'100%'}}/></div>
@@ -3100,7 +3106,7 @@ if(scheduledNotifs.emailEnabled){                    setNotifLog(prev=>[{id:'N-'
       </div></div>}
 
       {/* ═══ ORDER DETAIL MODAL ═══ */}
-      {selectedOrder&&<div className="mo" onClick={()=>setSelectedOrder(null)}><div onClick={e=>e.stopPropagation()} style={{background:'#fff',borderRadius:16,padding:'28px 32px',width:560,maxHeight:'85vh',overflow:'auto',boxShadow:'0 20px 60px rgba(0,0,0,.2)'}}>
+      {selectedOrder&&<div className="mo" onClick={()=>setSelectedOrder(null)}><div className="modal-box" onClick={e=>e.stopPropagation()} style={{background:'#fff',borderRadius:16,padding:'28px 32px',width:560,maxWidth:'94vw',maxHeight:'85vh',overflow:'auto',boxShadow:'0 20px 60px rgba(0,0,0,.2)'}}>
         <div style={{display:'flex',justifyContent:'space-between',marginBottom:16}}><div><h2 style={{fontSize:17,fontWeight:700}}>{selectedOrder.description}</h2><span className="mono" style={{fontSize:12,color:'#94A3B8'}}>{selectedOrder.id} • {selectedOrder.materialNo||'—'}</span></div><button onClick={()=>setSelectedOrder(null)} style={{background:'none',border:'none',cursor:'pointer',color:'#94A3B8'}}><X size={20}/></button></div>
         <Badge status={selectedOrder.status}/>
 
@@ -3120,12 +3126,12 @@ if(scheduledNotifs.emailEnabled){                    setNotifLog(prev=>[{id:'N-'
           </div>}
         </div>
 
-        {selectedOrder.materialNo&&catalogLookup[selectedOrder.materialNo]&&<div style={{padding:12,borderRadius:8,background:'#EFF6FF',border:'1px solid #BFDBFE',marginTop:12,fontSize:12}}><strong style={{color:'#2563EB'}}>Catalog Price ({priceConfig.year})</strong><div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:8,marginTop:6}}><div>SG: <strong className="mono">{fmt(catalogLookup[selectedOrder.materialNo].sg)}</strong></div><div>Dist: <strong className="mono">{fmt(catalogLookup[selectedOrder.materialNo].dist)}</strong></div><div>TP: <strong className="mono">{fmt(catalogLookup[selectedOrder.materialNo].tp)}</strong></div></div></div>}
+        {selectedOrder.materialNo&&catalogLookup[selectedOrder.materialNo]&&<div style={{padding:12,borderRadius:8,background:'#EFF6FF',border:'1px solid #BFDBFE',marginTop:12,fontSize:12}}><strong style={{color:'#2563EB'}}>Catalog Price ({priceConfig.year})</strong><div className="grid-3" style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:8,marginTop:6}}><div>SG: <strong className="mono">{fmt(catalogLookup[selectedOrder.materialNo].sg)}</strong></div><div>Dist: <strong className="mono">{fmt(catalogLookup[selectedOrder.materialNo].dist)}</strong></div><div>TP: <strong className="mono">{fmt(catalogLookup[selectedOrder.materialNo].tp)}</strong></div></div></div>}
 
         {/* Update Received Quantity Section */}
         <div style={{padding:16,borderRadius:10,background:'#F0FDF4',border:'1px solid #BBF7D0',marginTop:16}}>
           <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:12}}><Package size={16} color="#059669"/><span style={{fontWeight:600,fontSize:13,color:'#059669'}}>Update Received Quantity</span></div>
-          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:12,alignItems:'end'}}>
+          <div className="grid-3" style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:12,alignItems:'end'}}>
             <div>
               <label style={{display:'block',fontSize:11,color:'#64748B',marginBottom:4}}>Ordered</label>
               <div className="mono" style={{fontSize:18,fontWeight:700}}>{selectedOrder.quantity}</div>
@@ -3150,7 +3156,7 @@ if(scheduledNotifs.emailEnabled){                    setNotifLog(prev=>[{id:'N-'
           {selectedOrder.qtyReceived>=selectedOrder.quantity && <div style={{marginTop:12,padding:8,background:'#D1FAE5',borderRadius:6,fontSize:11,color:'#059669',display:'flex',alignItems:'center',gap:6}}><CheckCircle size={12}/> Order fully received</div>}
         </div>
 
-        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginTop:14}}>{[{l:'Price',v:selectedOrder.listPrice>0?fmt(selectedOrder.listPrice):'—'},{l:'Total',v:selectedOrder.totalCost>0?fmt(selectedOrder.totalCost):'—'},{l:'Ordered',v:fmtDate(selectedOrder.orderDate)},{l:'By',v:selectedOrder.orderBy||'—'},{l:'Arrival',v:selectedOrder.arrivalDate?fmtDate(selectedOrder.arrivalDate):'—'},{l:'Engineer',v:selectedOrder.engineer||'—'},{l:'Month',v:selectedOrder.month?.replace('_',' ')||'—'},{l:'Remark',v:selectedOrder.remark||'—'}].map((f,i)=><div key={i} style={{padding:10,borderRadius:8,background:'#F8FAFB'}}><div style={{fontSize:10,color:'#94A3B8',fontWeight:600,textTransform:'uppercase',letterSpacing:.5,marginBottom:3}}>{f.l}</div><div style={{fontSize:13,fontWeight:600}}>{f.v}</div></div>)}</div>
+        <div className="grid-2" style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginTop:14}}>{[{l:'Price',v:selectedOrder.listPrice>0?fmt(selectedOrder.listPrice):'—'},{l:'Total',v:selectedOrder.totalCost>0?fmt(selectedOrder.totalCost):'—'},{l:'Ordered',v:fmtDate(selectedOrder.orderDate)},{l:'By',v:selectedOrder.orderBy||'—'},{l:'Arrival',v:selectedOrder.arrivalDate?fmtDate(selectedOrder.arrivalDate):'—'},{l:'Engineer',v:selectedOrder.engineer||'—'},{l:'Month',v:selectedOrder.month?.replace('_',' ')||'—'},{l:'Remark',v:selectedOrder.remark||'—'}].map((f,i)=><div key={i} style={{padding:10,borderRadius:8,background:'#F8FAFB'}}><div style={{fontSize:10,color:'#94A3B8',fontWeight:600,textTransform:'uppercase',letterSpacing:.5,marginBottom:3}}>{f.l}</div><div style={{fontSize:13,fontWeight:600}}>{f.v}</div></div>)}</div>
         <div style={{display:'flex',gap:10,marginTop:18}}>
           <button className="bp" onClick={()=>{notify('Order Updated',`${selectedOrder.id} saved`,'success');setSelectedOrder(null);}}><Check size={14}/> Save & Close</button>
           <button className="be" onClick={()=>{notify('Email Sent','Update sent','success');setSelectedOrder(null);}}><Mail size={14}/> Email</button>
@@ -3163,16 +3169,17 @@ if(scheduledNotifs.emailEnabled){                    setNotifLog(prev=>[{id:'N-'
       {selectedPart&&<div className="mo" onClick={()=>setSelectedPart(null)}><div onClick={e=>e.stopPropagation()} style={{background:'#fff',borderRadius:16,padding:'28px 32px',width:520,maxHeight:'85vh',overflow:'auto',boxShadow:'0 20px 60px rgba(0,0,0,.2)'}}>
         <div style={{display:'flex',justifyContent:'space-between',marginBottom:16}}><div><h2 style={{fontSize:17,fontWeight:700}}>{selectedPart.description}</h2><span className="mono" style={{fontSize:12,color:'#94A3B8'}}>{selectedPart.materialNo}</span></div><button onClick={()=>setSelectedPart(null)} style={{background:'none',border:'none',cursor:'pointer',color:'#94A3B8'}}><X size={20}/></button></div>
         <div style={{marginBottom:14}}><Pill bg={`${CATEGORIES[selectedPart.category]?.color||'#64748B'}12`} color={CATEGORIES[selectedPart.category]?.color||'#64748B'}>{CATEGORIES[selectedPart.category]?.label||selectedPart.category}</Pill></div>
-        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:16}}>{[{l:'SG Price',v:fmt(selectedPart.singaporePrice),c:'#0B7A3E'},{l:'Dist Price',v:fmt(selectedPart.distributorPrice),c:'#2563EB'},{l:'Transfer (SGD)',v:fmt(selectedPart.transferPrice),c:'#7C3AED'},{l:'RSP (EUR)',v:`€${selectedPart.rspEur?.toLocaleString()}`,c:'#D97706'},{l:'Margin',v:`${selectedPart.singaporePrice>0?((selectedPart.singaporePrice-selectedPart.distributorPrice)/selectedPart.singaporePrice*100).toFixed(1):0}%`,c:'#059669'},{l:'Year',v:priceConfig.year,c:'#64748B'}].map((f,i)=><div key={i} style={{padding:12,borderRadius:8,background:'#F8FAFB'}}><div style={{fontSize:10,color:'#94A3B8',textTransform:'uppercase',letterSpacing:.5,marginBottom:4}}>{f.l}</div><div className="mono" style={{fontSize:16,fontWeight:700,color:f.c}}>{f.v}</div></div>)}</div>
+        <div className="grid-2" style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:16}}>{[{l:'SG Price',v:fmt(selectedPart.singaporePrice),c:'#0B7A3E'},{l:'Dist Price',v:fmt(selectedPart.distributorPrice),c:'#2563EB'},{l:'Transfer (SGD)',v:fmt(selectedPart.transferPrice),c:'#7C3AED'},{l:'RSP (EUR)',v:`€${selectedPart.rspEur?.toLocaleString()}`,c:'#D97706'},{l:'Margin',v:`${selectedPart.singaporePrice>0?((selectedPart.singaporePrice-selectedPart.distributorPrice)/selectedPart.singaporePrice*100).toFixed(1):0}%`,c:'#059669'},{l:'Year',v:priceConfig.year,c:'#64748B'}].map((f,i)=><div key={i} style={{padding:12,borderRadius:8,background:'#F8FAFB'}}><div style={{fontSize:10,color:'#94A3B8',textTransform:'uppercase',letterSpacing:.5,marginBottom:4}}>{f.l}</div><div className="mono" style={{fontSize:16,fontWeight:700,color:f.c}}>{f.v}</div></div>)}</div>
         <div style={{display:'flex',gap:10}}><button className="bp" onClick={()=>{setShowNewOrder(true);setNewOrder({materialNo:selectedPart.materialNo,description:selectedPart.description,quantity:1,listPrice:selectedPart.transferPrice,orderBy:'',remark:''});setSelectedPart(null);}}><ShoppingCart size={14}/> Order</button><button className="bs" onClick={()=>setSelectedPart(null)}>Close</button></div>
       </div></div>}
 
       {/* ═══════════ AI CHAT PANEL (SLIDE-IN) ═══════════ */}
-      <div style={{
+      <div className={`ai-panel${aiPanelOpen?'':' closed'}`} style={{
         position: 'fixed',
         top: 0,
         right: aiPanelOpen ? 0 : -400,
         width: 380,
+        maxWidth: '100vw',
         height: '100vh',
         background: '#fff',
         boxShadow: aiPanelOpen ? '-4px 0 20px rgba(0,0,0,0.1)' : 'none',
