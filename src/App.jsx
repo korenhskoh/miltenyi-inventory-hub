@@ -52,6 +52,21 @@ const Pill = ({ bg, color, children }) => <span className="pill" style={{ backgr
 const Toggle = ({ active, onClick, color }) => <div onClick={onClick} style={{ width:40,height:22,borderRadius:11,background:active?(color||'#0B7A3E'):'#E2E8F0',cursor:'pointer',position:'relative',transition:'background 0.2s' }}><div style={{ width:18,height:18,borderRadius:'50%',background:'#fff',position:'absolute',top:2,left:active?20:2,transition:'left 0.2s',boxShadow:'0 1px 3px rgba(0,0,0,0.15)' }}/></div>;
 const Toast = ({ items, onDismiss }) => <div style={{ position:'fixed',top:80,right:24,zIndex:9999,display:'flex',flexDirection:'column',gap:8,maxWidth:380 }}>{items.map((n,i) => <div key={i} style={{ background:n.type==='success'?'#0B7A3E':n.type==='warning'?'#D97706':'#2563EB',color:'#fff',padding:'12px 16px',borderRadius:10,boxShadow:'0 8px 24px rgba(0,0,0,0.18)',display:'flex',alignItems:'center',gap:10,animation:'slideIn 0.3s' }}>{n.type==='success'?<CheckCircle size={18}/>:n.type==='warning'?<AlertTriangle size={18}/>:<Bell size={18}/>}<div style={{flex:1}}><div style={{fontWeight:600,fontSize:13}}>{n.title}</div><div style={{fontSize:11,opacity:0.9}}>{n.message}</div></div><button onClick={()=>onDismiss(i)} style={{background:'none',border:'none',color:'#fff',cursor:'pointer'}}><X size={14}/></button></div>)}</div>;
 
+// ════════════════════════════ BATCH ACTION BAR ══════════════════════
+const BatchBar = ({ count, onClear, children }) => count > 0 ? (
+  <div style={{display:'flex',alignItems:'center',gap:10,padding:'10px 16px',background:'linear-gradient(135deg,#1E293B,#334155)',borderRadius:10,marginBottom:12,color:'#fff',fontSize:13,flexWrap:'wrap',animation:'slideIn 0.2s'}}>
+    <span style={{fontWeight:700,minWidth:90}}>{count} selected</span>
+    <div style={{display:'flex',gap:6,flex:1,flexWrap:'wrap'}}>{children}</div>
+    <button onClick={onClear} style={{background:'rgba(255,255,255,0.15)',border:'none',color:'#fff',padding:'5px 12px',borderRadius:6,fontSize:11,fontWeight:600,cursor:'pointer',display:'flex',alignItems:'center',gap:4}}>Clear</button>
+  </div>
+) : null;
+const BatchBtn = ({ onClick, bg, icon: I, children }) => (
+  <button onClick={onClick} style={{display:'flex',alignItems:'center',gap:4,padding:'5px 12px',background:bg||'rgba(255,255,255,0.15)',border:'none',color:'#fff',borderRadius:6,fontSize:11,fontWeight:600,cursor:'pointer',whiteSpace:'nowrap'}}>{I&&<I size={12}/>}{children}</button>
+);
+const SelBox = ({ checked, onChange }) => (
+  <input type="checkbox" checked={checked} onChange={onChange} style={{width:16,height:16,cursor:'pointer',accentColor:'#0B7A3E'}}/>
+);
+
 // ════════════════════════════ QR CODE GENERATOR ══════════════════════
 // Simple QR-like pattern generator for WhatsApp Baileys simulation
 const QRCodeCanvas = ({ text, size = 200 }) => {
@@ -250,6 +265,14 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
   const [aiConversationLogs, setAiConversationLogs] = useState([]);
   const [aiAdminTab, setAiAdminTab] = useState('knowledge');
 
+  // ── Batch Selection State ──
+  const [selOrders, setSelOrders] = useState(new Set());
+  const [selBulk, setSelBulk] = useState(new Set());
+  const [selUsers, setSelUsers] = useState(new Set());
+  const [selStockChecks, setSelStockChecks] = useState(new Set());
+  const [selNotifs, setSelNotifs] = useState(new Set());
+  const [selApprovals, setSelApprovals] = useState(new Set());
+
   // ── localStorage Persistence ──
   const LS_KEYS = { orders: 'mih_orders', bulkGroups: 'mih_bulkGroups', emailConfig: 'mih_emailConfig', emailTemplates: 'mih_emailTemplates', priceConfig: 'mih_priceConfig', notifLog: 'mih_notifLog', pendingApprovals: 'mih_pendingApprovals', users: 'mih_users', waNotifyRules: 'mih_waNotifyRules', scheduledNotifs: 'mih_scheduledNotifs', customLogo: 'mih_customLogo', stockChecks: 'mih_stockChecks' };
 
@@ -390,6 +413,97 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
       setNotifLog(prev=>[{id:`N-${String(prev.length+1).padStart(3,'0')}`,type:'approval',to:approval.requestedBy,subject:`Order ${approval.orderId} Rejected`,date:new Date().toISOString().slice(0,10),status:'Rejected'},...prev]);
       notify('Order Rejected',`${approval.orderId} has been rejected`,'warning');
     }
+  };
+
+  // ── Batch Selection Helpers ──
+  const toggleSel = (set, setter, id) => setter(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  const toggleAll = (set, setter, ids) => setter(prev => prev.size === ids.length ? new Set() : new Set(ids));
+
+  // Batch Actions — Orders
+  const batchDeleteOrders = () => {
+    if (!selOrders.size || !window.confirm(`Delete ${selOrders.size} selected order(s)?`)) return;
+    const ids = [...selOrders];
+    setOrders(prev => prev.filter(o => !selOrders.has(o.id)));
+    ids.forEach(id => api.deleteOrder(id));
+    notify('Batch Delete', `${ids.length} orders deleted`, 'success');
+    setSelOrders(new Set());
+  };
+  const batchStatusOrders = (status) => {
+    if (!selOrders.size) return;
+    const ids = [...selOrders];
+    setOrders(prev => prev.map(o => selOrders.has(o.id) ? { ...o, status } : o));
+    api.bulkUpdateOrderStatus(ids, status);
+    notify('Batch Update', `${ids.length} orders → ${status}`, 'success');
+    setSelOrders(new Set());
+  };
+
+  // Batch Actions — Bulk Groups
+  const batchDeleteBulk = () => {
+    if (!selBulk.size || !window.confirm(`Delete ${selBulk.size} bulk group(s)?`)) return;
+    const ids = [...selBulk];
+    setBulkGroups(prev => prev.filter(g => !selBulk.has(g.id)));
+    ids.forEach(id => api.deleteBulkGroup(id));
+    notify('Batch Delete', `${ids.length} bulk groups deleted`, 'success');
+    setSelBulk(new Set());
+  };
+  const batchStatusBulk = (status) => {
+    if (!selBulk.size) return;
+    const ids = [...selBulk];
+    setBulkGroups(prev => prev.map(g => selBulk.has(g.id) ? { ...g, status } : g));
+    ids.forEach(id => api.updateBulkGroup(id, { status }));
+    notify('Batch Update', `${ids.length} bulk groups → ${status}`, 'success');
+    setSelBulk(new Set());
+  };
+
+  // Batch Actions — Users
+  const batchDeleteUsers = () => {
+    if (!selUsers.size || !window.confirm(`Delete ${selUsers.size} user(s)?`)) return;
+    const ids = [...selUsers];
+    setUsers(prev => prev.filter(u => !selUsers.has(u.id)));
+    ids.forEach(id => api.deleteUser(id));
+    notify('Batch Delete', `${ids.length} users deleted`, 'success');
+    setSelUsers(new Set());
+  };
+  const batchRoleUsers = (role) => {
+    if (!selUsers.size) return;
+    const ids = [...selUsers];
+    setUsers(prev => prev.map(u => selUsers.has(u.id) ? { ...u, role } : u));
+    ids.forEach(id => api.updateUser(id, { role }));
+    notify('Batch Update', `${ids.length} users → ${role}`, 'success');
+    setSelUsers(new Set());
+  };
+  const batchStatusUsers = (status) => {
+    if (!selUsers.size) return;
+    const ids = [...selUsers];
+    setUsers(prev => prev.map(u => selUsers.has(u.id) ? { ...u, status } : u));
+    ids.forEach(id => api.updateUser(id, { status }));
+    notify('Batch Update', `${ids.length} users → ${status}`, 'success');
+    setSelUsers(new Set());
+  };
+
+  // Batch Actions — Stock Checks
+  const batchDeleteStockChecks = () => {
+    if (!selStockChecks.size || !window.confirm(`Delete ${selStockChecks.size} stock check(s)?`)) return;
+    setStockChecks(prev => prev.filter(s => !selStockChecks.has(s.id)));
+    notify('Batch Delete', `${selStockChecks.size} stock checks deleted`, 'success');
+    setSelStockChecks(new Set());
+  };
+
+  // Batch Actions — Notifications
+  const batchDeleteNotifs = () => {
+    if (!selNotifs.size || !window.confirm(`Delete ${selNotifs.size} notification(s)?`)) return;
+    setNotifLog(prev => prev.filter(n => !selNotifs.has(n.id)));
+    notify('Batch Delete', `${selNotifs.size} notifications deleted`, 'success');
+    setSelNotifs(new Set());
+  };
+
+  // Batch Actions — Approvals
+  const batchApprovalAction = (action) => {
+    if (!selApprovals.size) return;
+    const ids = [...selApprovals];
+    ids.forEach(id => handleApprovalAction(id, action));
+    notify(`Batch ${action === 'approved' ? 'Approve' : 'Reject'}`, `${ids.length} approvals ${action}`, action === 'approved' ? 'success' : 'warning');
+    setSelApprovals(new Set());
   };
 
   // ── WhatsApp Baileys functions ──
@@ -1294,10 +1408,18 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
     <div style={{display:'flex',gap:8}}>{['All','Received','Back Order','Processed','Pending'].map(s=><button key={s} onClick={()=>setStatusFilter(s)} style={{padding:'6px 14px',borderRadius:20,border:statusFilter===s?'none':'1px solid #E2E8F0',background:statusFilter===s?'#0B7A3E':'#fff',color:statusFilter===s?'#fff':'#64748B',fontSize:12,fontWeight:500,cursor:'pointer',fontFamily:'inherit'}}>{s} ({s==='All'?orders.length:orders.filter(o=>o.status===s).length})</button>)}</div>
     <div style={{display:'flex',gap:8}}><button className="bs" onClick={()=>setShowBulkOrder(true)}><Layers size={14}/> Bulk Order</button><button className="bp" onClick={()=>setShowNewOrder(true)}><Plus size={14}/> New Order</button></div>
   </div>
+  <BatchBar count={selOrders.size} onClear={()=>setSelOrders(new Set())}>
+    <BatchBtn onClick={()=>batchStatusOrders('Received')} bg="#059669" icon={CheckCircle}>Received</BatchBtn>
+    <BatchBtn onClick={()=>batchStatusOrders('Processed')} bg="#2563EB" icon={RefreshCw}>Processed</BatchBtn>
+    <BatchBtn onClick={()=>batchStatusOrders('Back Order')} bg="#D97706" icon={AlertTriangle}>Back Order</BatchBtn>
+    <BatchBtn onClick={()=>batchStatusOrders('Pending')} bg="#6366F1" icon={Clock}>Pending</BatchBtn>
+    <BatchBtn onClick={batchDeleteOrders} bg="#DC2626" icon={Trash2}>Delete</BatchBtn>
+  </BatchBar>
   <div className="card" style={{overflow:'hidden'}}><div style={{overflowX:'auto'}}><table style={{width:'100%',borderCollapse:'collapse',fontSize:12.5}}>
-    <thead><tr style={{background:'#F8FAFB'}}>{['Material No.','Description','Qty','Price','Total','Ordered','By','Recv','B/O','Status','Actions'].map(h=><th key={h} className="th">{h}</th>)}</tr></thead>
+    <thead><tr style={{background:'#F8FAFB'}}><th className="th" style={{width:36}}><SelBox checked={selOrders.size===filteredOrders.length&&filteredOrders.length>0} onChange={()=>toggleAll(selOrders,setSelOrders,filteredOrders.map(o=>o.id))}/></th>{['Material No.','Description','Qty','Price','Total','Ordered','By','Recv','B/O','Status','Actions'].map(h=><th key={h} className="th">{h}</th>)}</tr></thead>
     <tbody>{filteredOrders.map((o,i)=>(
-      <tr key={o.id} className="tr" style={{borderBottom:'1px solid #F7FAFC',background:i%2===0?'#fff':'#FCFCFD',cursor:'pointer'}} onClick={()=>openOrderInNewTab(o)}>
+      <tr key={o.id} className="tr" style={{borderBottom:'1px solid #F7FAFC',background:selOrders.has(o.id)?'#E6F4ED':i%2===0?'#fff':'#FCFCFD',cursor:'pointer'}} onClick={()=>openOrderInNewTab(o)}>
+        <td className="td" onClick={e=>e.stopPropagation()}><SelBox checked={selOrders.has(o.id)} onChange={()=>toggleSel(selOrders,setSelOrders,o.id)}/></td>
         <td className="td mono" style={{fontSize:11,color:'#0B7A3E',fontWeight:500}}>{o.materialNo||'—'}</td>
         <td className="td" style={{maxWidth:200,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{o.description}</td>
         <td className="td" style={{fontWeight:600,textAlign:'center'}}>{o.quantity}</td>
@@ -1311,11 +1433,12 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
         <td className="td">
           <div style={{display:'flex',gap:4}}>
             <button onClick={(e)=>{e.stopPropagation();setEditingOrder({...o});}} style={{background:'#2563EB',color:'#fff',border:'none',borderRadius:6,padding:'4px 8px',fontSize:10,cursor:'pointer',display:'flex',alignItems:'center',gap:3}}><Edit3 size={11}/> Edit</button>
+            <button onClick={(e)=>{e.stopPropagation();if(window.confirm(`Delete order ${o.id}?`)){setOrders(prev=>prev.filter(x=>x.id!==o.id));api.deleteOrder(o.id);notify('Deleted',o.id,'success');}}} style={{background:'#DC2626',color:'#fff',border:'none',borderRadius:6,padding:'4px 8px',fontSize:10,cursor:'pointer',display:'flex',alignItems:'center',gap:3}}><Trash2 size={11}/></button>
           </div>
         </td>
       </tr>))}</tbody>
   </table></div>
-  <div style={{padding:'12px 16px',borderTop:'1px solid #F0F2F5',display:'flex',justifyContent:'space-between',background:'#FCFCFD'}}><span style={{fontSize:12,color:'#94A3B8'}}>{filteredOrders.length}/{orders.length}</span><span style={{fontSize:12,fontWeight:500}}>{fmt(filteredOrders.reduce((s,o)=>s+o.totalCost,0))}</span></div></div>
+  <div style={{padding:'12px 16px',borderTop:'1px solid #F0F2F5',display:'flex',justifyContent:'space-between',background:'#FCFCFD'}}><span style={{fontSize:12,color:'#94A3B8'}}>{filteredOrders.length}/{orders.length}{selOrders.size>0&&` • ${selOrders.size} selected`}</span><span style={{fontSize:12,fontWeight:500}}>{fmt(filteredOrders.reduce((s,o)=>s+o.totalCost,0))}</span></div></div>
 </div>)}
 
 {/* ═══════════ BULK ORDERS ═══════════ */}
@@ -1329,12 +1452,19 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
       <div key={i} className="card" style={{padding:'18px 22px'}}><div style={{display:'flex',justifyContent:'space-between'}}><div><div style={{fontSize:11,color:'#94A3B8',textTransform:'uppercase',letterSpacing:.5,marginBottom:4}}>{s.l}</div><div className="mono" style={{fontSize:28,fontWeight:700,color:s.c}}>{s.v}</div></div><div style={{padding:10,background:`${s.c}10`,borderRadius:10}}><s.i size={20} color={s.c}/></div></div></div>
     ))}
   </div>
+  <BatchBar count={selBulk.size} onClear={()=>setSelBulk(new Set())}>
+    <BatchBtn onClick={()=>batchStatusBulk('Completed')} bg="#059669" icon={CheckCircle}>Completed</BatchBtn>
+    <BatchBtn onClick={()=>batchStatusBulk('Pending')} bg="#D97706" icon={Clock}>Pending</BatchBtn>
+    <BatchBtn onClick={()=>batchStatusBulk('Approved')} bg="#2563EB" icon={Shield}>Approved</BatchBtn>
+    <BatchBtn onClick={batchDeleteBulk} bg="#DC2626" icon={Trash2}>Delete</BatchBtn>
+  </BatchBar>
   <div className="card" style={{overflow:'hidden'}}>
     <div style={{padding:'16px 20px',borderBottom:'1px solid #E8ECF0',fontWeight:600,fontSize:14}}>Monthly Bulk Order Batches</div>
     <table style={{width:'100%',borderCollapse:'collapse',fontSize:12.5}}>
-      <thead><tr style={{background:'#F8FAFB'}}>{['Batch ID','Month','Created By','Items','Total Cost','Status','Date','Actions'].map(h=><th key={h} className="th">{h}</th>)}</tr></thead>
+      <thead><tr style={{background:'#F8FAFB'}}><th className="th" style={{width:36}}><SelBox checked={selBulk.size===bulkGroups.length&&bulkGroups.length>0} onChange={()=>toggleAll(selBulk,setSelBulk,bulkGroups.map(g=>g.id))}/></th>{['Batch ID','Month','Created By','Items','Total Cost','Status','Date','Actions'].map(h=><th key={h} className="th">{h}</th>)}</tr></thead>
       <tbody>{bulkGroups.map(g=>(
-        <tr key={g.id} className="tr" style={{borderBottom:'1px solid #F7FAFC'}}>
+        <tr key={g.id} className="tr" style={{borderBottom:'1px solid #F7FAFC',background:selBulk.has(g.id)?'#EDE9FE':'#fff'}}>
+          <td className="td"><SelBox checked={selBulk.has(g.id)} onChange={()=>toggleSel(selBulk,setSelBulk,g.id)}/></td>
           <td className="td mono" style={{fontSize:11,fontWeight:600,color:'#4338CA'}}>{g.id}</td>
           <td className="td" style={{fontWeight:600}}><Pill bg="#E6F4ED" color="#0B7A3E"><Calendar size={11}/> {g.month}</Pill></td>
           <td className="td">{g.createdBy}</td>
@@ -1346,6 +1476,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
             <div style={{display:'flex',gap:6}}>
               <button onClick={()=>setSelectedBulkGroup({...g})} style={{background:'#2563EB',color:'#fff',border:'none',borderRadius:6,padding:'4px 8px',fontSize:10,cursor:'pointer',display:'flex',alignItems:'center',gap:3}}><Edit3 size={11}/> Edit</button>
               <button onClick={()=>setExpandedMonth(expandedMonth===g.month?null:g.month)} style={{background:expandedMonth===g.month?'#064E3B':'#0B7A3E',color:'#fff',border:'none',borderRadius:6,padding:'4px 8px',fontSize:10,cursor:'pointer',display:'flex',alignItems:'center',gap:3}}><Eye size={11}/> {expandedMonth===g.month?'Hide':'View'}</button>
+              <button onClick={()=>{if(window.confirm(`Delete bulk group ${g.id}?`)){setBulkGroups(prev=>prev.filter(x=>x.id!==g.id));api.deleteBulkGroup(g.id);notify('Deleted',g.id,'success');}}} style={{background:'#DC2626',color:'#fff',border:'none',borderRadius:6,padding:'4px 8px',fontSize:10,cursor:'pointer',display:'flex',alignItems:'center',gap:3}}><Trash2 size={11}/></button>
             </div>
           </td>
         </tr>))}</tbody>
@@ -1378,10 +1509,16 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
         <h3 style={{fontSize:15,fontWeight:600,display:'flex',alignItems:'center',gap:8}}><Calendar size={16} color="#0B7A3E"/> Orders for: {expandedMonth}</h3>
         <button onClick={()=>setExpandedMonth(null)} style={{background:'none',border:'none',cursor:'pointer'}}><X size={18} color="#64748B"/></button>
       </div>
+      {(()=>{ const monthOrders = orders.filter(o=>o.month===expandedMonth||o.month===expandedMonth.replace(/ /g,'_')||o.month.replace(/_/g,' ')===expandedMonth); const monthIds = monthOrders.filter(o=>selOrders.has(o.id)); return monthIds.length>0 ? <BatchBar count={monthIds.length} onClear={()=>setSelOrders(prev=>{const n=new Set(prev);monthOrders.forEach(o=>n.delete(o.id));return n;})}>
+        <BatchBtn onClick={()=>batchStatusOrders('Received')} bg="#059669" icon={CheckCircle}>Received</BatchBtn>
+        <BatchBtn onClick={()=>batchStatusOrders('Back Order')} bg="#D97706" icon={AlertTriangle}>Back Order</BatchBtn>
+        <BatchBtn onClick={batchDeleteOrders} bg="#DC2626" icon={Trash2}>Delete</BatchBtn>
+      </BatchBar> : null; })()}
       <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
-        <thead><tr style={{background:'#F8FAFB'}}>{['Order ID','Material No','Description','Qty','Ordered By','Order Date','Status','Total Cost','Actions'].map(h=><th key={h} className="th">{h}</th>)}</tr></thead>
+        <thead><tr style={{background:'#F8FAFB'}}><th className="th" style={{width:36}}>{(()=>{const mo=orders.filter(o=>o.month===expandedMonth||o.month===expandedMonth.replace(/ /g,'_')||o.month.replace(/_/g,' ')===expandedMonth);return <SelBox checked={mo.length>0&&mo.every(o=>selOrders.has(o.id))} onChange={()=>{const mo2=orders.filter(o=>o.month===expandedMonth||o.month===expandedMonth.replace(/ /g,'_')||o.month.replace(/_/g,' ')===expandedMonth);const ids=mo2.map(o=>o.id);setSelOrders(prev=>{const n=new Set(prev);const allSel=ids.every(id=>prev.has(id));ids.forEach(id=>allSel?n.delete(id):n.add(id));return n;});}}/>;})()}</th>{['Order ID','Material No','Description','Qty','Ordered By','Order Date','Status','Total Cost','Actions'].map(h=><th key={h} className="th">{h}</th>)}</tr></thead>
         <tbody>{orders.filter(o=>o.month===expandedMonth||o.month===expandedMonth.replace(/ /g,'_')||o.month.replace(/_/g,' ')===expandedMonth).map(o=>(
-          <tr key={o.id} className="tr" onClick={()=>openOrderInNewTab(o)} style={{borderBottom:'1px solid #F7FAFC',cursor:'pointer'}}>
+          <tr key={o.id} className="tr" onClick={()=>openOrderInNewTab(o)} style={{borderBottom:'1px solid #F7FAFC',cursor:'pointer',background:selOrders.has(o.id)?'#E6F4ED':'#fff'}}>
+            <td className="td" onClick={e=>e.stopPropagation()}><SelBox checked={selOrders.has(o.id)} onChange={()=>toggleSel(selOrders,setSelOrders,o.id)}/></td>
             <td className="td mono" style={{fontSize:11,fontWeight:600,color:'#4338CA'}}>{o.id}</td>
             <td className="td mono" style={{fontSize:10}}>{o.materialNo||'—'}</td>
             <td className="td" style={{fontSize:11,maxWidth:200}}>{o.description}</td>
@@ -1391,7 +1528,10 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
             <td className="td"><Pill bg={o.status==='Received'?'#E6F4ED':o.status==='Back Order'?'#FEF3C7':'#FEE2E2'} color={o.status==='Received'?'#0B7A3E':o.status==='Back Order'?'#D97706':'#DC2626'}>{o.status}</Pill></td>
             <td className="td mono" style={{fontWeight:600,fontSize:11}}>{fmt(o.totalCost)}</td>
             <td className="td">
+              <div style={{display:'flex',gap:4}}>
               <button onClick={(e)=>{e.stopPropagation();setEditingOrder({...o});}} style={{background:'#2563EB',color:'#fff',border:'none',borderRadius:6,padding:'4px 8px',fontSize:10,cursor:'pointer',display:'flex',alignItems:'center',gap:3}}><Edit3 size={11}/> Edit</button>
+              <button onClick={(e)=>{e.stopPropagation();if(window.confirm(`Delete ${o.id}?`)){setOrders(prev=>prev.filter(x=>x.id!==o.id));api.deleteOrder(o.id);notify('Deleted',o.id,'success');}}} style={{background:'#DC2626',color:'#fff',border:'none',borderRadius:6,padding:'4px 8px',fontSize:10,cursor:'pointer'}}><Trash2 size={11}/></button>
+              </div>
             </td>
           </tr>))}</tbody>
       </table>
@@ -1580,11 +1720,15 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
   )}
 
   {/* Stock Check History */}
+  <BatchBar count={selStockChecks.size} onClear={()=>setSelStockChecks(new Set())}>
+    <BatchBtn onClick={batchDeleteStockChecks} bg="#DC2626" icon={Trash2}>Delete Selected</BatchBtn>
+  </BatchBar>
   <div className="card" style={{overflow:'hidden'}}>
-    <div style={{padding:'16px 20px',borderBottom:'1px solid #E8ECF0'}}><span style={{fontWeight:600,fontSize:14}}>Stock Check History</span></div>
+    <div style={{padding:'16px 20px',borderBottom:'1px solid #E8ECF0',display:'flex',justifyContent:'space-between'}}><span style={{fontWeight:600,fontSize:14}}>Stock Check History</span>{selStockChecks.size>0&&<span style={{fontSize:11,color:'#DC2626',fontWeight:600}}>{selStockChecks.size} selected</span>}</div>
     <table style={{width:'100%',borderCollapse:'collapse',fontSize:12.5}}>
-      <thead><tr style={{background:'#F8FAFB'}}>{['ID','Date','Checked By','Items','Discrepancies','Status','Notes','Action'].map(h=><th key={h} className="th">{h}</th>)}</tr></thead>
-      <tbody>{stockChecks.map(r=><tr key={r.id} className="tr" style={{borderBottom:'1px solid #F7FAFC'}}>
+      <thead><tr style={{background:'#F8FAFB'}}><th className="th" style={{width:36}}><SelBox checked={selStockChecks.size===stockChecks.length&&stockChecks.length>0} onChange={()=>toggleAll(selStockChecks,setSelStockChecks,stockChecks.map(r=>r.id))}/></th>{['ID','Date','Checked By','Items','Discrepancies','Status','Notes','Action'].map(h=><th key={h} className="th">{h}</th>)}</tr></thead>
+      <tbody>{stockChecks.map(r=><tr key={r.id} className="tr" style={{borderBottom:'1px solid #F7FAFC',background:selStockChecks.has(r.id)?'#FEF3C7':'#fff'}}>
+        <td className="td"><SelBox checked={selStockChecks.has(r.id)} onChange={()=>toggleSel(selStockChecks,setSelStockChecks,r.id)}/></td>
         <td className="td mono" style={{fontSize:11,fontWeight:600,color:'#0B7A3E'}}>{r.id}</td>
         <td className="td">{fmtDate(r.date)}</td>
         <td className="td">{r.checkedBy}</td>
@@ -1593,9 +1737,12 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
         <td className="td"><Pill bg={r.status==='Completed'?'#D1FAE5':'#FEF3C7'} color={r.status==='Completed'?'#059669':'#D97706'}>{r.status}</Pill></td>
         <td className="td" style={{color:'#64748B',fontSize:11,maxWidth:180,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{r.notes||'—'}</td>
         <td className="td">
+          <div style={{display:'flex',gap:4}}>
           {r.status==='Completed' && (
             <button className="bs" style={{padding:'4px 8px',fontSize:11}} onClick={()=>{notify('Report Downloaded',`${r.id} exported`,'success');}}><Download size={12}/></button>
           )}
+          <button onClick={()=>{if(window.confirm(`Delete stock check ${r.id}?`)){setStockChecks(prev=>prev.filter(x=>x.id!==r.id));notify('Deleted',r.id,'success');}}} style={{background:'#DC2626',color:'#fff',border:'none',borderRadius:6,padding:'4px 8px',fontSize:10,cursor:'pointer'}}><Trash2 size={11}/></button>
+          </div>
         </td>
       </tr>)}</tbody>
     </table>
@@ -2051,9 +2198,12 @@ if(scheduledNotifs.emailEnabled){                    setNotifLog(prev=>[{id:'N-'
       <div className="card" style={{padding:'18px 20px'}}><p style={{fontSize:12,color:'#64748B',lineHeight:1.6}}>WhatsApp messaging is handled through the <strong>Baileys WhiskeySockets</strong> integration. Go to the WhatsApp page to connect your session, manage templates, and send messages.<br/><br/>Admin must scan QR code to authorize the session.</p></div>
     </div>
   </div>
+  <BatchBar count={selNotifs.size} onClear={()=>setSelNotifs(new Set())}>
+    <BatchBtn onClick={batchDeleteNotifs} bg="#DC2626" icon={Trash2}>Delete Selected</BatchBtn>
+  </BatchBar>
   <div className="card" style={{overflow:'hidden'}}>
-    <div style={{padding:'16px 20px',borderBottom:'1px solid #E8ECF0',display:'flex',justifyContent:'space-between'}}><span style={{fontWeight:600,fontSize:14}}>All Notification History</span><span style={{fontSize:11,color:'#94A3B8'}}>{notifLog.length} records</span></div>
-    <table style={{width:'100%',borderCollapse:'collapse',fontSize:12.5}}><thead><tr style={{background:'#F8FAFB'}}>{['ID','Channel','To','Subject','Date','Status'].map(h=><th key={h} className="th">{h}</th>)}</tr></thead><tbody>{notifLog.map(n=><tr key={n.id} className="tr" style={{borderBottom:'1px solid #F7FAFC'}}><td className="td mono" style={{fontSize:11,fontWeight:500}}>{n.id}</td><td className="td"><Pill bg={n.type==='email'?'#DBEAFE':'#D1FAE5'} color={n.type==='email'?'#2563EB':'#059669'}>{n.type==='email'?<Mail size={11}/>:<MessageSquare size={11}/>} {n.type==='email'?'Email':'WhatsApp'}</Pill></td><td className="td" style={{fontSize:12,color:'#64748B'}}>{n.to}</td><td className="td" style={{maxWidth:250,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{n.subject}</td><td className="td" style={{color:'#94A3B8',fontSize:11}}>{fmtDate(n.date)}</td><td className="td"><Pill bg="#E6F4ED" color="#0B7A3E"><Check size={11}/> {n.status}</Pill></td></tr>)}</tbody></table>
+    <div style={{padding:'16px 20px',borderBottom:'1px solid #E8ECF0',display:'flex',justifyContent:'space-between'}}><span style={{fontWeight:600,fontSize:14}}>All Notification History</span><span style={{fontSize:11,color:'#94A3B8'}}>{notifLog.length} records{selNotifs.size>0&&` • ${selNotifs.size} selected`}</span></div>
+    <table style={{width:'100%',borderCollapse:'collapse',fontSize:12.5}}><thead><tr style={{background:'#F8FAFB'}}><th className="th" style={{width:36}}><SelBox checked={selNotifs.size===notifLog.length&&notifLog.length>0} onChange={()=>toggleAll(selNotifs,setSelNotifs,notifLog.map(n=>n.id))}/></th>{['ID','Channel','To','Subject','Date','Status'].map(h=><th key={h} className="th">{h}</th>)}</tr></thead><tbody>{notifLog.map(n=><tr key={n.id} className="tr" style={{borderBottom:'1px solid #F7FAFC',background:selNotifs.has(n.id)?'#EDE9FE':'#fff'}}><td className="td"><SelBox checked={selNotifs.has(n.id)} onChange={()=>toggleSel(selNotifs,setSelNotifs,n.id)}/></td><td className="td mono" style={{fontSize:11,fontWeight:500}}>{n.id}</td><td className="td"><Pill bg={n.type==='email'?'#DBEAFE':'#D1FAE5'} color={n.type==='email'?'#2563EB':'#059669'}>{n.type==='email'?<Mail size={11}/>:<MessageSquare size={11}/>} {n.type==='email'?'Email':'WhatsApp'}</Pill></td><td className="td" style={{fontSize:12,color:'#64748B'}}>{n.to}</td><td className="td" style={{maxWidth:250,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{n.subject}</td><td className="td" style={{color:'#94A3B8',fontSize:11}}>{fmtDate(n.date)}</td><td className="td"><Pill bg="#E6F4ED" color="#0B7A3E"><Check size={11}/> {n.status}</Pill></td></tr>)}</tbody></table>
   </div>
 </div>)}
 
@@ -2088,11 +2238,19 @@ if(scheduledNotifs.emailEnabled){                    setNotifLog(prev=>[{id:'N-'
       handleCreateUser({name,username,password:'temp123',email:email||'',role:role||'user',phone:''});
     }}><UserPlus size={14}/> Create User</button>
   </div>
+  <BatchBar count={selUsers.size} onClear={()=>setSelUsers(new Set())}>
+    <BatchBtn onClick={()=>batchRoleUsers('admin')} bg="#2563EB" icon={Shield}>Set Admin</BatchBtn>
+    <BatchBtn onClick={()=>batchRoleUsers('user')} bg="#059669" icon={Users}>Set User</BatchBtn>
+    <BatchBtn onClick={()=>batchStatusUsers('active')} bg="#059669" icon={CheckCircle}>Activate</BatchBtn>
+    <BatchBtn onClick={()=>batchStatusUsers('suspended')} bg="#D97706" icon={AlertTriangle}>Suspend</BatchBtn>
+    <BatchBtn onClick={batchDeleteUsers} bg="#DC2626" icon={Trash2}>Delete</BatchBtn>
+  </BatchBar>
   <div className="card" style={{overflow:'hidden'}}>
     <table style={{width:'100%',borderCollapse:'collapse',fontSize:12.5}}>
-      <thead><tr style={{background:'#F8FAFB'}}>{['ID','Name','Username','Email','Role','Status','Created','Phone','Actions'].map(h=><th key={h} className="th">{h}</th>)}</tr></thead>
+      <thead><tr style={{background:'#F8FAFB'}}><th className="th" style={{width:36}}><SelBox checked={selUsers.size===users.length&&users.length>0} onChange={()=>toggleAll(selUsers,setSelUsers,users.map(u=>u.id))}/></th>{['ID','Name','Username','Email','Role','Status','Created','Phone','Actions'].map(h=><th key={h} className="th">{h}</th>)}</tr></thead>
       <tbody>{users.map(u=>(
-        <tr key={u.id} className="tr" style={{borderBottom:'1px solid #F7FAFC'}}>
+        <tr key={u.id} className="tr" style={{borderBottom:'1px solid #F7FAFC',background:selUsers.has(u.id)?'#DBEAFE':'#fff'}}>
+          <td className="td"><SelBox checked={selUsers.has(u.id)} onChange={()=>toggleSel(selUsers,setSelUsers,u.id)}/></td>
           <td className="td mono" style={{fontSize:11,fontWeight:500}}>{u.id}</td>
           <td className="td"><div style={{display:'flex',alignItems:'center',gap:8}}>
             <div style={{width:28,height:28,borderRadius:'50%',background:u.role==='admin'?'linear-gradient(135deg,#1E40AF,#3B82F6)':'linear-gradient(135deg,#006837,#00A550)',display:'flex',alignItems:'center',justifyContent:'center',color:'#fff',fontSize:10,fontWeight:700}}>{u.name.split(' ').map(w=>w[0]).join('')}</div>
@@ -2101,11 +2259,14 @@ if(scheduledNotifs.emailEnabled){                    setNotifLog(prev=>[{id:'N-'
           <td className="td mono" style={{fontSize:11}}>{u.username}</td>
           <td className="td" style={{fontSize:11,color:'#64748B'}}>{u.email}</td>
           <td className="td"><Pill bg={u.role==='admin'?'#DBEAFE':'#E6F4ED'} color={u.role==='admin'?'#2563EB':'#0B7A3E'}><Shield size={10}/> {u.role}</Pill></td>
-          <td className="td"><Pill bg="#E6F4ED" color="#0B7A3E">{u.status}</Pill></td>
+          <td className="td"><Pill bg={u.status==='active'?'#E6F4ED':'#FEE2E2'} color={u.status==='active'?'#0B7A3E':'#DC2626'}>{u.status}</Pill></td>
           <td className="td" style={{fontSize:11,color:'#94A3B8'}}>{fmtDate(u.created)}</td>
           <td className="td mono" style={{fontSize:11}}>{u.phone||'—'}</td>
           <td className="td">
-            <button onClick={()=>setSelectedUser({...u})} style={{background:'#2563EB',color:'#fff',border:'none',borderRadius:6,padding:'4px 10px',fontSize:11,cursor:'pointer',display:'flex',alignItems:'center',gap:4}}><Edit3 size={12}/> Edit</button>
+            <div style={{display:'flex',gap:4}}>
+              <button onClick={()=>setSelectedUser({...u})} style={{background:'#2563EB',color:'#fff',border:'none',borderRadius:6,padding:'4px 10px',fontSize:11,cursor:'pointer',display:'flex',alignItems:'center',gap:4}}><Edit3 size={12}/> Edit</button>
+              <button onClick={()=>{if(window.confirm(`Delete user ${u.name}?`)){setUsers(prev=>prev.filter(x=>x.id!==u.id));api.deleteUser(u.id);notify('Deleted',u.name,'success');}}} style={{background:'#DC2626',color:'#fff',border:'none',borderRadius:6,padding:'4px 8px',fontSize:10,cursor:'pointer'}}><Trash2 size={11}/></button>
+            </div>
           </td>
         </tr>))}</tbody>
     </table>
@@ -2646,13 +2807,21 @@ if(scheduledNotifs.emailEnabled){                    setNotifLog(prev=>[{id:'N-'
       </div>
       {pendingApprovals.length>0 && (
         <div style={{marginTop:8}}>
-          <label style={{display:'block',fontSize:12,fontWeight:600,color:'#4A5568',marginBottom:8}}>Pending Approvals ({pendingApprovals.filter(a=>a.status==='pending').length})</label>
-          <div style={{maxHeight:200,overflow:'auto',border:'1px solid #E8ECF0',borderRadius:8}}>
+          <label style={{display:'block',fontSize:12,fontWeight:600,color:'#4A5568',marginBottom:8}}>Pending Approvals ({pendingApprovals.filter(a=>a.status==='pending').length}){selApprovals.size>0&&<span style={{color:'#2563EB',marginLeft:8}}>{selApprovals.size} selected</span>}</label>
+          {selApprovals.size>0 && <div style={{display:'flex',gap:6,marginBottom:8}}>
+            <button onClick={()=>batchApprovalAction('approved')} style={{padding:'5px 12px',background:'#059669',color:'#fff',border:'none',borderRadius:6,fontSize:11,fontWeight:600,cursor:'pointer',display:'flex',alignItems:'center',gap:4}}><CheckCircle size={12}/> Approve All ({selApprovals.size})</button>
+            <button onClick={()=>batchApprovalAction('rejected')} style={{padding:'5px 12px',background:'#DC2626',color:'#fff',border:'none',borderRadius:6,fontSize:11,fontWeight:600,cursor:'pointer',display:'flex',alignItems:'center',gap:4}}><X size={12}/> Reject All ({selApprovals.size})</button>
+            <button onClick={()=>setSelApprovals(new Set())} style={{padding:'5px 12px',background:'#64748B',color:'#fff',border:'none',borderRadius:6,fontSize:11,fontWeight:600,cursor:'pointer'}}>Clear</button>
+          </div>}
+          <div style={{maxHeight:250,overflow:'auto',border:'1px solid #E8ECF0',borderRadius:8}}>
             {pendingApprovals.filter(a=>a.status==='pending').map(a=>(
-              <div key={a.id} style={{padding:12,borderBottom:'1px solid #F1F5F9',display:'flex',alignItems:'center',justifyContent:'space-between'}}>
-                <div>
-                  <div style={{fontSize:12,fontWeight:600}}>{a.orderId} - {a.description}</div>
-                  <div style={{fontSize:11,color:'#64748B'}}>By: {a.requestedBy} | Qty: {a.quantity} | S${a.totalCost?.toFixed(2)||'0.00'}</div>
+              <div key={a.id} style={{padding:12,borderBottom:'1px solid #F1F5F9',display:'flex',alignItems:'center',justifyContent:'space-between',background:selApprovals.has(a.id)?'#EDE9FE':'#fff'}}>
+                <div style={{display:'flex',alignItems:'center',gap:10}}>
+                  <SelBox checked={selApprovals.has(a.id)} onChange={()=>toggleSel(selApprovals,setSelApprovals,a.id)}/>
+                  <div>
+                    <div style={{fontSize:12,fontWeight:600}}>{a.orderId} - {a.description}</div>
+                    <div style={{fontSize:11,color:'#64748B'}}>By: {a.requestedBy} | Qty: {a.quantity} | S${a.totalCost?.toFixed(2)||'0.00'}</div>
+                  </div>
                 </div>
                 <div style={{display:'flex',gap:6}}>
                   <button onClick={()=>handleApprovalAction(a.id,'approved')} style={{padding:'6px 12px',background:'#D1FAE5',color:'#059669',border:'none',borderRadius:6,fontSize:11,fontWeight:600,cursor:'pointer'}}>Approve</button>
