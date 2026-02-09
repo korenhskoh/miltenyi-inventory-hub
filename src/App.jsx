@@ -183,43 +183,6 @@ const [selectedUser, setSelectedUser] = useState(null);
 
   const isAdmin = currentUser?.role === 'admin';
 
-  // ── localStorage Persistence ──
-  const LS_KEYS = { orders: 'mih_orders', bulkGroups: 'mih_bulkGroups', emailConfig: 'mih_emailConfig', emailTemplates: 'mih_emailTemplates', priceConfig: 'mih_priceConfig', notifLog: 'mih_notifLog', pendingApprovals: 'mih_pendingApprovals', users: 'mih_users', waNotifyRules: 'mih_waNotifyRules', scheduledNotifs: 'mih_scheduledNotifs', customLogo: 'mih_customLogo', stockChecks: 'mih_stockChecks' };
-
-  // Load from localStorage on mount
-  useEffect(() => {
-    try {
-      const saved = {};
-      Object.entries(LS_KEYS).forEach(([key, lsKey]) => { const v = localStorage.getItem(lsKey); if (v) saved[key] = JSON.parse(v); });
-      if (saved.orders?.length) setOrders(saved.orders);
-      if (saved.bulkGroups?.length) setBulkGroups(saved.bulkGroups);
-      if (saved.emailConfig) setEmailConfig(saved.emailConfig);
-      if (saved.emailTemplates) setEmailTemplates(saved.emailTemplates);
-      if (saved.priceConfig) setPriceConfig(saved.priceConfig);
-      if (saved.notifLog?.length) setNotifLog(saved.notifLog);
-      if (saved.pendingApprovals?.length) setPendingApprovals(saved.pendingApprovals);
-      if (saved.users?.length) setUsers(saved.users);
-      if (saved.waNotifyRules) setWaNotifyRules(saved.waNotifyRules);
-      if (saved.scheduledNotifs) setScheduledNotifs(saved.scheduledNotifs);
-      if (saved.customLogo) setCustomLogo(saved.customLogo);
-      if (saved.stockChecks?.length) setStockChecks(saved.stockChecks);
-    } catch (e) { console.warn('Failed to load saved data:', e); }
-  }, []);
-
-  // Save to localStorage on changes
-  useEffect(() => { try { localStorage.setItem(LS_KEYS.orders, JSON.stringify(orders)); } catch(e){} }, [orders]);
-  useEffect(() => { try { localStorage.setItem(LS_KEYS.bulkGroups, JSON.stringify(bulkGroups)); } catch(e){} }, [bulkGroups]);
-  useEffect(() => { try { localStorage.setItem(LS_KEYS.emailConfig, JSON.stringify(emailConfig)); } catch(e){} }, [emailConfig]);
-  useEffect(() => { try { localStorage.setItem(LS_KEYS.emailTemplates, JSON.stringify(emailTemplates)); } catch(e){} }, [emailTemplates]);
-  useEffect(() => { try { localStorage.setItem(LS_KEYS.priceConfig, JSON.stringify(priceConfig)); } catch(e){} }, [priceConfig]);
-  useEffect(() => { try { localStorage.setItem(LS_KEYS.notifLog, JSON.stringify(notifLog)); } catch(e){} }, [notifLog]);
-  useEffect(() => { try { localStorage.setItem(LS_KEYS.pendingApprovals, JSON.stringify(pendingApprovals)); } catch(e){} }, [pendingApprovals]);
-  useEffect(() => { try { localStorage.setItem(LS_KEYS.users, JSON.stringify(users)); } catch(e){} }, [users]);
-  useEffect(() => { try { localStorage.setItem(LS_KEYS.waNotifyRules, JSON.stringify(waNotifyRules)); } catch(e){} }, [waNotifyRules]);
-  useEffect(() => { try { localStorage.setItem(LS_KEYS.scheduledNotifs, JSON.stringify(scheduledNotifs)); } catch(e){} }, [scheduledNotifs]);
-  useEffect(() => { try { localStorage.setItem(LS_KEYS.customLogo, JSON.stringify(customLogo)); } catch(e){} }, [customLogo]);
-  useEffect(() => { try { localStorage.setItem(LS_KEYS.stockChecks, JSON.stringify(stockChecks)); } catch(e){} }, [stockChecks]);
-
   // ── Catalog ──
   const catalogLookup = useMemo(() => { const m={}; PARTS_CATALOG.forEach(p=>{m[p.m]=p;}); return m; }, []);
   const PAGE_SIZE = 25;
@@ -284,6 +247,43 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
   const [waAllowedSenders, setWaAllowedSenders] = useState(['admin']); // usernames allowed to connect WhatsApp
   const [aiConversationLogs, setAiConversationLogs] = useState([]);
   const [aiAdminTab, setAiAdminTab] = useState('knowledge');
+
+  // ── localStorage Persistence ──
+  const LS_KEYS = { orders: 'mih_orders', bulkGroups: 'mih_bulkGroups', emailConfig: 'mih_emailConfig', emailTemplates: 'mih_emailTemplates', priceConfig: 'mih_priceConfig', notifLog: 'mih_notifLog', pendingApprovals: 'mih_pendingApprovals', users: 'mih_users', waNotifyRules: 'mih_waNotifyRules', scheduledNotifs: 'mih_scheduledNotifs', customLogo: 'mih_customLogo', stockChecks: 'mih_stockChecks' };
+
+  // Load from localStorage on mount
+  useEffect(() => {
+    try {
+      const saved = {};
+      Object.entries(LS_KEYS).forEach(([key, lsKey]) => { const v = localStorage.getItem(lsKey); if (v) saved[key] = JSON.parse(v); });
+      if (saved.orders?.length) setOrders(saved.orders);
+      if (saved.bulkGroups?.length) setBulkGroups(saved.bulkGroups);
+      if (saved.emailConfig) setEmailConfig(saved.emailConfig);
+      if (saved.emailTemplates) setEmailTemplates(saved.emailTemplates);
+      if (saved.priceConfig) setPriceConfig(saved.priceConfig);
+      if (saved.notifLog?.length) setNotifLog(saved.notifLog);
+      if (saved.pendingApprovals?.length) setPendingApprovals(saved.pendingApprovals);
+      if (saved.users?.length) setUsers(saved.users);
+      if (saved.waNotifyRules) setWaNotifyRules(saved.waNotifyRules);
+      if (saved.scheduledNotifs) setScheduledNotifs(saved.scheduledNotifs);
+      if (saved.customLogo) setCustomLogo(saved.customLogo);
+      if (saved.stockChecks?.length) setStockChecks(saved.stockChecks);
+    } catch (e) { console.warn('Failed to load saved data:', e); }
+  }, []);
+
+  // Save to localStorage on changes
+  useEffect(() => { try { localStorage.setItem(LS_KEYS.orders, JSON.stringify(orders)); } catch(e){} }, [orders]);
+  useEffect(() => { try { localStorage.setItem(LS_KEYS.bulkGroups, JSON.stringify(bulkGroups)); } catch(e){} }, [bulkGroups]);
+  useEffect(() => { try { localStorage.setItem(LS_KEYS.emailConfig, JSON.stringify(emailConfig)); } catch(e){} }, [emailConfig]);
+  useEffect(() => { try { localStorage.setItem(LS_KEYS.emailTemplates, JSON.stringify(emailTemplates)); } catch(e){} }, [emailTemplates]);
+  useEffect(() => { try { localStorage.setItem(LS_KEYS.priceConfig, JSON.stringify(priceConfig)); } catch(e){} }, [priceConfig]);
+  useEffect(() => { try { localStorage.setItem(LS_KEYS.notifLog, JSON.stringify(notifLog)); } catch(e){} }, [notifLog]);
+  useEffect(() => { try { localStorage.setItem(LS_KEYS.pendingApprovals, JSON.stringify(pendingApprovals)); } catch(e){} }, [pendingApprovals]);
+  useEffect(() => { try { localStorage.setItem(LS_KEYS.users, JSON.stringify(users)); } catch(e){} }, [users]);
+  useEffect(() => { try { localStorage.setItem(LS_KEYS.waNotifyRules, JSON.stringify(waNotifyRules)); } catch(e){} }, [waNotifyRules]);
+  useEffect(() => { try { localStorage.setItem(LS_KEYS.scheduledNotifs, JSON.stringify(scheduledNotifs)); } catch(e){} }, [scheduledNotifs]);
+  useEffect(() => { try { localStorage.setItem(LS_KEYS.customLogo, JSON.stringify(customLogo)); } catch(e){} }, [customLogo]);
+  useEffect(() => { try { localStorage.setItem(LS_KEYS.stockChecks, JSON.stringify(stockChecks)); } catch(e){} }, [stockChecks]);
 
   // ── Open Order in New Tab ──
   const openOrderInNewTab = (order) => {
