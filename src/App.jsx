@@ -310,7 +310,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
 
   // ── WhatsApp Baileys functions ──
   // WhatsApp API Base URL
-  const WA_API_URL = 'http://localhost:3001/api/whatsapp';
+  const WA_API_URL = (import.meta.env.VITE_WA_API_URL || 'http://localhost:3001') + '/api/whatsapp';
 
   // Poll for WhatsApp status
   const pollWaStatus = async () => {

@@ -8,3 +8,4 @@ dist
 docs/
 nul
 server/node_modules
+server/auth_session
