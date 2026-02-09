@@ -5,7 +5,7 @@ import QRCode from 'qrcode';
 import pino from 'pino';
 
 const app = express();
-const PORT = process.env.PORT || 3001;
+const PORT = process.env.PORT || 8080;
 
 // Middleware
 app.use(cors({
