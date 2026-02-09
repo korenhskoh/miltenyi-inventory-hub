@@ -41,64 +41,8 @@ let sessionInfo = null;
 // Logger (silent for cleaner output)
 const logger = pino({ level: 'silent' });
 
-// Message Templates
-const messageTemplates = {
-  orderCreated: (data) => `🛒 *New Order Created*
-
-Order ID: ${data.orderId}
-Item: ${data.description}
-Material: ${data.materialNo}
-Quantity: ${data.quantity}
-Total: ${data.total}
-Ordered By: ${data.orderBy}
-Date: ${data.date}
-
-_Miltenyi Inventory Hub SG_`,
-
-  backorderReceived: (data) => `📦 *Backorder Update*
-
-Good news! Items have arrived:
-
-Order ID: ${data.orderId}
-Item: ${data.description}
-Received: ${data.received}/${data.ordered}
-${data.remaining > 0 ? `Still Pending: ${data.remaining}` : '✅ Fully Received'}
-
-_Miltenyi Inventory Hub SG_`,
-
-  deliveryArrival: (data) => `🚚 *Delivery Arrived*
-
-Bulk Order: ${data.month}
-Items Delivered: ${data.itemCount}
-Total Value: ${data.totalValue}
-
-Please verify and update received quantities in the system.
-
-_Miltenyi Inventory Hub SG_`,
-
-  stockAlert: (data) => `⚠️ *Stock Discrepancy Alert*
-
-Stock Check: ${data.checkId}
-Discrepancies Found: ${data.discrepancies}
-Checked By: ${data.checkedBy}
-Date: ${data.date}
-
-Please review the stock check report.
-
-_Miltenyi Inventory Hub SG_`,
-
-  monthlyUpdate: (data) => `📊 *Monthly Summary - ${data.month}*
-
-Orders: ${data.totalOrders}
-Received: ${data.received}
-Pending: ${data.pending}
-Back Orders: ${data.backOrders}
-Total Value: ${data.totalValue}
-
-_Miltenyi Inventory Hub SG_`,
-
-  custom: (data) => data.message
-};
+// Message Templates (imported from shared module)
+import { messageTemplates } from './messageTemplates.js';
 
 // Initialize WhatsApp Connection
 async function connectWhatsApp() {
@@ -325,13 +269,16 @@ app.get('/api/whatsapp/templates', (req, res) => {
         remaining: 1,
         month: 'Jan 2026',
         itemCount: 5,
+        totalItems: 10,
         totalValue: 'S$5,000',
         checkId: 'SC-001',
         discrepancies: 2,
         checkedBy: 'Admin',
+        verifiedBy: 'Admin',
         totalOrders: 10,
         pending: 3,
         backOrders: 2,
+        itemsList: '• Sample Item: 5/5\n• Another Item: 3/5',
         message: 'Custom message here'
       })
     }))

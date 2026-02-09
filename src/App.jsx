@@ -240,7 +240,8 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
     bulkApproval: { subject: '[APPROVAL] Bulk Order {batchId} - {month}', body: 'Bulk Order Approval Request\n\nBatch ID: {batchId}\nMonth: {month}\nItems: {itemCount}\nTotal Cost: S${totalCost}\nRequested By: {orderBy}\n\nReply APPROVE to approve or REJECT to decline.\n\n-Miltenyi Inventory Hub SG' },
     orderNotification: { subject: 'New Order: {orderId} - {description}', body: 'A new order has been created.\n\nOrder ID: {orderId}\nItem: {description}\nMaterial: {materialNo}\nQuantity: {quantity}\nTotal: S${totalCost}\nOrdered By: {orderBy}\nDate: {date}\n\n-Miltenyi Inventory Hub SG' },
     backOrderAlert: { subject: 'Back Order Alert: {description}', body: 'Back Order Alert\n\nThe following item is on back order:\n\nOrder ID: {orderId}\nItem: {description}\nOrdered: {quantity}\nReceived: {received}\nPending: {pending}\n\nPlease follow up with HQ.\n\n-Miltenyi Inventory Hub SG' },
-    monthlySummary: { subject: 'Monthly Summary - {month}', body: 'Monthly Inventory Summary\n\nMonth: {month}\nTotal Orders: {totalOrders}\nReceived: {received}\nPending: {pending}\nBack Orders: {backOrders}\nTotal Value: S${totalValue}\n\n-Miltenyi Inventory Hub SG' }
+    monthlySummary: { subject: 'Monthly Summary - {month}', body: 'Monthly Inventory Summary\n\nMonth: {month}\nTotal Orders: {totalOrders}\nReceived: {received}\nPending: {pending}\nBack Orders: {backOrders}\nTotal Value: S${totalValue}\n\n-Miltenyi Inventory Hub SG' },
+    partArrivalDone: { subject: 'Part Arrival Verified - {month}', body: 'Part Arrival Verified\n\nMonth: {month}\nTotal Items: {totalItems}\nFully Received: {received}\nBack Orders: {backOrders}\nVerified By: {verifiedBy}\nDate: {date}\n\nItems:\n{itemsList}\n\n-Miltenyi Inventory Hub SG' }
   });
   const [editingTemplate, setEditingTemplate] = useState(null);
   const [pendingApprovals, setPendingApprovals] = useState([]);
@@ -1827,7 +1828,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
                           for (const user of users.filter(u=>u.role!=='admin'&&u.status==='active'&&u.phone)) {
                             await fetch(`${WA_API_URL}/send`, {
                               method: 'POST', headers: {'Content-Type':'application/json'},
-                              body: JSON.stringify({ phone: user.phone, template: 'custom', data: { message: `📦 *Part Arrival Verified*\n\nBatch: ${bg.month}\n✅ Fully Received: ${received}\n⚠️ Back Order: ${backorder}\n\nItems:\n${itemsList}${bgOrders.length>5?`\n...and ${bgOrders.length-5} more`:''}` }})
+                              body: JSON.stringify({ phone: user.phone, template: 'partArrivalDone', data: { month: bg.month, totalItems: bgOrders.length, received, backOrders: backorder, verifiedBy: currentUser?.name||'Admin', date: new Date().toISOString().slice(0,10), itemsList: itemsList+(bgOrders.length>5?`\n...and ${bgOrders.length-5} more`:'') }})
                             });
                           }
                         }
@@ -1848,7 +1849,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
                         try {
                           await fetch(`${WA_API_URL}/send`, {
                             method: 'POST', headers: {'Content-Type':'application/json'},
-                            body: JSON.stringify({ phone: users.find(u=>u.name===bg.createdBy)?.phone || '+65 9111 2222', template: 'custom', data: { message: `✅ *Arrival Check Complete*\n\nBatch: ${bg.month}\nAll ${bgOrders.length} items received!\nTotal: S$${bg.totalCost.toFixed(2)}\n\n_Miltenyi Inventory Hub SG_` }})
+                            body: JSON.stringify({ phone: users.find(u=>u.name===bg.createdBy)?.phone || '+65 9111 2222', template: 'partArrivalDone', data: { month: bg.month, totalItems: bgOrders.length, received: bgOrders.length, backOrders: 0, verifiedBy: currentUser?.name||'Admin', date: new Date().toISOString().slice(0,10), itemsList: bgOrders.slice(0,5).map(o=>`• ${o.description.slice(0,30)}: ${o.qtyReceived}/${o.quantity}`).join('\n')+(bgOrders.length>5?`\n...and ${bgOrders.length-5} more`:'') }})
                           });
                         } catch(e) {}
                       }
