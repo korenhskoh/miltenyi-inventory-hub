@@ -1,18 +1,36 @@
 import express from 'express';
 import cors from 'cors';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import makeWASocket, { useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } from '@whiskeysockets/baileys';
 import QRCode from 'qrcode';
 import pino from 'pino';
+import { initDatabase } from './initDb.js';
+
+// API Routes
+import ordersRouter from './routes/orders.js';
+import bulkGroupsRouter from './routes/bulkGroups.js';
+import usersRouter from './routes/users.js';
+import authRouter from './routes/auth.js';
+import stockChecksRouter from './routes/stockChecks.js';
+import notificationsRouter from './routes/notifications.js';
+import approvalsRouter from './routes/approvals.js';
+import configRouter from './routes/config.js';
+import catalogRouter from './routes/catalog.js';
+import migrateRouter from './routes/migrate.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const app = express();
-const PORT = process.env.PORT || 8080;
+const PORT = process.env.PORT || 3001;
 
 // Middleware
 app.use(cors({
   origin: process.env.FRONTEND_URL || '*',
   credentials: true
 }));
-app.use(express.json());
+app.use(express.json({ limit: '10mb' }));
 
 // WhatsApp State
 let sock = null;
@@ -320,29 +338,72 @@ app.get('/api/whatsapp/templates', (req, res) => {
   });
 });
 
+// ============ DATA API ROUTES ============
+app.use('/api/orders', ordersRouter);
+app.use('/api/bulk-groups', bulkGroupsRouter);
+app.use('/api/users', usersRouter);
+app.use('/api/auth', authRouter);
+app.use('/api/stock-checks', stockChecksRouter);
+app.use('/api/notif-log', notificationsRouter);
+app.use('/api/pending-approvals', approvalsRouter);
+app.use('/api/config', configRouter);
+app.use('/api/catalog', catalogRouter);
+app.use('/api/migrate', migrateRouter);
+
 // Health check
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', whatsapp: connectionStatus });
 });
 
-// Start server
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`
+// ============ STATIC FILE SERVING ============
+const distPath = path.join(__dirname, '..', 'dist');
+app.use(express.static(distPath));
+
+// SPA fallback — all non-API routes serve index.html
+app.get('*', (req, res) => {
+  res.sendFile(path.join(distPath, 'index.html'));
+});
+
+// ============ START SERVER ============
+async function start() {
+  // Initialize database
+  if (process.env.DATABASE_URL) {
+    try {
+      await initDatabase();
+      console.log('Database initialized');
+    } catch (err) {
+      console.error('Database init failed:', err.message);
+      console.log('Continuing without database — localStorage fallback active');
+    }
+  } else {
+    console.log('No DATABASE_URL set — running without database (localStorage only)');
+  }
+
+  app.listen(PORT, '0.0.0.0', () => {
+    console.log(`
 ╔════════════════════════════════════════════════════════════╗
-║     Miltenyi WhatsApp Server (Baileys)                     ║
+║     Miltenyi Inventory Hub Server                          ║
 ║     Running on http://0.0.0.0:${PORT}                         ║
 ╠════════════════════════════════════════════════════════════╣
-║  Endpoints:                                                ║
-║  GET  /api/whatsapp/status     - Connection status         ║
-║  POST /api/whatsapp/connect    - Connect (get QR)          ║
-║  POST /api/whatsapp/disconnect - Disconnect session        ║
-║  POST /api/whatsapp/send       - Send message              ║
-║  POST /api/whatsapp/broadcast  - Send to multiple          ║
-║  GET  /api/whatsapp/templates  - List templates            ║
+║  API Routes:                                               ║
+║  /api/orders          - Orders CRUD                        ║
+║  /api/bulk-groups     - Bulk Groups CRUD                   ║
+║  /api/users           - User Management                    ║
+║  /api/auth            - Login / Register                   ║
+║  /api/stock-checks    - Stock Checks                       ║
+║  /api/notif-log       - Notification Log                   ║
+║  /api/pending-approvals - Approvals                        ║
+║  /api/config          - App Configuration                  ║
+║  /api/catalog         - Parts Catalog                      ║
+║  /api/whatsapp/*      - WhatsApp Baileys                   ║
+║  /api/health          - Health Check                       ║
 ╚════════════════════════════════════════════════════════════╝
-  `);
+    `);
 
-  // Auto-connect WhatsApp on server start
-  console.log('🔄 Auto-connecting WhatsApp...');
-  connectWhatsApp().catch(err => console.error('Auto-connect failed:', err.message));
-});
+    // Auto-connect WhatsApp on server start
+    console.log('Auto-connecting WhatsApp...');
+    connectWhatsApp().catch(err => console.error('Auto-connect failed:', err.message));
+  });
+}
+
+start();
