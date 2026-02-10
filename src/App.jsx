@@ -2720,6 +2720,11 @@ if(scheduledNotifs.emailEnabled){                    setNotifLog(prev=>[{id:'N-'
         <label style={{display:'block',fontSize:12,fontWeight:600,color:'#4A5568',marginBottom:6}}>Phone Number</label>
         <input value={selectedUser.phone||''} onChange={e=>setSelectedUser(prev=>({...prev,phone:e.target.value}))} placeholder="+65 XXXX XXXX" style={{width:'100%',padding:'10px 12px',borderRadius:8,border:'1.5px solid #E2E8F0',fontSize:13,boxSizing:'border-box'}}/>
       </div>
+      <div>
+        <label style={{display:'block',fontSize:12,fontWeight:600,color:'#4A5568',marginBottom:6}}>Set New Password <span style={{fontWeight:400,color:'#94A3B8'}}>(leave blank to keep current)</span></label>
+        <input type="password" value={selectedUser._newPassword||''} onChange={e=>setSelectedUser(prev=>({...prev,_newPassword:e.target.value}))} placeholder="Enter new password" style={{width:'100%',padding:'10px 12px',borderRadius:8,border:'1.5px solid #E2E8F0',fontSize:13,boxSizing:'border-box'}}/>
+        {selectedUser._newPassword&&selectedUser._newPassword.length<6&&<div style={{fontSize:11,color:'#DC2626',marginTop:4}}>Password must be at least 6 characters</div>}
+      </div>
       <div className="grid-2" style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
         <div>
           <label style={{display:'block',fontSize:12,fontWeight:600,color:'#4A5568',marginBottom:6}}>Role</label>
@@ -2767,7 +2772,7 @@ if(scheduledNotifs.emailEnabled){                    setNotifLog(prev=>[{id:'N-'
       {selectedUser.role==='admin'&&<div style={{padding:14,borderRadius:10,background:'#DBEAFE',border:'1px solid #93C5FD',fontSize:12,color:'#1E40AF',display:'flex',alignItems:'center',gap:8}}><Shield size={14}/> Admin role has full access to all features.</div>}
       <div style={{display:'flex',gap:10,marginTop:8}}>
         <button onClick={()=>setSelectedUser(null)} style={{flex:1,padding:'10px',borderRadius:8,border:'1.5px solid #E2E8F0',background:'#fff',color:'#64748B',fontWeight:600,fontSize:13,cursor:'pointer'}}>Cancel</button>
-        <button onClick={()=>{setUsers(prev=>prev.map(u=>u.id===selectedUser.id?selectedUser:u));api.updateUser(selectedUser.id,selectedUser);setSelectedUser(null);notify('User Updated','Changes saved to database','success');}} style={{flex:1,padding:'10px',borderRadius:8,border:'none',background:'linear-gradient(135deg,#006837,#00A550)',color:'#fff',fontWeight:600,fontSize:13,cursor:'pointer'}}>Save Changes</button>
+        <button onClick={()=>{if(selectedUser._newPassword&&selectedUser._newPassword.length<6){notify('Error','Password must be at least 6 characters','error');return;}const payload={...selectedUser};if(payload._newPassword){payload.password=payload._newPassword;}delete payload._newPassword;setUsers(prev=>prev.map(u=>u.id===selectedUser.id?selectedUser:u));api.updateUser(selectedUser.id,payload);setSelectedUser(null);notify('User Updated',payload.password?'Password and profile saved to database':'Changes saved to database','success');}} style={{flex:1,padding:'10px',borderRadius:8,border:'none',background:'linear-gradient(135deg,#006837,#00A550)',color:'#fff',fontWeight:600,fontSize:13,cursor:'pointer'}}>Save Changes</button>
       </div>
     </div>
   </div>
