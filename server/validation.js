@@ -13,6 +13,17 @@ export function pickAllowed(obj, allowedFields) {
 }
 
 /**
+ * Remove empty strings from DATE columns to prevent PostgreSQL errors.
+ * Empty strings are invalid for DATE type; deleting them lets the column default to NULL.
+ */
+export function sanitizeDates(obj, dateFields) {
+  for (const f of dateFields) {
+    if (f in obj && (obj[f] === '' || obj[f] === undefined)) delete obj[f];
+  }
+  return obj;
+}
+
+/**
  * Check that all required fields are present and non-empty.
  * Returns null if valid, or an error message string listing missing fields.
  */

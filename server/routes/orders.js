@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { query } from '../db.js';
 import { snakeToCamel, camelToSnake } from '../utils.js';
-import { pickAllowed, requireFields } from '../validation.js';
+import { pickAllowed, requireFields, sanitizeDates } from '../validation.js';
 
 const router = Router();
 
@@ -13,6 +13,8 @@ const ORDER_FIELDS = [
   'approval_status', 'approval_sent_date', 'month', 'year'
 ];
 const ORDER_REQUIRED = ['id', 'description', 'quantity'];
+
+const ORDER_DATE_FIELDS = ['order_date', 'arrival_date', 'approval_sent_date'];
 
 // Allowed columns for ORDER BY (prevents SQL injection)
 const ALLOWED_ORDER_COLUMNS = new Set([
@@ -64,7 +66,7 @@ router.get('/', async (req, res) => {
 // POST / - create order
 router.post('/', async (req, res) => {
   try {
-    const snakeBody = pickAllowed(camelToSnake(req.body), ORDER_FIELDS);
+    const snakeBody = sanitizeDates(pickAllowed(camelToSnake(req.body), ORDER_FIELDS), ORDER_DATE_FIELDS);
     const err = requireFields(snakeBody, ORDER_REQUIRED);
     if (err) return res.status(400).json({ error: err });
 
@@ -105,7 +107,7 @@ router.put('/bulk-status', async (req, res) => {
 router.put('/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const snakeBody = pickAllowed(camelToSnake(req.body), ORDER_FIELDS);
+    const snakeBody = sanitizeDates(pickAllowed(camelToSnake(req.body), ORDER_FIELDS), ORDER_DATE_FIELDS);
 
     // Enforce approval before allowing part arrival updates
     if (snakeBody.qty_received !== undefined) {

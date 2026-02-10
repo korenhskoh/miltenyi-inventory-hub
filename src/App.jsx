@@ -517,10 +517,13 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
     if (!parseInt(newOrder.quantity) || parseInt(newOrder.quantity) < 1) { notify('Invalid Quantity','Quantity must be at least 1','warning'); return; }
     if (!newOrder.orderBy) { notify('Missing Field','Order By is required','warning'); return; }
     setIsSubmitting(true);
-    const o = { id:`ORD-${2000+orders.length}`,...newOrder, quantity:parseInt(newOrder.quantity), listPrice:parseFloat(newOrder.listPrice)||0, totalCost:(parseFloat(newOrder.listPrice)||0)*parseInt(newOrder.quantity), orderDate:new Date().toISOString().slice(0,10), arrivalDate:'', qtyReceived:0, backOrder:-parseInt(newOrder.quantity), engineer:'', emailFull:'', emailBack:'', status:'Pending Approval', approvalStatus:'pending', approvalSentDate:new Date().toISOString().slice(0,10), month:'Feb_2026', year:'2026' };
+    const now = new Date();
+    const monthStr = `${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][now.getMonth()]} ${now.getFullYear()}`;
+    const o = { id:`ORD-${2000+orders.length}`,...newOrder, quantity:parseInt(newOrder.quantity), listPrice:parseFloat(newOrder.listPrice)||0, totalCost:(parseFloat(newOrder.listPrice)||0)*parseInt(newOrder.quantity), orderDate:now.toISOString().slice(0,10), arrivalDate:null, qtyReceived:0, backOrder:-parseInt(newOrder.quantity), engineer:'', emailFull:'', emailBack:'', status:'Pending Approval', approvalStatus:'pending', approvalSentDate:now.toISOString().slice(0,10), month:monthStr, year:String(now.getFullYear()) };
     setOrders(prev=>[o,...prev]); setShowNewOrder(false); setNewOrder({materialNo:'',description:'',quantity:1,listPrice:0,orderBy:'',remark:''});
-    await api.createOrder(o);
+    const created = await api.createOrder(o);
     setIsSubmitting(false);
+    if (!created) { notify('Save Failed','Order not saved to database. Please retry.','error'); return; }
     notify('Order Created',`${o.description} — ${o.quantity} units`,'success');
 
     // Auto-notify if rules enabled
@@ -564,7 +567,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
       id: `ORD-${2000+orders.length}`,
       description: `[Copy-${copyNum}] ${baseName}`,
       orderDate: new Date().toISOString().slice(0,10),
-      arrivalDate: '',
+      arrivalDate: null,
       qtyReceived: 0,
       backOrder: -sourceOrder.quantity,
       status: 'Pending',
@@ -923,8 +926,8 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
       quantity:parseInt(item.quantity)||1, listPrice:parseFloat(item.listPrice)||0,
       totalCost:(parseFloat(item.listPrice)||0)*(parseInt(item.quantity)||1),
       orderDate:new Date().toISOString().slice(0,10), orderBy:bulkOrderBy, remark:`Bulk: ${bulkMonth} — ${bulkRemark}`,
-      arrivalDate:'', qtyReceived:0, backOrder:-(parseInt(item.quantity)||1), engineer:'',
-      emailFull:'', emailBack:'', status:'Pending', month:bulkMonth, year:'2026'
+      arrivalDate:null, qtyReceived:0, backOrder:-(parseInt(item.quantity)||1), engineer:'',
+      emailFull:'', emailBack:'', status:'Pending', month:bulkMonth, year:String(new Date().getFullYear())
     }));
     const bgId = `BG-${String(bulkGroups.length+1).padStart(3,'0')}`;
     const totalCost = newOrders.reduce((s,o)=>s+o.totalCost,0);
@@ -1118,7 +1121,9 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
       const lastBotMsg = [...aiMessages].reverse().find(m => m.role === "bot" && m.pendingOrder);
       if (lastBotMsg?.pendingOrder) {
         const po = lastBotMsg.pendingOrder;
-        const newOrd = { id: `ORD-${2000 + orders.length}`, ...po, totalCost: po.listPrice * po.quantity, orderDate: new Date().toISOString().slice(0, 10), arrivalDate: "", qtyReceived: 0, backOrder: -po.quantity, engineer: "", emailFull: "", emailBack: "", status: "Pending", orderBy: currentUser.name, month: "Feb_2026", year: "2026", remark: "Created via AI Assistant" };
+        const aiNow = new Date();
+        const aiMonth = `${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][aiNow.getMonth()]} ${aiNow.getFullYear()}`;
+        const newOrd = { id: `ORD-${2000 + orders.length}`, ...po, totalCost: po.listPrice * po.quantity, orderDate: aiNow.toISOString().slice(0, 10), arrivalDate: null, qtyReceived: 0, backOrder: -po.quantity, engineer: "", emailFull: "", emailBack: "", status: "Pending", orderBy: currentUser.name, month: aiMonth, year: String(aiNow.getFullYear()), remark: "Created via AI Assistant" };
         setOrders(prev => [newOrd, ...prev]);
         dbSync(api.createOrder(newOrd), 'AI order not saved to database');
         notify("Order Created", `${po.description} × ${po.quantity}`, "success");

@@ -1,11 +1,12 @@
 import { Router } from 'express';
 import { query } from '../db.js';
 import { snakeToCamel, camelToSnake } from '../utils.js';
-import { pickAllowed } from '../validation.js';
+import { pickAllowed, sanitizeDates } from '../validation.js';
 
 const router = Router();
 
-const APPROVAL_FIELDS = ['id', 'order_id', 'order_type', 'description', 'requested_by', 'quantity', 'total_cost', 'sent_date', 'status', 'order_ids'];
+const APPROVAL_FIELDS = ['id', 'order_id', 'order_type', 'description', 'requested_by', 'quantity', 'total_cost', 'sent_date', 'status', 'action_date', 'order_ids'];
+const APPROVAL_DATE_FIELDS = ['sent_date', 'action_date'];
 
 // GET / - list all pending approvals, optional status filter
 router.get('/', async (req, res) => {
@@ -32,7 +33,7 @@ router.get('/', async (req, res) => {
 // POST / - create pending approval
 router.post('/', async (req, res) => {
   try {
-    const snakeBody = pickAllowed(camelToSnake(req.body), APPROVAL_FIELDS);
+    const snakeBody = sanitizeDates(pickAllowed(camelToSnake(req.body), APPROVAL_FIELDS), APPROVAL_DATE_FIELDS);
     const keys = Object.keys(snakeBody);
     const values = Object.values(snakeBody);
     const placeholders = keys.map((_, i) => `$${i + 1}`);
@@ -49,7 +50,7 @@ router.post('/', async (req, res) => {
 router.put('/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const snakeBody = pickAllowed(camelToSnake(req.body), APPROVAL_FIELDS);
+    const snakeBody = sanitizeDates(pickAllowed(camelToSnake(req.body), APPROVAL_FIELDS), APPROVAL_DATE_FIELDS);
     const keys = Object.keys(snakeBody);
     const values = Object.values(snakeBody);
 

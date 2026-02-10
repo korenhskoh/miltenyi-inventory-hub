@@ -1,11 +1,12 @@
 import { Router } from 'express';
 import { query } from '../db.js';
 import { snakeToCamel, camelToSnake } from '../utils.js';
-import { pickAllowed, requireFields } from '../validation.js';
+import { pickAllowed, requireFields, sanitizeDates } from '../validation.js';
 
 const router = Router();
 
 const BULK_GROUP_FIELDS = ['id', 'month', 'created_by', 'items', 'total_cost', 'status', 'date'];
+const BG_DATE_FIELDS = ['date'];
 const BULK_GROUP_REQUIRED = ['id', 'month'];
 
 // GET / - list all bulk groups
@@ -22,7 +23,7 @@ router.get('/', async (req, res) => {
 // POST / - create bulk group
 router.post('/', async (req, res) => {
   try {
-    const snakeBody = pickAllowed(camelToSnake(req.body), BULK_GROUP_FIELDS);
+    const snakeBody = sanitizeDates(pickAllowed(camelToSnake(req.body), BULK_GROUP_FIELDS), BG_DATE_FIELDS);
     const err = requireFields(snakeBody, BULK_GROUP_REQUIRED);
     if (err) return res.status(400).json({ error: err });
 
@@ -42,7 +43,7 @@ router.post('/', async (req, res) => {
 router.put('/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const snakeBody = pickAllowed(camelToSnake(req.body), BULK_GROUP_FIELDS);
+    const snakeBody = sanitizeDates(pickAllowed(camelToSnake(req.body), BULK_GROUP_FIELDS), BG_DATE_FIELDS);
     const keys = Object.keys(snakeBody);
     const values = Object.values(snakeBody);
 

@@ -1,11 +1,12 @@
 import { Router } from 'express';
 import { query } from '../db.js';
 import { snakeToCamel, camelToSnake } from '../utils.js';
-import { pickAllowed } from '../validation.js';
+import { pickAllowed, sanitizeDates } from '../validation.js';
 
 const router = Router();
 
 const STOCK_CHECK_FIELDS = ['id', 'date', 'checked_by', 'items', 'disc', 'status', 'notes'];
+const SC_DATE_FIELDS = ['date'];
 
 // GET / - list all stock checks
 router.get('/', async (req, res) => {
@@ -21,7 +22,7 @@ router.get('/', async (req, res) => {
 // POST / - create stock check
 router.post('/', async (req, res) => {
   try {
-    const snakeBody = pickAllowed(camelToSnake(req.body), STOCK_CHECK_FIELDS);
+    const snakeBody = sanitizeDates(pickAllowed(camelToSnake(req.body), STOCK_CHECK_FIELDS), SC_DATE_FIELDS);
     const keys = Object.keys(snakeBody);
     const values = Object.values(snakeBody);
     const placeholders = keys.map((_, i) => `$${i + 1}`);
@@ -38,7 +39,7 @@ router.post('/', async (req, res) => {
 router.put('/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const snakeBody = pickAllowed(camelToSnake(req.body), STOCK_CHECK_FIELDS);
+    const snakeBody = sanitizeDates(pickAllowed(camelToSnake(req.body), STOCK_CHECK_FIELDS), SC_DATE_FIELDS);
     const keys = Object.keys(snakeBody);
     const values = Object.values(snakeBody);
 
