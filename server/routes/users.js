@@ -7,7 +7,7 @@ import { pickAllowed, requireFields } from '../validation.js';
 const router = Router();
 
 // Allowed fields for user create/update
-const USER_FIELDS = ['username', 'password_hash', 'name', 'email', 'phone', 'role', 'status', 'permissions'];
+const USER_FIELDS = ['id', 'username', 'password_hash', 'name', 'email', 'phone', 'role', 'status', 'permissions'];
 const USER_REQUIRED = ['username'];
 
 // GET / - list all users (EXCLUDE password_hash)

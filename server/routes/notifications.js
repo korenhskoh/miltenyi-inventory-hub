@@ -5,13 +5,33 @@ import { pickAllowed } from '../validation.js';
 
 const router = Router();
 
-const NOTIF_FIELDS = ['id', 'type', 'to', 'subject', 'date', 'status'];
+const NOTIF_FIELDS = ['id', 'type', 'recipient', 'subject', 'date', 'status'];
+
+// Map frontend field 'to' → DB column 'recipient'
+function mapNotifInput(body) {
+  const mapped = { ...body };
+  if (mapped.to !== undefined) {
+    mapped.recipient = mapped.to;
+    delete mapped.to;
+  }
+  return mapped;
+}
+
+// Map DB column 'recipient' → frontend field 'to'
+function mapNotifOutput(row) {
+  const mapped = snakeToCamel(row);
+  if (mapped.recipient !== undefined) {
+    mapped.to = mapped.recipient;
+    delete mapped.recipient;
+  }
+  return mapped;
+}
 
 // GET / - list all notification logs
 router.get('/', async (req, res) => {
   try {
     const result = await query('SELECT * FROM notif_log ORDER BY id DESC');
-    const rows = result.rows.map(snakeToCamel);
+    const rows = result.rows.map(mapNotifOutput);
     res.json(rows);
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -21,14 +41,14 @@ router.get('/', async (req, res) => {
 // POST / - create notification log entry
 router.post('/', async (req, res) => {
   try {
-    const snakeBody = pickAllowed(camelToSnake(req.body), NOTIF_FIELDS);
+    const snakeBody = pickAllowed(camelToSnake(mapNotifInput(req.body)), NOTIF_FIELDS);
     const keys = Object.keys(snakeBody);
     const values = Object.values(snakeBody);
     const placeholders = keys.map((_, i) => `$${i + 1}`);
 
     const sql = `INSERT INTO notif_log (${keys.join(', ')}) VALUES (${placeholders.join(', ')}) RETURNING *`;
     const result = await query(sql, values);
-    res.status(201).json(snakeToCamel(result.rows[0]));
+    res.status(201).json(mapNotifOutput(result.rows[0]));
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
