@@ -126,6 +126,9 @@ export default function App() {
   const [orders, setOrders] = useState([]);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('All');
+  const [allOrdersTypeFilter, setAllOrdersTypeFilter] = useState('All');
+  const [allOrdersMonth, setAllOrdersMonth] = useState('All');
+  const [allOrdersStatus, setAllOrdersStatus] = useState('All');
   const [catFilter, setCatFilter] = useState('All');
   const [notifs, setNotifs] = useState([]);
   const [showNewOrder, setShowNewOrder] = useState(false);
@@ -304,6 +307,16 @@ const [selectedUser, setSelectedUser] = useState(null);
     return d;
   }, [orders]);
   const statusPieData = useMemo(() => [{name:'Received',value:stats.received,color:'#0B7A3E'},{name:'Back Order',value:stats.backOrder,color:'#C53030'},{name:'Processed/Pending',value:stats.pending,color:'#2563EB'}], [stats]);
+  const allOrdersMonths = useMemo(() => [...new Set([...orders.map(o=>o.month),...bulkGroups.map(g=>g.month)].filter(Boolean))].sort(), [orders, bulkGroups]);
+  const allOrdersCombined = useMemo(() => {
+    const singles = orders.filter(o=>!o.bulkGroupId).map(o=>({...o, orderType:'Single'}));
+    const bulks = bulkGroups.map(g=>({id:g.id, orderType:'Bulk', description:`Bulk Batch — ${g.month}`, materialNo:`${g.items} items`, quantity:g.items, totalCost:g.totalCost, orderBy:g.createdBy, orderDate:g.date, status:g.status, month:g.month, listPrice:0}));
+    let combined = [...singles, ...bulks];
+    if (allOrdersTypeFilter!=='All') combined = combined.filter(o=>o.orderType===(allOrdersTypeFilter==='Single Orders'?'Single':'Bulk'));
+    if (allOrdersMonth!=='All') combined = combined.filter(o=>o.month===allOrdersMonth);
+    if (allOrdersStatus!=='All') combined = combined.filter(o=>o.status===allOrdersStatus);
+    return combined;
+  }, [orders, bulkGroups, allOrdersTypeFilter, allOrdersMonth, allOrdersStatus]);
   const topItems = useMemo(() => {
     const m={}; orders.forEach(o=>{if(!m[o.description])m[o.description]={name:o.description.length>30?o.description.slice(0,30)+'...':o.description,qty:0,cost:0};m[o.description].qty+=(Number(o.quantity)||0);m[o.description].cost+=(Number(o.totalCost)||0);});
     return Object.values(m).sort((a,b)=>b.cost-a.cost).slice(0,8);
@@ -1120,7 +1133,8 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
   const allNavItems = [
     { id:'dashboard', label:'Dashboard', icon:Home, perm:'dashboard' },
     { id:'catalog', label:'Parts Catalog', icon:Database, perm:'catalog' },
-    { id:'orders', label:'Orders', icon:Package, perm:'orders' },
+    { id:'allorders', label:'All Orders', icon:ShoppingCart, perm:'orders' },
+    { id:'orders', label:'Single Orders', icon:Package, perm:'orders' },
     { id:'bulkorders', label:'Bulk Orders', icon:Layers, perm:'bulkOrders' },
     { id:'analytics', label:'Analytics', icon:BarChart3, perm:'analytics' },
     { id:'stockcheck', label:'Stock Check', icon:ClipboardList, perm:'stockCheck' },
@@ -2047,7 +2061,101 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
   </div></div>
 </div>)}
 
-{/* ═══════════ ORDERS ═══════════ */}
+{/* ═══════════ ALL ORDERS ═══════════ */}
+{page==='allorders'&&(<div>
+  <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:20}}>
+    <p style={{fontSize:13,color:'#64748B',margin:0}}>Unified view of all single and bulk orders</p>
+  </div>
+
+  {/* Summary Cards */}
+  <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:14,marginBottom:24}}>
+    {[
+      {l:'Total Orders',v:allOrdersCombined.length,i:Package,c:'#0B7A3E',bg:'linear-gradient(135deg,#006837,#0B9A4E)'},
+      {l:'Single Orders',v:orders.filter(o=>!o.bulkGroupId).length,i:Package,c:'#2563EB',bg:'linear-gradient(135deg,#1E40AF,#3B82F6)'},
+      {l:'Bulk Batches',v:bulkGroups.length,i:Layers,c:'#7C3AED',bg:'linear-gradient(135deg,#5B21B6,#7C3AED)'},
+      {l:'Total Value',v:fmt(allOrdersCombined.reduce((s,o)=>s+(Number(o.totalCost)||0),0)),i:DollarSign,c:'#D97706',bg:'linear-gradient(135deg,#92400E,#D97706)'}
+    ].map((s,i)=>(
+      <div key={i} style={{background:s.bg,borderRadius:12,padding:'20px 22px',color:'#fff'}}>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start'}}>
+          <div><div style={{fontSize:11,opacity:.8,textTransform:'uppercase',letterSpacing:.5,marginBottom:6}}>{s.l}</div><div className="mono" style={{fontSize:26,fontWeight:700}}>{s.v}</div></div>
+          <div style={{padding:8,background:'rgba(255,255,255,0.15)',borderRadius:8}}><s.i size={18}/></div>
+        </div>
+      </div>
+    ))}
+  </div>
+
+  {/* Filter Bar */}
+  <div className="card" style={{padding:'14px 20px',marginBottom:16,display:'flex',alignItems:'center',gap:16,flexWrap:'wrap'}}>
+    <div style={{display:'flex',alignItems:'center',gap:6}}>
+      <span style={{fontSize:11,fontWeight:600,color:'#64748B',textTransform:'uppercase',letterSpacing:.5}}>Type</span>
+      {['All','Single Orders','Bulk Orders'].map(t=><button key={t} onClick={()=>setAllOrdersTypeFilter(t)} style={{padding:'5px 12px',borderRadius:20,border:allOrdersTypeFilter===t?'none':'1px solid #E2E8F0',background:allOrdersTypeFilter===t?'#0B7A3E':'#fff',color:allOrdersTypeFilter===t?'#fff':'#64748B',fontSize:11,fontWeight:500,cursor:'pointer',fontFamily:'inherit'}}>{t}</button>)}
+    </div>
+    <div style={{width:1,height:24,background:'#E2E8F0'}}/>
+    <div style={{display:'flex',alignItems:'center',gap:6}}>
+      <span style={{fontSize:11,fontWeight:600,color:'#64748B',textTransform:'uppercase',letterSpacing:.5}}>Month</span>
+      <select value={allOrdersMonth} onChange={e=>setAllOrdersMonth(e.target.value)} style={{padding:'5px 10px',borderRadius:8,border:'1px solid #E2E8F0',fontSize:11,fontFamily:'inherit',cursor:'pointer',color:'#1A202C'}}>
+        <option value="All">All Months</option>
+        {allOrdersMonths.map(m=><option key={m} value={m}>{m}</option>)}
+      </select>
+    </div>
+    <div style={{width:1,height:24,background:'#E2E8F0'}}/>
+    <div style={{display:'flex',alignItems:'center',gap:6}}>
+      <span style={{fontSize:11,fontWeight:600,color:'#64748B',textTransform:'uppercase',letterSpacing:.5}}>Status</span>
+      {['All','Approved','Pending','Received','Back Order','Processed','Completed'].map(s=><button key={s} onClick={()=>setAllOrdersStatus(s)} style={{padding:'5px 12px',borderRadius:20,border:allOrdersStatus===s?'none':'1px solid #E2E8F0',background:allOrdersStatus===s?'#0B7A3E':'#fff',color:allOrdersStatus===s?'#fff':'#64748B',fontSize:11,fontWeight:500,cursor:'pointer',fontFamily:'inherit'}}>{s}</button>)}
+    </div>
+  </div>
+
+  {/* All Orders Table */}
+  <div className="card" style={{overflow:'hidden'}}>
+    <div style={{padding:'16px 20px',borderBottom:'1px solid #E8ECF0',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+      <span style={{fontWeight:600,fontSize:14}}>All Orders</span>
+      <span style={{fontSize:11,color:'#94A3B8'}}>{allOrdersCombined.length} results</span>
+    </div>
+    <div className="table-wrap" style={{overflowX:'auto'}}><table style={{width:'100%',borderCollapse:'collapse',fontSize:12.5}}>
+      <thead><tr style={{background:'#F8FAFB'}}>{['Type','ID','Material / Items','Description','Qty','Total Cost','By','Date','Status'].map(h=><th key={h} className="th" style={{whiteSpace:'nowrap'}}>{h}</th>)}</tr></thead>
+      <tbody>{allOrdersCombined.length===0?<tr><td colSpan={9} style={{textAlign:'center',padding:40,color:'#94A3B8',fontSize:13}}>No orders match the selected filters</td></tr>:allOrdersCombined.map((o,i)=>(
+        <tr key={o.id} className="tr" style={{borderBottom:'1px solid #F7FAFC',background:i%2===0?'#fff':'#FCFCFD',cursor:'pointer'}} onClick={()=>{if(o.orderType==='Single'){openOrderInNewTab(o);}else{setPage('bulkorders');setExpandedMonth(o.month);}}}>
+          <td className="td"><Pill bg={o.orderType==='Single'?'#DBEAFE':'#EDE9FE'} color={o.orderType==='Single'?'#2563EB':'#7C3AED'}>{o.orderType==='Single'?'Single':'Bulk'}</Pill></td>
+          <td className="td mono" style={{fontSize:11,fontWeight:600,color:o.orderType==='Single'?'#0B7A3E':'#4338CA'}}>{o.id}</td>
+          <td className="td mono" style={{fontSize:11,color:'#64748B'}}>{o.materialNo||'—'}</td>
+          <td className="td" style={{maxWidth:220,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{o.description}</td>
+          <td className="td" style={{fontWeight:600,textAlign:'center'}}>{o.quantity}</td>
+          <td className="td mono" style={{fontSize:11,fontWeight:600}}>{(Number(o.totalCost)||0)>0?fmt(o.totalCost):'—'}</td>
+          <td className="td" style={{fontSize:11}}>{o.orderBy||'—'}</td>
+          <td className="td" style={{color:'#94A3B8',fontSize:11}}>{fmtDate(o.orderDate)}</td>
+          <td className="td"><Badge status={o.status}/></td>
+        </tr>
+      ))}</tbody>
+    </table></div>
+    <div style={{padding:'12px 16px',borderTop:'1px solid #F0F2F5',display:'flex',justifyContent:'space-between',background:'#FCFCFD'}}>
+      <span style={{fontSize:12,color:'#94A3B8'}}>{allOrdersCombined.length} orders{allOrdersTypeFilter!=='All'||allOrdersMonth!=='All'||allOrdersStatus!=='All'?' (filtered)':''}</span>
+      <span style={{fontSize:12,fontWeight:500}}>{fmt(allOrdersCombined.reduce((s,o)=>s+(Number(o.totalCost)||0),0))}</span>
+    </div>
+  </div>
+
+  {/* Month Overview */}
+  {allOrdersTypeFilter==='All'&&allOrdersStatus==='All'&&allOrdersMonth==='All'&&(
+  <div className="card" style={{padding:'20px 24px',marginTop:16}}>
+    <h3 style={{fontSize:15,fontWeight:600,marginBottom:16}}>Orders by Month</h3>
+    <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(180px,1fr))',gap:12}}>
+      {allOrdersMonths.map(month=>{
+        const singleCount=orders.filter(o=>!o.bulkGroupId&&o.month===month).length;
+        const bulkCount=bulkGroups.filter(g=>g.month===month).length;
+        const totalCost=orders.filter(o=>o.month===month).reduce((s,o)=>s+(Number(o.totalCost)||0),0)+bulkGroups.filter(g=>g.month===month).reduce((s,g)=>s+(Number(g.totalCost)||0),0);
+        return <div key={month} onClick={()=>setAllOrdersMonth(allOrdersMonth===month?'All':month)} style={{padding:14,borderRadius:10,background:allOrdersMonth===month?'#E6F4ED':'#F8FAFB',border:allOrdersMonth===month?'2px solid #0B7A3E':'1px solid #E8ECF0',cursor:'pointer',transition:'all 0.2s'}}>
+          <div style={{fontWeight:600,fontSize:12,marginBottom:8,color:'#0B7A3E',display:'flex',alignItems:'center',gap:6}}><Calendar size={12}/> {month}</div>
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:4,fontSize:11}}>
+            <div>Single: <strong>{singleCount}</strong></div>
+            <div>Bulk: <strong>{bulkCount}</strong></div>
+            <div style={{gridColumn:'span 2'}}>Value: <strong className="mono">{fmt(totalCost)}</strong></div>
+          </div>
+        </div>;
+      })}
+    </div>
+  </div>)}
+</div>)}
+
+{/* ═══════════ SINGLE ORDERS ═══════════ */}
 {page==='orders'&&(<div>
   <div style={{display:'flex',justifyContent:'space-between',marginBottom:20}}>
     <div style={{display:'flex',gap:8}}>{['All','Received','Back Order','Processed','Pending'].map(s=><button key={s} onClick={()=>setStatusFilter(s)} style={{padding:'6px 14px',borderRadius:20,border:statusFilter===s?'none':'1px solid #E2E8F0',background:statusFilter===s?'#0B7A3E':'#fff',color:statusFilter===s?'#fff':'#64748B',fontSize:12,fontWeight:500,cursor:'pointer',fontFamily:'inherit'}}>{s} ({s==='All'?orders.length:orders.filter(o=>o.status===s).length})</button>)}</div>
@@ -2061,7 +2169,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
     <BatchBtn onClick={batchDeleteOrders} bg="#DC2626" icon={Trash2}>Delete</BatchBtn>
   </BatchBar>}
   <div className="card" style={{overflow:'hidden'}}><div className="table-wrap" style={{overflowX:'auto'}}><table style={{width:'100%',borderCollapse:'collapse',fontSize:12.5}}>
-    <thead><tr style={{background:'#F8FAFB'}}>{hasPermission('deleteOrders')&&<th className="th" style={{width:36}}><SelBox checked={selOrders.size===filteredOrders.length&&filteredOrders.length>0} onChange={()=>toggleAll(selOrders,setSelOrders,filteredOrders.map(o=>o.id))}/></th>}{['Material No.','Description','Qty','Price','Total','Ordered','By','Recv','B/O','Status','Actions'].map(h=><th key={h} className="th">{h}</th>)}</tr></thead>
+    <thead><tr style={{background:'#F8FAFB'}}>{hasPermission('deleteOrders')&&<th className="th" style={{width:36}}><SelBox checked={selOrders.size===filteredOrders.length&&filteredOrders.length>0} onChange={()=>toggleAll(selOrders,setSelOrders,filteredOrders.map(o=>o.id))}/></th>}{['Material No.','Description','Qty','Price','Total','Ordered','By','Status','Actions'].map(h=><th key={h} className="th">{h}</th>)}</tr></thead>
     <tbody>{filteredOrders.map((o,i)=>(
       <tr key={o.id} className="tr" style={{borderBottom:'1px solid #F7FAFC',background:selOrders.has(o.id)?'#E6F4ED':i%2===0?'#fff':'#FCFCFD',cursor:'pointer'}} onClick={()=>openOrderInNewTab(o)}>
         {hasPermission('deleteOrders')&&<td className="td" onClick={e=>e.stopPropagation()}><SelBox checked={selOrders.has(o.id)} onChange={()=>toggleSel(selOrders,setSelOrders,o.id)}/></td>}
@@ -2072,8 +2180,6 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
         <td className="td mono" style={{fontSize:11,fontWeight:600}}>{o.totalCost>0?fmt(o.totalCost):'—'}</td>
         <td className="td" style={{color:'#94A3B8',fontSize:11}}>{fmtDate(o.orderDate)}</td>
         <td className="td" style={{fontSize:11}}>{o.orderBy||'—'}</td>
-        <td className="td" style={{textAlign:'center',fontWeight:600,color:o.qtyReceived>=o.quantity&&o.quantity>0?'#0B7A3E':'#D97706'}}>{o.qtyReceived}</td>
-        <td className="td" style={{textAlign:'center',fontWeight:600,color:o.backOrder<0?'#DC2626':'#0B7A3E'}}>{o.backOrder}</td>
         <td className="td"><Badge status={o.status}/></td>
         <td className="td">
           <div style={{display:'flex',gap:4}}>
