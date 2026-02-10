@@ -370,6 +370,27 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
     }
   };
 
+  // ── Duplicate Order ──
+  const handleDuplicateOrder = (sourceOrder) => {
+    const copy = {
+      ...sourceOrder,
+      id: `ORD-${2000+orders.length}`,
+      description: sourceOrder.description.startsWith('[Copy] ') ? sourceOrder.description : `[Copy] ${sourceOrder.description}`,
+      orderDate: new Date().toISOString().slice(0,10),
+      arrivalDate: '',
+      qtyReceived: 0,
+      backOrder: -sourceOrder.quantity,
+      status: 'Pending',
+      approvalStatus: undefined,
+      approvalSentDate: undefined,
+      emailFull: '',
+      emailBack: '',
+    };
+    setOrders(prev=>[copy,...prev]);
+    api.createOrder(copy);
+    notify('Order Duplicated',`[Copy] ${sourceOrder.description}`,'success');
+  };
+
   // ── Approval Action Handler ──
   const handleApprovalAction = (approvalId, action) => {
     const approval = pendingApprovals.find(a=>a.id===approvalId);
@@ -1445,6 +1466,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
         <td className="td">
           <div style={{display:'flex',gap:4}}>
             <button onClick={(e)=>{e.stopPropagation();setEditingOrder({...o});}} style={{background:'#2563EB',color:'#fff',border:'none',borderRadius:6,padding:'4px 8px',fontSize:10,cursor:'pointer',display:'flex',alignItems:'center',gap:3}}><Edit3 size={11}/> Edit</button>
+            <button onClick={(e)=>{e.stopPropagation();handleDuplicateOrder(o);}} style={{background:'#7C3AED',color:'#fff',border:'none',borderRadius:6,padding:'4px 8px',fontSize:10,cursor:'pointer',display:'flex',alignItems:'center',gap:3}}><Copy size={11}/></button>
             <button onClick={(e)=>{e.stopPropagation();if(window.confirm(`Delete order ${o.id}?`)){setOrders(prev=>prev.filter(x=>x.id!==o.id));api.deleteOrder(o.id);notify('Deleted',o.id,'success');}}} style={{background:'#DC2626',color:'#fff',border:'none',borderRadius:6,padding:'4px 8px',fontSize:10,cursor:'pointer',display:'flex',alignItems:'center',gap:3}}><Trash2 size={11}/></button>
           </div>
         </td>
@@ -1542,6 +1564,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
             <td className="td">
               <div style={{display:'flex',gap:4}}>
               <button onClick={(e)=>{e.stopPropagation();setEditingOrder({...o});}} style={{background:'#2563EB',color:'#fff',border:'none',borderRadius:6,padding:'4px 8px',fontSize:10,cursor:'pointer',display:'flex',alignItems:'center',gap:3}}><Edit3 size={11}/> Edit</button>
+              <button onClick={(e)=>{e.stopPropagation();handleDuplicateOrder(o);}} style={{background:'#7C3AED',color:'#fff',border:'none',borderRadius:6,padding:'4px 8px',fontSize:10,cursor:'pointer',display:'flex',alignItems:'center',gap:3}}><Copy size={11}/></button>
               <button onClick={(e)=>{e.stopPropagation();if(window.confirm(`Delete ${o.id}?`)){setOrders(prev=>prev.filter(x=>x.id!==o.id));api.deleteOrder(o.id);notify('Deleted',o.id,'success');}}} style={{background:'#DC2626',color:'#fff',border:'none',borderRadius:6,padding:'4px 8px',fontSize:10,cursor:'pointer'}}><Trash2 size={11}/></button>
               </div>
             </td>
