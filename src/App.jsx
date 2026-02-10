@@ -2723,16 +2723,18 @@ if(scheduledNotifs.emailEnabled){                    setNotifLog(prev=>[{id:'N-'
       <div className="grid-2" style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
         <div>
           <label style={{display:'block',fontSize:12,fontWeight:600,color:'#4A5568',marginBottom:6}}>Role</label>
-          <select value={selectedUser.role} onChange={e=>setSelectedUser(prev=>({...prev,role:e.target.value}))} style={{width:'100%',padding:'10px 12px',borderRadius:8,border:'1.5px solid #E2E8F0',fontSize:13}}>
+          <select value={selectedUser.role} onChange={e=>{const newRole=e.target.value;if(selectedUser.id===currentUser?.id&&newRole!=='admin'){notify('Cannot Change','You cannot demote your own admin role','error');return;}if(selectedUser.role==='admin'&&newRole!=='admin'){const adminCount=users.filter(u=>u.role==='admin'&&u.status==='active').length;if(adminCount<=1){notify('Cannot Change','At least one admin must remain','error');return;}}setSelectedUser(prev=>({...prev,role:newRole}));}} style={{width:'100%',padding:'10px 12px',borderRadius:8,border:'1.5px solid #E2E8F0',fontSize:13}}>
             <option value="admin">Admin</option>
             <option value="user">User</option>
           </select>
+          {selectedUser.id===currentUser?.id&&<div style={{fontSize:11,color:'#DC2626',marginTop:4}}>You cannot change your own role</div>}
         </div>
         <div>
           <label style={{display:'block',fontSize:12,fontWeight:600,color:'#4A5568',marginBottom:6}}>Status</label>
-          <select value={selectedUser.status} onChange={e=>setSelectedUser(prev=>({...prev,status:e.target.value}))} style={{width:'100%',padding:'10px 12px',borderRadius:8,border:'1.5px solid #E2E8F0',fontSize:13}}>
-            <option value="Active">Active</option>
-            <option value="Inactive">Inactive</option>
+          <select value={selectedUser.status} onChange={e=>{const newStatus=e.target.value;if(selectedUser.id===currentUser?.id&&newStatus!=='active'){notify('Cannot Change','You cannot deactivate your own account','error');return;}setSelectedUser(prev=>({...prev,status:newStatus}));}} style={{width:'100%',padding:'10px 12px',borderRadius:8,border:'1.5px solid #E2E8F0',fontSize:13}}>
+            <option value="active">Active</option>
+            <option value="inactive">Inactive</option>
+            <option value="pending">Pending</option>
           </select>
         </div>
       </div>

@@ -26,6 +26,14 @@ export async function initDatabase() {
         ['U001', 'admin', bcryptjs.hashSync('admin123', 10), 'System Admin', 'admin@miltenyibiotec.com', 'admin', 'active', '']
       );
       console.log('Default admin user seeded');
+    } else {
+      // Safety: ensure at least one active admin exists
+      const adminCheck = await query("SELECT COUNT(*) AS count FROM users WHERE role = 'admin' AND status = 'active'");
+      if (parseInt(adminCheck.rows[0].count, 10) === 0) {
+        // Restore the original admin user's role
+        await query("UPDATE users SET role = 'admin', status = 'active' WHERE username = 'admin'");
+        console.log('WARNING: No active admin found — restored admin user role');
+      }
     }
 
     // --- 3. Seed default app_config entries (only if app_config is empty) ---
