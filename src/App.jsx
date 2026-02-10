@@ -3561,7 +3561,7 @@ if(scheduledNotifs.emailEnabled){                    addNotifEntry({id:'N-'+Date
           </div>
           {newOrder.materialNo&&catalogLookup[newOrder.materialNo]&&<div style={{padding:12,borderRadius:8,background:'#F0FDF4',border:'1px solid #BBF7D0',fontSize:12}}><strong style={{color:'#0B7A3E'}}>✓ Catalog Match</strong><div className="grid-3" style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:8,marginTop:6}}>
             <div>SG: <strong className="mono">{fmt(catalogLookup[newOrder.materialNo].sg)}</strong></div><div>Dist: <strong className="mono">{fmt(catalogLookup[newOrder.materialNo].dist)}</strong></div><div>TP: <strong className="mono">{fmt(catalogLookup[newOrder.materialNo].tp)}</strong></div></div></div>}
-          <div><label style={{display:'block',fontSize:12,fontWeight:600,color:'#4A5568',marginBottom:6}}>Order By</label><select value={newOrder.orderBy} onChange={e=>setNewOrder(p=>({...p,orderBy:e.target.value}))} style={{width:'100%'}}>{users.filter(u=>u.status==='active'&&u.role!=='admin').map(u=><option key={u.id}>{u.name}</option>)}</select></div>
+          <div><label style={{display:'block',fontSize:12,fontWeight:600,color:'#4A5568',marginBottom:6}}>Order By</label><select value={newOrder.orderBy} onChange={e=>setNewOrder(p=>({...p,orderBy:e.target.value}))} style={{width:'100%'}}><option value="">— Select —</option>{users.filter(u=>u.status==='active').map(u=><option key={u.id} value={u.name}>{u.name}</option>)}</select></div>
           <div><label style={{display:'block',fontSize:12,fontWeight:600,color:'#4A5568',marginBottom:6}}>Remark</label><textarea value={newOrder.remark} onChange={e=>setNewOrder(p=>({...p,remark:e.target.value}))} rows={2} style={{width:'100%',resize:'vertical'}}/></div>
 
           {/* Auto-Notify Status */}
@@ -3592,7 +3592,7 @@ if(scheduledNotifs.emailEnabled){                    addNotifEntry({id:'N-'+Date
         </div>
         <div className="grid-3" style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:12,marginBottom:20}}>
           <div><label style={{display:'block',fontSize:12,fontWeight:600,color:'#4A5568',marginBottom:6}}>Month Group *</label><select value={bulkMonth} onChange={e=>setBulkMonth(e.target.value)} style={{width:'100%'}}>{MONTH_OPTIONS.map(m=><option key={m}>{m}</option>)}</select></div>
-          <div><label style={{display:'block',fontSize:12,fontWeight:600,color:'#4A5568',marginBottom:6}}>Order By</label><select value={bulkOrderBy} onChange={e=>setBulkOrderBy(e.target.value)} style={{width:'100%'}}>{users.filter(u=>u.status==='active'&&u.role!=='admin').map(u=><option key={u.id}>{u.name}</option>)}</select></div>
+          <div><label style={{display:'block',fontSize:12,fontWeight:600,color:'#4A5568',marginBottom:6}}>Order By</label><select value={bulkOrderBy} onChange={e=>setBulkOrderBy(e.target.value)} style={{width:'100%'}}><option value="">— Select —</option>{users.filter(u=>u.status==='active').map(u=><option key={u.id} value={u.name}>{u.name}</option>)}</select></div>
           <div><label style={{display:'block',fontSize:12,fontWeight:600,color:'#4A5568',marginBottom:6}}>Batch Remark</label><input value={bulkRemark} onChange={e=>setBulkRemark(e.target.value)} placeholder="e.g. Quarterly restock" style={{width:'100%'}}/></div>
         </div>
 
