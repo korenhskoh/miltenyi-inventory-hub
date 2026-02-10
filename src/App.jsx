@@ -290,6 +290,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
           if (apiConfig.priceConfig) setPriceConfig(apiConfig.priceConfig);
           if (apiConfig.waNotifyRules) setWaNotifyRules(apiConfig.waNotifyRules);
           if (apiConfig.scheduledNotifs) setScheduledNotifs(apiConfig.scheduledNotifs);
+          if (apiConfig.customLogo) setCustomLogo(apiConfig.customLogo);
           fromDb = true;
         }
         if (apiCatalog.length) { setPartsCatalog(apiCatalog.map(p => ({ m: p.materialNo, d: p.description, c: p.category, sg: p.sgPrice, dist: p.distPrice, tp: p.transferPrice, rsp: p.rspEur }))); }
@@ -2795,16 +2796,17 @@ if(scheduledNotifs.emailEnabled){                    setNotifLog(prev=>[{id:'N-'
               const file = e.target.files[0];
               if(file) {
                 const reader = new FileReader();
-                reader.onload = (evt) => {
+                reader.onload = async (evt) => {
                   setCustomLogo(evt.target.result);
-                  notify('Logo Updated','New logo applied','success');
+                  await api.setConfigKey('customLogo', evt.target.result);
+                  notify('Logo Updated','New logo saved','success');
                 };
                 reader.readAsDataURL(file);
               }
             }} style={{display:'none'}}/>
             <Upload size={14}/> Upload Logo
           </label>
-          {customLogo && <button className="bs" onClick={()=>{setCustomLogo(null);notify('Logo Reset','Default logo restored','info');}}><X size={14}/> Remove</button>}
+          {customLogo && <button className="bs" onClick={async ()=>{setCustomLogo(null);await api.setConfigKey('customLogo',null);notify('Logo Reset','Default logo restored','info');}}><X size={14}/> Remove</button>}
         </div>
       </div>
     </div>
