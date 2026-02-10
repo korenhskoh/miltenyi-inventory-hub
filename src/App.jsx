@@ -183,6 +183,20 @@ const [selectedUser, setSelectedUser] = useState(null);
     setTimeout(() => setNotifs(prev => prev.slice(1)), 4000);
   }, []);
 
+  // Persist helpers: update local state AND save to DB
+  const addNotifEntry = useCallback((entry) => {
+    setNotifLog(prev=>[entry,...prev]);
+    api.createNotifEntry(entry);
+  }, []);
+  const addApproval = useCallback((entry) => {
+    setPendingApprovals(prev=>[entry,...prev]);
+    api.createApproval(entry);
+  }, []);
+  const addStockCheck = useCallback((entry) => {
+    setStockChecks(prev=>[entry,...prev]);
+    api.createStockCheck(entry);
+  }, []);
+
   const isAdmin = currentUser?.role === 'admin';
 
   // ── Feature Permissions ──
@@ -420,13 +434,13 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
 
     // Auto-notify if rules enabled
     if (emailConfig.enabled && waNotifyRules.orderCreated) {
-      setNotifLog(prev=>[{id:`N-${String(prev.length+1).padStart(3,'0')}`,type:'email',to:'service-sg@miltenyibiotec.com',subject:`New Order: ${o.id} - ${o.description}`,date:new Date().toISOString().slice(0,10),status:'Sent'},...prev]);
+      addNotifEntry({id:`N-${Date.now()}-${Math.random().toString(36).slice(2,6)}`,type:'email',to:'service-sg@miltenyibiotec.com',subject:`New Order: ${o.id} - ${o.description}`,date:new Date().toISOString().slice(0,10),status:'Sent'});
     }
     // Send approval email to approver (Hotmail/Outlook)
     if (emailConfig.enabled && emailConfig.approvalEnabled && emailConfig.approverEmail) {
       const approvalId = `APR-${Date.now()}`;
-      setPendingApprovals(prev=>[{id:approvalId, orderId:o.id, orderType:'single', description:o.description, requestedBy:o.orderBy, quantity:o.quantity, totalCost:o.totalCost, sentDate:new Date().toISOString().slice(0,10), status:'pending'},...prev]);
-      setNotifLog(prev=>[{id:`N-${String(prev.length+1).padStart(3,'0')}`,type:'approval',to:emailConfig.approverEmail,subject:`[APPROVAL] Order ${o.id}`,date:new Date().toISOString().slice(0,10),status:'Pending'},...prev]);
+      addApproval({id:approvalId, orderId:o.id, orderType:'single', description:o.description, requestedBy:o.orderBy, quantity:o.quantity, totalCost:o.totalCost, sentDate:new Date().toISOString().slice(0,10), status:'pending'});
+      addNotifEntry({id:`N-${Date.now()}-${Math.random().toString(36).slice(2,6)}`,type:'approval',to:emailConfig.approverEmail,subject:`[APPROVAL] Order ${o.id}`,date:new Date().toISOString().slice(0,10),status:'Pending'});
       const tpl = emailTemplates.orderApproval;
       const fillTpl = (str) => str.replace(/\{orderId\}/g,o.id).replace(/\{description\}/g,o.description).replace(/\{materialNo\}/g,o.materialNo||'N/A').replace(/\{quantity\}/g,o.quantity).replace(/\{totalCost\}/g,o.totalCost.toFixed(2)).replace(/\{orderBy\}/g,o.orderBy).replace(/\{date\}/g,o.orderDate);
       window.open(`mailto:${emailConfig.approverEmail}?subject=${encodeURIComponent(fillTpl(tpl.subject))}&body=${encodeURIComponent(fillTpl(tpl.body))}`, '_blank');
@@ -438,7 +452,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
           method: 'POST', headers: {'Content-Type':'application/json'},
           body: JSON.stringify({ phone: users.find(u=>u.name===o.orderBy)?.phone || '+65 9111 2222', template: 'orderCreated', data: { orderId: o.id, description: o.description, materialNo: o.materialNo, quantity: o.quantity, total: `S$${o.totalCost.toFixed(2)}`, orderBy: o.orderBy, date: o.orderDate }})
         });
-        setNotifLog(prev=>[{id:`N-${String(prev.length+1).padStart(3,'0')}`,type:'whatsapp',to:o.orderBy,subject:`Order Created: ${o.id}`,date:new Date().toISOString().slice(0,10),status:'Delivered'},...prev]);
+        addNotifEntry({id:`N-${Date.now()}-${Math.random().toString(36).slice(2,6)}`,type:'whatsapp',to:o.orderBy,subject:`Order Created: ${o.id}`,date:new Date().toISOString().slice(0,10),status:'Delivered'});
         notify('WhatsApp Sent',`Order notification sent to ${o.orderBy}`,'success');
       } catch(e) { console.log('WA send error:', e); }
     }
@@ -492,7 +506,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
         api.bulkUpdateOrderStatus(approval.orderIds, 'Pending');
         api.updateBulkGroup(approval.orderId, {status:'Approved'});
       }
-      setNotifLog(prev=>[{id:`N-${String(prev.length+1).padStart(3,'0')}`,type:'approval',to:approval.requestedBy,subject:`Order ${approval.orderId} Approved`,date:new Date().toISOString().slice(0,10),status:'Approved'},...prev]);
+      addNotifEntry({id:`N-${Date.now()}-${Math.random().toString(36).slice(2,6)}`,type:'approval',to:approval.requestedBy,subject:`Order ${approval.orderId} Approved`,date:new Date().toISOString().slice(0,10),status:'Approved'});
       notify('Order Approved',`${approval.orderId} has been approved`,'success');
     } else {
       // Update order status to Rejected
@@ -505,7 +519,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
         api.bulkUpdateOrderStatus(approval.orderIds, 'Rejected');
         api.updateBulkGroup(approval.orderId, {status:'Rejected'});
       }
-      setNotifLog(prev=>[{id:`N-${String(prev.length+1).padStart(3,'0')}`,type:'approval',to:approval.requestedBy,subject:`Order ${approval.orderId} Rejected`,date:new Date().toISOString().slice(0,10),status:'Rejected'},...prev]);
+      addNotifEntry({id:`N-${Date.now()}-${Math.random().toString(36).slice(2,6)}`,type:'approval',to:approval.requestedBy,subject:`Order ${approval.orderId} Rejected`,date:new Date().toISOString().slice(0,10),status:'Rejected'});
       notify('Order Rejected',`${approval.orderId} has been rejected`,'warning');
     }
   };
@@ -701,7 +715,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
       if (data.success) {
         const msg = { id: `WA-${String(waMessages.length+1).padStart(3,'0')}`, to: waRecipient, message: waMessageText, time: new Date().toLocaleString(), status: 'sent' };
         setWaMessages(prev => [msg, ...prev]);
-        setNotifLog(prev => [{id:`N-${String(prev.length+1).padStart(3,'0')}`,type:'whatsapp',to:waRecipient,subject:waMessageText.slice(0,50),date:new Date().toISOString().slice(0,10),status:'Delivered'},...prev]);
+        addNotifEntry({id:`N-${Date.now()}-${Math.random().toString(36).slice(2,6)}`,type:'whatsapp',to:waRecipient,subject:waMessageText.slice(0,50),date:new Date().toISOString().slice(0,10),status:'Delivered'});
         setWaRecipient(''); setWaMessageText(''); setWaTemplate('custom');
         notify('WhatsApp Sent', `Message delivered to ${phone}`, 'success');
 
@@ -830,13 +844,13 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
 
     // Auto-notify if rules enabled
     if (emailConfig.enabled && waNotifyRules.bulkOrderCreated) {
-      setNotifLog(prev=>[{id:`N-${String(prev.length+1).padStart(3,'0')}`,type:'email',to:'service-sg@miltenyibiotec.com',subject:`Bulk Order: ${bgId} - ${bulkMonth} (${newOrders.length} items)`,date:new Date().toISOString().slice(0,10),status:'Sent'},...prev]);
+      addNotifEntry({id:`N-${Date.now()}-${Math.random().toString(36).slice(2,6)}`,type:'email',to:'service-sg@miltenyibiotec.com',subject:`Bulk Order: ${bgId} - ${bulkMonth} (${newOrders.length} items)`,date:new Date().toISOString().slice(0,10),status:'Sent'});
     }
     // Send approval email for bulk order to approver (Hotmail/Outlook)
     if (emailConfig.enabled && emailConfig.approvalEnabled && emailConfig.approverEmail) {
       const approvalId = `APR-${Date.now()}`;
-      setPendingApprovals(prev=>[{id:approvalId, orderId:bgId, orderType:'bulk', description:`Bulk Order - ${bulkMonth}`, requestedBy:bulkOrderBy, quantity:newOrders.length, totalCost, sentDate:new Date().toISOString().slice(0,10), status:'pending', orderIds:newOrders.map(x=>x.id)},...prev]);
-      setNotifLog(prev=>[{id:`N-${String(prev.length+1).padStart(3,'0')}`,type:'approval',to:emailConfig.approverEmail,subject:`[APPROVAL] Bulk Order ${bgId}`,date:new Date().toISOString().slice(0,10),status:'Pending'},...prev]);
+      addApproval({id:approvalId, orderId:bgId, orderType:'bulk', description:`Bulk Order - ${bulkMonth}`, requestedBy:bulkOrderBy, quantity:newOrders.length, totalCost, sentDate:new Date().toISOString().slice(0,10), status:'pending', orderIds:newOrders.map(x=>x.id)});
+      addNotifEntry({id:`N-${Date.now()}-${Math.random().toString(36).slice(2,6)}`,type:'approval',to:emailConfig.approverEmail,subject:`[APPROVAL] Bulk Order ${bgId}`,date:new Date().toISOString().slice(0,10),status:'Pending'});
       const tpl = emailTemplates.bulkApproval;
       const fillTpl = (str) => str.replace(/\{batchId\}/g,bgId).replace(/\{month\}/g,bulkMonth).replace(/\{itemCount\}/g,newOrders.length).replace(/\{totalCost\}/g,totalCost.toFixed(2)).replace(/\{orderBy\}/g,bulkOrderBy);
       window.open(`mailto:${emailConfig.approverEmail}?subject=${encodeURIComponent(fillTpl(tpl.subject))}&body=${encodeURIComponent(fillTpl(tpl.body))}`, '_blank');
@@ -851,7 +865,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
             body: JSON.stringify({ phone: user.phone, template: 'custom', data: { message: `📦 *Bulk Order Created*\n\nBatch: ${bgId}\nMonth: ${bulkMonth}\nItems: ${newOrders.length}\nTotal: S$${totalCost.toFixed(2)}\nCreated By: ${bulkOrderBy}\n\n_Miltenyi Inventory Hub SG_` }})
           });
         }
-        setNotifLog(prev=>[{id:`N-${String(prev.length+1).padStart(3,'0')}`,type:'whatsapp',to:'All Engineers',subject:`Bulk Order: ${bgId} - ${bulkMonth}`,date:new Date().toISOString().slice(0,10),status:'Delivered'},...prev]);
+        addNotifEntry({id:`N-${Date.now()}-${Math.random().toString(36).slice(2,6)}`,type:'whatsapp',to:'All Engineers',subject:`Bulk Order: ${bgId} - ${bulkMonth}`,date:new Date().toISOString().slice(0,10),status:'Delivered'});
         notify('WhatsApp Sent',`Bulk order notification sent to team`,'success');
       } catch(e) { console.log('WA send error:', e); }
     }
@@ -877,23 +891,60 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
       }
     }
   };
-  const handleRegister = () => {
+  const handleRegister = async () => {
     if(!regForm.username||!regForm.password||!regForm.name||!regForm.email) { notify('Missing Fields','Please fill all required fields','warning'); return; }
     if(users.find(u=>u.username===regForm.username)||pendingUsers.find(u=>u.username===regForm.username)) { notify('Username Taken','Choose a different username','warning'); return; }
-    setPendingUsers(prev=>[...prev,{id:`P${String(prev.length+2).padStart(3,'0')}`,username:regForm.username,name:regForm.name,email:regForm.email,phone:regForm.phone,requestDate:new Date().toISOString().slice(0,10)}]);
+    const result = await api.register({username:regForm.username,password:regForm.password,name:regForm.name,email:regForm.email,phone:regForm.phone});
+    if (result) {
+      setPendingUsers(prev=>[...prev,{id:result.id||`P${String(prev.length+2).padStart(3,'0')}`,username:regForm.username,name:regForm.name,email:regForm.email,phone:regForm.phone,requestDate:new Date().toISOString().slice(0,10)}]);
+    } else {
+      setPendingUsers(prev=>[...prev,{id:`P${String(prev.length+2).padStart(3,'0')}`,username:regForm.username,name:regForm.name,email:regForm.email,phone:regForm.phone,requestDate:new Date().toISOString().slice(0,10)}]);
+    }
     setRegForm({username:'',password:'',name:'',email:'',phone:''});
     setAuthView('login');
     notify('Registration Submitted','Your account is pending admin approval','info');
   };
-  const handleApproveUser = (pending) => {
-    setUsers(prev=>[...prev,{id:`U${String(prev.length+1).padStart(3,'0')}`,username:pending.username,password:'temp123',name:pending.name,email:pending.email,role:'user',status:'active',created:new Date().toISOString().slice(0,10),phone:pending.phone,permissions:{...DEFAULT_USER_PERMS}}]);
+  const handleApproveUser = async (pending) => {
+    const newUser = {
+      id: `U${String(users.length+1).padStart(3,'0')}`,
+      username: pending.username,
+      name: pending.name,
+      email: pending.email,
+      phone: pending.phone || '',
+      role: 'user',
+      status: 'active',
+      password: 'temp123',
+      permissions: {...DEFAULT_USER_PERMS},
+    };
+    const created = await api.createUser(newUser);
+    if (created) {
+      setUsers(prev=>[...prev, created]);
+    } else {
+      setUsers(prev=>[...prev, {...newUser, created: new Date().toISOString().slice(0,10)}]);
+    }
     setPendingUsers(prev=>prev.filter(u=>u.id!==pending.id));
     notify('User Approved',`${pending.name} can now login (temp password: temp123)`,'success');
   };
   const handleRejectUser = (id) => { setPendingUsers(prev=>prev.filter(u=>u.id!==id)); notify('Registration Rejected','User has been denied access','warning'); };
-  const handleCreateUser = (form) => {
+  const handleCreateUser = async (form) => {
     const perms = form.role==='admin' ? Object.fromEntries(Object.keys(DEFAULT_USER_PERMS).map(k=>[k,true])) : {...DEFAULT_USER_PERMS};
-    setUsers(prev=>[...prev,{id:`U${String(prev.length+1).padStart(3,'0')}`,username:form.username,password:form.password,name:form.name,email:form.email,role:form.role||'user',status:'active',created:new Date().toISOString().slice(0,10),phone:form.phone||'',permissions:perms}]);
+    const newUser = {
+      id: `U${String(users.length+1).padStart(3,'0')}`,
+      username: form.username,
+      name: form.name,
+      email: form.email,
+      phone: form.phone || '',
+      role: form.role || 'user',
+      status: 'active',
+      password: form.password,
+      permissions: perms,
+    };
+    const created = await api.createUser(newUser);
+    if (created) {
+      setUsers(prev=>[...prev, created]);
+    } else {
+      setUsers(prev=>[...prev, {...newUser, created: new Date().toISOString().slice(0,10)}]);
+    }
     notify('User Created',`${form.name} (${form.role}) added`,'success');
   };
 
@@ -2035,8 +2086,8 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
               if(invList.length > 0) {
                 setStockInventoryList(invList);
                 setStockCheckMode(true);
-                setStockChecks(prev=>[{
-                  id:`SC-${String(prev.length+1).padStart(3,'0')}`,
+                addStockCheck({
+                  id:`SC-${String(stockChecks.length+1).padStart(3,'0')}`,
                   date:new Date().toISOString().slice(0,10),
                   checkedBy:currentUser.name,
                   items:invList.length,
@@ -2044,7 +2095,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
                   status:'In Progress',
                   notes:`Uploaded: ${file.name}`,
                   inventory:invList
-                },...prev]);
+                });
                 notify('File Uploaded',`${invList.length} items loaded for stock check`,'success');
               } else {
                 notify('Invalid File','Could not parse items from file','warning');
@@ -2249,7 +2300,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
                   <button className="be" onClick={()=>{
                     const summary = bgOrders.map(o=>`• ${o.materialNo}: ${o.qtyReceived}/${o.quantity} ${o.qtyReceived>=o.quantity?'✓':'(B/O: '+(o.quantity-o.qtyReceived)+')'}`).join('\n');
                     notify('Email Sent',`Arrival report for ${bg.month} sent`,'success');
-                    setNotifLog(prev=>[{id:`N-${String(prev.length+1).padStart(3,'0')}`,type:'email',to:'service-sg@miltenyibiotec.com',subject:`Arrival Check: ${bg.month}`,date:new Date().toISOString().slice(0,10),status:'Sent'},...prev]);
+                    addNotifEntry({id:`N-${Date.now()}-${Math.random().toString(36).slice(2,6)}`,type:'email',to:'service-sg@miltenyibiotec.com',subject:`Arrival Check: ${bg.month}`,date:new Date().toISOString().slice(0,10),status:'Sent'});
                   }}><Mail size={14}/> Email Report</button>
                   {waConnected ? (
                     <button className="bw" onClick={async ()=>{
@@ -2267,7 +2318,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
                           }
                         }
                         notify('WhatsApp Sent',`Arrival report for ${bg.month} sent`,'success');
-                        setNotifLog(prev=>[{id:`N-${String(prev.length+1).padStart(3,'0')}`,type:'whatsapp',to:'SG Service Team',subject:`Arrival: ${bg.month} - ${received} full, ${backorder} B/O`,date:new Date().toISOString().slice(0,10),status:'Delivered'},...prev]);
+                        addNotifEntry({id:`N-${Date.now()}-${Math.random().toString(36).slice(2,6)}`,type:'whatsapp',to:'SG Service Team',subject:`Arrival: ${bg.month} - ${received} full, ${backorder} B/O`,date:new Date().toISOString().slice(0,10),status:'Delivered'});
                       } catch(e) { notify('Error','Failed to send WhatsApp','error'); }
                     }}><MessageSquare size={14}/> WhatsApp Report</button>
                   ) : (
@@ -2526,7 +2577,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
                   const recipientCount = (scheduledNotifs.recipients||[]).length;
                   if(recipientCount===0){notify('No Recipients','Please select at least one recipient','warning');return;}
 
-if(scheduledNotifs.emailEnabled){                    setNotifLog(prev=>[{id:'N-'+String(prev.length+1).padStart(3,'0'),type:'email',to:(scheduledNotifs.recipients||[]).join(', '),subject:'Scheduled Report - Miltenyi Inventory',date:new Date().toISOString().slice(0,10),status:'Sent'},...prev]);                  }                  if(scheduledNotifs.whatsappEnabled&&waConnected){                    setNotifLog(prev=>[{id:'N-'+String(prev.length+1).padStart(3,'0'),type:'whatsapp',to:'Team Group',subject:'Scheduled Report Sent',date:new Date().toISOString().slice(0,10),status:'Delivered'},...prev]);                  }                  setScheduledNotifs(prev=>({...prev,lastRun:new Date().toISOString()}));                  notify('Report Sent','Scheduled report sent to '+recipientCount+' recipients','success');                }} style={{padding:'8px 16px',background:'linear-gradient(135deg,#7C3AED,#8B5CF6)',color:'#fff',border:'none',borderRadius:8,fontSize:12,fontWeight:600,cursor:'pointer',display:'flex',alignItems:'center',gap:6}}>                  <Send size={14}/> Send Now                </button>              </div>              {scheduledNotifs.lastRun&&(                <div style={{marginTop:8,fontSize:10,color:'#94A3B8'}}>                  Last sent: {new Date(scheduledNotifs.lastRun).toLocaleString()}                </div>              )}            </div>          </div>        )}        {!scheduledNotifs.enabled && (          <div style={{fontSize:12,color:'#9CA3AF',fontStyle:'italic'}}>Enable to automatically send scheduled reports to your team via Email and WhatsApp.</div>        )}      </div>      {/* AI Bot Auto-Reply */}      <div className="card" style={{padding:'18px 20px',marginTop:16,border:waAutoReply?'2px solid #0B7A3E':'2px solid transparent'}}>
+if(scheduledNotifs.emailEnabled){                    addNotifEntry({id:'N-'+Date.now(),type:'email',to:(scheduledNotifs.recipients||[]).join(', '),subject:'Scheduled Report - Miltenyi Inventory',date:new Date().toISOString().slice(0,10),status:'Sent'});                  }                  if(scheduledNotifs.whatsappEnabled&&waConnected){                    addNotifEntry({id:'N-'+Date.now()+1,type:'whatsapp',to:'Team Group',subject:'Scheduled Report Sent',date:new Date().toISOString().slice(0,10),status:'Delivered'});                  }                  setScheduledNotifs(prev=>({...prev,lastRun:new Date().toISOString()}));                  notify('Report Sent','Scheduled report sent to '+recipientCount+' recipients','success');                }} style={{padding:'8px 16px',background:'linear-gradient(135deg,#7C3AED,#8B5CF6)',color:'#fff',border:'none',borderRadius:8,fontSize:12,fontWeight:600,cursor:'pointer',display:'flex',alignItems:'center',gap:6}}>                  <Send size={14}/> Send Now                </button>              </div>              {scheduledNotifs.lastRun&&(                <div style={{marginTop:8,fontSize:10,color:'#94A3B8'}}>                  Last sent: {new Date(scheduledNotifs.lastRun).toLocaleString()}                </div>              )}            </div>          </div>        )}        {!scheduledNotifs.enabled && (          <div style={{fontSize:12,color:'#9CA3AF',fontStyle:'italic'}}>Enable to automatically send scheduled reports to your team via Email and WhatsApp.</div>        )}      </div>      {/* AI Bot Auto-Reply */}      <div className="card" style={{padding:'18px 20px',marginTop:16,border:waAutoReply?'2px solid #0B7A3E':'2px solid transparent'}}>
         <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:14}}>
           <div style={{display:'flex',alignItems:'center',gap:10}}>
             <div style={{padding:6,background:waAutoReply?'#D1FAE5':'#F3F4F6',borderRadius:8}}><Bot size={16} color={waAutoReply?'#059669':'#9CA3AF'}/></div>
