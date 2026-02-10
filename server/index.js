@@ -1,11 +1,14 @@
 import express from 'express';
 import cors from 'cors';
+import helmet from 'helmet';
+import rateLimit from 'express-rate-limit';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import makeWASocket, { useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } from '@whiskeysockets/baileys';
 import QRCode from 'qrcode';
 import pino from 'pino';
 import { initDatabase } from './initDb.js';
+import { verifyToken, requireAdmin } from './middleware/auth.js';
 
 // API Routes
 import ordersRouter from './routes/orders.js';
@@ -25,12 +28,20 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-// Middleware
+// Security Middleware
+app.use(helmet({ contentSecurityPolicy: false })); // CSP off for SPA inline styles
 app.use(cors({
   origin: process.env.FRONTEND_URL || '*',
   credentials: true
 }));
 app.use(express.json({ limit: '10mb' }));
+
+// Rate limiting on auth routes (prevent brute force)
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 20, // 20 attempts per window
+  message: { error: 'Too many login attempts. Please try again in 15 minutes.' }
+});
 
 // WhatsApp State
 let sock = null;
@@ -286,16 +297,21 @@ app.get('/api/whatsapp/templates', (req, res) => {
 });
 
 // ============ DATA API ROUTES ============
-app.use('/api/orders', ordersRouter);
-app.use('/api/bulk-groups', bulkGroupsRouter);
-app.use('/api/users', usersRouter);
-app.use('/api/auth', authRouter);
-app.use('/api/stock-checks', stockChecksRouter);
-app.use('/api/notif-log', notificationsRouter);
-app.use('/api/pending-approvals', approvalsRouter);
-app.use('/api/config', configRouter);
-app.use('/api/catalog', catalogRouter);
-app.use('/api/migrate', migrateRouter);
+// Public routes (no auth required)
+app.use('/api/auth', authLimiter, authRouter);
+
+// Protected routes (require valid JWT)
+app.use('/api/orders', verifyToken, ordersRouter);
+app.use('/api/bulk-groups', verifyToken, bulkGroupsRouter);
+app.use('/api/stock-checks', verifyToken, stockChecksRouter);
+app.use('/api/notif-log', verifyToken, notificationsRouter);
+app.use('/api/pending-approvals', verifyToken, approvalsRouter);
+app.use('/api/catalog', verifyToken, catalogRouter);
+
+// Admin-only routes (require JWT + admin role)
+app.use('/api/users', verifyToken, requireAdmin, usersRouter);
+app.use('/api/config', verifyToken, requireAdmin, configRouter);
+app.use('/api/migrate', verifyToken, requireAdmin, migrateRouter);
 
 // Health check
 app.get('/api/health', (req, res) => {

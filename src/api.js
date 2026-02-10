@@ -1,171 +1,53 @@
 const BASE = '';
 
-// ─── Orders ───
+// ─── Token Management ───
 
-async function getOrders(filters = {}) {
-  try {
-    const params = new URLSearchParams();
-    for (const [k, v] of Object.entries(filters)) {
-      if (v !== '' && v !== null && v !== undefined) params.append(k, v);
-    }
-    const qs = params.toString();
-    const res = await fetch(`${BASE}/api/orders${qs ? `?${qs}` : ''}`);
-    if (!res.ok) return [];
-    return await res.json();
-  } catch {
-    return [];
+let _token = null;
+
+function setToken(token) {
+  _token = token;
+  if (token) {
+    localStorage.setItem('mih_token', token);
+  } else {
+    localStorage.removeItem('mih_token');
   }
 }
 
-async function createOrder(order) {
-  try {
-    const res = await fetch(`${BASE}/api/orders`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(order),
-    });
-    if (!res.ok) return null;
-    return await res.json();
-  } catch {
-    return null;
+function getToken() {
+  if (!_token) {
+    _token = localStorage.getItem('mih_token');
   }
+  return _token;
 }
 
-async function updateOrder(id, updates) {
-  try {
-    const res = await fetch(`${BASE}/api/orders/${id}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(updates),
-    });
-    if (!res.ok) return null;
-    return await res.json();
-  } catch {
-    return null;
-  }
+function authHeaders() {
+  const token = getToken();
+  const headers = { 'Content-Type': 'application/json' };
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+  return headers;
 }
 
-async function deleteOrder(id) {
-  try {
-    const res = await fetch(`${BASE}/api/orders/${id}`, { method: 'DELETE' });
-    return res.ok;
-  } catch {
-    return false;
-  }
+function authHeadersGet() {
+  const token = getToken();
+  if (token) return { 'Authorization': `Bearer ${token}` };
+  return {};
 }
 
-async function bulkUpdateOrderStatus(ids, status) {
-  try {
-    const res = await fetch(`${BASE}/api/orders/bulk-status`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ids, status }),
-    });
-    return res.ok;
-  } catch {
-    return false;
-  }
+// Handle 401 responses (token expired/invalid)
+let _onAuthError = null;
+function onAuthError(callback) {
+  _onAuthError = callback;
 }
 
-// ─── Bulk Groups ───
-
-async function getBulkGroups() {
-  try {
-    const res = await fetch(`${BASE}/api/bulk-groups`);
-    if (!res.ok) return [];
-    return await res.json();
-  } catch {
-    return [];
+function handleResponse(res) {
+  if (res.status === 401 || res.status === 403) {
+    setToken(null);
+    if (_onAuthError) _onAuthError();
   }
+  return res;
 }
 
-async function createBulkGroup(group) {
-  try {
-    const res = await fetch(`${BASE}/api/bulk-groups`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(group),
-    });
-    if (!res.ok) return null;
-    return await res.json();
-  } catch {
-    return null;
-  }
-}
-
-async function updateBulkGroup(id, updates) {
-  try {
-    const res = await fetch(`${BASE}/api/bulk-groups/${id}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(updates),
-    });
-    if (!res.ok) return null;
-    return await res.json();
-  } catch {
-    return null;
-  }
-}
-
-async function deleteBulkGroup(id) {
-  try {
-    const res = await fetch(`${BASE}/api/bulk-groups/${id}`, { method: 'DELETE' });
-    return res.ok;
-  } catch {
-    return false;
-  }
-}
-
-// ─── Users ───
-
-async function getUsers() {
-  try {
-    const res = await fetch(`${BASE}/api/users`);
-    if (!res.ok) return [];
-    return await res.json();
-  } catch {
-    return [];
-  }
-}
-
-async function createUser(user) {
-  try {
-    const res = await fetch(`${BASE}/api/users`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(user),
-    });
-    if (!res.ok) return null;
-    return await res.json();
-  } catch {
-    return null;
-  }
-}
-
-async function updateUser(id, updates) {
-  try {
-    const res = await fetch(`${BASE}/api/users/${id}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(updates),
-    });
-    if (!res.ok) return null;
-    return await res.json();
-  } catch {
-    return null;
-  }
-}
-
-async function deleteUser(id) {
-  try {
-    const res = await fetch(`${BASE}/api/users/${id}`, { method: 'DELETE' });
-    return res.ok;
-  } catch {
-    return false;
-  }
-}
-
-// ─── Auth ───
+// ─── Auth (public - no token needed) ───
 
 async function login(username, password) {
   try {
@@ -175,7 +57,11 @@ async function login(username, password) {
       body: JSON.stringify({ username, password }),
     });
     if (!res.ok) return null;
-    return await res.json();
+    const data = await res.json();
+    if (data.token) {
+      setToken(data.token);
+    }
+    return data;
   } catch {
     return null;
   }
@@ -195,11 +81,180 @@ async function register(data) {
   }
 }
 
-// ─── Stock Checks ───
+function logout() {
+  setToken(null);
+}
+
+// ─── Orders (protected) ───
+
+async function getOrders(filters = {}) {
+  try {
+    const params = new URLSearchParams();
+    for (const [k, v] of Object.entries(filters)) {
+      if (v !== '' && v !== null && v !== undefined) params.append(k, v);
+    }
+    const qs = params.toString();
+    const res = handleResponse(await fetch(`${BASE}/api/orders${qs ? `?${qs}` : ''}`, { headers: authHeadersGet() }));
+    if (!res.ok) return [];
+    return await res.json();
+  } catch {
+    return [];
+  }
+}
+
+async function createOrder(order) {
+  try {
+    const res = handleResponse(await fetch(`${BASE}/api/orders`, {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify(order),
+    }));
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
+async function updateOrder(id, updates) {
+  try {
+    const res = handleResponse(await fetch(`${BASE}/api/orders/${id}`, {
+      method: 'PUT',
+      headers: authHeaders(),
+      body: JSON.stringify(updates),
+    }));
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
+async function deleteOrder(id) {
+  try {
+    const res = handleResponse(await fetch(`${BASE}/api/orders/${id}`, { method: 'DELETE', headers: authHeadersGet() }));
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+async function bulkUpdateOrderStatus(ids, status) {
+  try {
+    const res = handleResponse(await fetch(`${BASE}/api/orders/bulk-status`, {
+      method: 'PUT',
+      headers: authHeaders(),
+      body: JSON.stringify({ ids, status }),
+    }));
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+// ─── Bulk Groups (protected) ───
+
+async function getBulkGroups() {
+  try {
+    const res = handleResponse(await fetch(`${BASE}/api/bulk-groups`, { headers: authHeadersGet() }));
+    if (!res.ok) return [];
+    return await res.json();
+  } catch {
+    return [];
+  }
+}
+
+async function createBulkGroup(group) {
+  try {
+    const res = handleResponse(await fetch(`${BASE}/api/bulk-groups`, {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify(group),
+    }));
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
+async function updateBulkGroup(id, updates) {
+  try {
+    const res = handleResponse(await fetch(`${BASE}/api/bulk-groups/${id}`, {
+      method: 'PUT',
+      headers: authHeaders(),
+      body: JSON.stringify(updates),
+    }));
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
+async function deleteBulkGroup(id) {
+  try {
+    const res = handleResponse(await fetch(`${BASE}/api/bulk-groups/${id}`, { method: 'DELETE', headers: authHeadersGet() }));
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+// ─── Users (admin-only) ───
+
+async function getUsers() {
+  try {
+    const res = handleResponse(await fetch(`${BASE}/api/users`, { headers: authHeadersGet() }));
+    if (!res.ok) return [];
+    return await res.json();
+  } catch {
+    return [];
+  }
+}
+
+async function createUser(user) {
+  try {
+    const res = handleResponse(await fetch(`${BASE}/api/users`, {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify(user),
+    }));
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
+async function updateUser(id, updates) {
+  try {
+    const res = handleResponse(await fetch(`${BASE}/api/users/${id}`, {
+      method: 'PUT',
+      headers: authHeaders(),
+      body: JSON.stringify(updates),
+    }));
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
+async function deleteUser(id) {
+  try {
+    const res = handleResponse(await fetch(`${BASE}/api/users/${id}`, { method: 'DELETE', headers: authHeadersGet() }));
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+// ─── Stock Checks (protected) ───
 
 async function getStockChecks() {
   try {
-    const res = await fetch(`${BASE}/api/stock-checks`);
+    const res = handleResponse(await fetch(`${BASE}/api/stock-checks`, { headers: authHeadersGet() }));
     if (!res.ok) return [];
     return await res.json();
   } catch {
@@ -209,11 +264,11 @@ async function getStockChecks() {
 
 async function createStockCheck(check) {
   try {
-    const res = await fetch(`${BASE}/api/stock-checks`, {
+    const res = handleResponse(await fetch(`${BASE}/api/stock-checks`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders(),
       body: JSON.stringify(check),
-    });
+    }));
     if (!res.ok) return null;
     return await res.json();
   } catch {
@@ -223,11 +278,11 @@ async function createStockCheck(check) {
 
 async function updateStockCheck(id, updates) {
   try {
-    const res = await fetch(`${BASE}/api/stock-checks/${id}`, {
+    const res = handleResponse(await fetch(`${BASE}/api/stock-checks/${id}`, {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders(),
       body: JSON.stringify(updates),
-    });
+    }));
     if (!res.ok) return null;
     return await res.json();
   } catch {
@@ -235,11 +290,11 @@ async function updateStockCheck(id, updates) {
   }
 }
 
-// ─── Notifications ───
+// ─── Notifications (protected) ───
 
 async function getNotifLog() {
   try {
-    const res = await fetch(`${BASE}/api/notif-log`);
+    const res = handleResponse(await fetch(`${BASE}/api/notif-log`, { headers: authHeadersGet() }));
     if (!res.ok) return [];
     return await res.json();
   } catch {
@@ -249,11 +304,11 @@ async function getNotifLog() {
 
 async function createNotifEntry(entry) {
   try {
-    const res = await fetch(`${BASE}/api/notif-log`, {
+    const res = handleResponse(await fetch(`${BASE}/api/notif-log`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders(),
       body: JSON.stringify(entry),
-    });
+    }));
     if (!res.ok) return null;
     return await res.json();
   } catch {
@@ -261,12 +316,12 @@ async function createNotifEntry(entry) {
   }
 }
 
-// ─── Approvals ───
+// ─── Approvals (protected) ───
 
 async function getApprovals(status) {
   try {
     const qs = status ? `?status=${encodeURIComponent(status)}` : '';
-    const res = await fetch(`${BASE}/api/pending-approvals${qs}`);
+    const res = handleResponse(await fetch(`${BASE}/api/pending-approvals${qs}`, { headers: authHeadersGet() }));
     if (!res.ok) return [];
     return await res.json();
   } catch {
@@ -276,11 +331,11 @@ async function getApprovals(status) {
 
 async function createApproval(approval) {
   try {
-    const res = await fetch(`${BASE}/api/pending-approvals`, {
+    const res = handleResponse(await fetch(`${BASE}/api/pending-approvals`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders(),
       body: JSON.stringify(approval),
-    });
+    }));
     if (!res.ok) return null;
     return await res.json();
   } catch {
@@ -290,11 +345,11 @@ async function createApproval(approval) {
 
 async function updateApproval(id, updates) {
   try {
-    const res = await fetch(`${BASE}/api/pending-approvals/${id}`, {
+    const res = handleResponse(await fetch(`${BASE}/api/pending-approvals/${id}`, {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders(),
       body: JSON.stringify(updates),
-    });
+    }));
     if (!res.ok) return null;
     return await res.json();
   } catch {
@@ -302,11 +357,11 @@ async function updateApproval(id, updates) {
   }
 }
 
-// ─── Config ───
+// ─── Config (admin-only) ───
 
 async function getConfig() {
   try {
-    const res = await fetch(`${BASE}/api/config`);
+    const res = handleResponse(await fetch(`${BASE}/api/config`, { headers: authHeadersGet() }));
     if (!res.ok) return null;
     return await res.json();
   } catch {
@@ -316,7 +371,7 @@ async function getConfig() {
 
 async function getConfigKey(key) {
   try {
-    const res = await fetch(`${BASE}/api/config/${encodeURIComponent(key)}`);
+    const res = handleResponse(await fetch(`${BASE}/api/config/${encodeURIComponent(key)}`, { headers: authHeadersGet() }));
     if (!res.ok) return null;
     return await res.json();
   } catch {
@@ -326,11 +381,11 @@ async function getConfigKey(key) {
 
 async function setConfigKey(key, value) {
   try {
-    const res = await fetch(`${BASE}/api/config/${encodeURIComponent(key)}`, {
+    const res = handleResponse(await fetch(`${BASE}/api/config/${encodeURIComponent(key)}`, {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders(),
       body: JSON.stringify({ value }),
-    });
+    }));
     if (!res.ok) return null;
     return await res.json();
   } catch {
@@ -338,11 +393,11 @@ async function setConfigKey(key, value) {
   }
 }
 
-// ─── Catalog ───
+// ─── Catalog (protected) ───
 
 async function getCatalog() {
   try {
-    const res = await fetch(`${BASE}/api/catalog`);
+    const res = handleResponse(await fetch(`${BASE}/api/catalog`, { headers: authHeadersGet() }));
     if (!res.ok) return [];
     return await res.json();
   } catch {
@@ -352,11 +407,11 @@ async function getCatalog() {
 
 async function uploadCatalog(parts) {
   try {
-    const res = await fetch(`${BASE}/api/catalog`, {
+    const res = handleResponse(await fetch(`${BASE}/api/catalog`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders(),
       body: JSON.stringify({ parts }),
-    });
+    }));
     if (!res.ok) return null;
     return await res.json();
   } catch {
@@ -366,22 +421,22 @@ async function uploadCatalog(parts) {
 
 async function clearCatalog() {
   try {
-    const res = await fetch(`${BASE}/api/catalog`, { method: 'DELETE' });
+    const res = handleResponse(await fetch(`${BASE}/api/catalog`, { method: 'DELETE', headers: authHeadersGet() }));
     return res.ok;
   } catch {
     return false;
   }
 }
 
-// ─── Migration ───
+// ─── Migration (admin-only) ───
 
 async function migrateData(data) {
   try {
-    const res = await fetch(`${BASE}/api/migrate`, {
+    const res = handleResponse(await fetch(`${BASE}/api/migrate`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders(),
       body: JSON.stringify(data),
-    });
+    }));
     if (!res.ok) return null;
     return await res.json();
   } catch {
@@ -392,6 +447,10 @@ async function migrateData(data) {
 // ─── Export ───
 
 const api = {
+  setToken,
+  getToken,
+  logout,
+  onAuthError,
   getOrders,
   createOrder,
   updateOrder,

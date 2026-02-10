@@ -22,7 +22,7 @@ const CATEGORIES = {
 };
 
 const DEFAULT_USERS = [
-  { id: 'U001', username: 'admin', password: 'admin123', name: 'System Admin', email: 'admin@miltenyibiotec.com', role: 'admin', status: 'active', created: '2025-01-01', phone: '' },
+  { id: 'U001', username: 'admin', name: 'System Admin', email: 'admin@miltenyibiotec.com', role: 'admin', status: 'active', created: '2025-01-01', phone: '' },
 ];
 
 const MONTH_OPTIONS = [
@@ -257,6 +257,14 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
   const [selNotifs, setSelNotifs] = useState(new Set());
   const [selApprovals, setSelApprovals] = useState(new Set());
 
+  // ── Loading State ──
+  const [isLoading, setIsLoading] = useState(true);
+
+  // ── Auto-logout on token expiry ──
+  useEffect(() => {
+    api.onAuthError(() => { setCurrentUser(null); notify('Session Expired','Please log in again','warning'); });
+  }, []);
+
   // ── localStorage Persistence ──
   const LS_KEYS = { orders: 'mih_orders', bulkGroups: 'mih_bulkGroups', emailConfig: 'mih_emailConfig', emailTemplates: 'mih_emailTemplates', priceConfig: 'mih_priceConfig', notifLog: 'mih_notifLog', pendingApprovals: 'mih_pendingApprovals', users: 'mih_users', waNotifyRules: 'mih_waNotifyRules', scheduledNotifs: 'mih_scheduledNotifs', customLogo: 'mih_customLogo', stockChecks: 'mih_stockChecks' };
 
@@ -304,7 +312,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
         if (saved.stockChecks?.length) setStockChecks(saved.stockChecks);
       } catch (e) { console.warn('Failed to load saved data:', e); }
     }
-    loadFromApi();
+    loadFromApi().finally(() => setIsLoading(false));
   }, []);
 
   // Save to localStorage on changes
@@ -745,13 +753,14 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
 
   // ── Auth Handlers ──
   const handleLogin = async () => {
-    // Try API login first (bcrypt-verified on server)
-    const apiUser = await api.login(loginForm.username, loginForm.password);
-    if (apiUser) { setCurrentUser(apiUser); notify(`Welcome back, ${apiUser.name}`, apiUser.role==='admin'?'Admin access granted':'User access granted', 'success'); return; }
-    // Fallback to local user list (for offline/no-DB mode)
-    const user = users.find(u=>u.username===loginForm.username && u.password===loginForm.password && u.status==='active');
-    if(user) { setCurrentUser(user); notify(`Welcome back, ${user.name}`, user.role==='admin'?'Admin access granted':'User access granted', 'success'); }
-    else notify('Login Failed','Invalid credentials or account not approved','warning');
+    if (!loginForm.username || !loginForm.password) { notify('Missing Fields','Please enter username and password','warning'); return; }
+    const result = await api.login(loginForm.username, loginForm.password);
+    if (result && result.user) {
+      setCurrentUser(result.user);
+      notify(`Welcome back, ${result.user.name}`, result.user.role==='admin'?'Admin access granted':'User access granted', 'success');
+    } else {
+      notify('Login Failed','Invalid credentials or account not approved','warning');
+    }
   };
   const handleRegister = () => {
     if(!regForm.username||!regForm.password||!regForm.name||!regForm.email) { notify('Missing Fields','Please fill all required fields','warning'); return; }
@@ -1205,6 +1214,20 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
     );
   }
 
+  // ════════════════════════════ LOADING SCREEN ═══════════════════════
+  if (isLoading) {
+    return (
+      <div style={{minHeight:'100vh',background:'linear-gradient(135deg, #003020 0%, #006837 40%, #00A550 100%)',display:'flex',alignItems:'center',justifyContent:'center',fontFamily:"'DM Sans',system-ui,sans-serif"}}>
+        <div style={{textAlign:'center',color:'#fff'}}>
+          <div style={{width:48,height:48,border:'4px solid rgba(255,255,255,0.3)',borderTop:'4px solid #fff',borderRadius:'50%',animation:'spin 1s linear infinite',margin:'0 auto 16px'}}/>
+          <div style={{fontSize:18,fontWeight:600}}>Miltenyi Inventory Hub</div>
+          <div style={{fontSize:13,opacity:0.7,marginTop:6}}>Loading...</div>
+          <style>{`@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }`}</style>
+        </div>
+      </div>
+    );
+  }
+
   // ════════════════════════════ LOGIN SCREEN ═════════════════════════
   if (!currentUser) {
     return (
@@ -1227,7 +1250,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
               </div>
               <div style={{ marginTop:24,padding:12,borderRadius:8,background:'#F8FAFB',fontSize:11,color:'#94A3B8' }}>
                 <div style={{fontWeight:600,marginBottom:4,color:'#64748B'}}>Default Admin:</div>
-                <div>Username: <span style={{fontFamily:'JetBrains Mono',color:'#0B7A3E'}}>admin</span> / Password: <span style={{fontFamily:'JetBrains Mono',color:'#0B7A3E'}}>admin123</span></div>
+                <div>Contact your administrator for login credentials</div>
               </div>
             </div>
           ) : (
@@ -1327,7 +1350,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
             <button onClick={()=>setAiPanelOpen(!aiPanelOpen)} className="bs" style={{padding:'8px 12px',display:'flex',alignItems:'center',gap:6,background:aiPanelOpen?'#E6F4ED':'#F8FAFB',border:aiPanelOpen?'1.5px solid #0B7A3E':'1.5px solid #E2E8F0'}} title="AI Assistant">{aiPanelOpen?<PanelRightClose size={16} color="#0B7A3E"/>:<Bot size={16}/>} <span className="ai-label" style={{fontSize:12,fontWeight:600,color:aiPanelOpen?'#0B7A3E':'#64748B'}}>AI</span></button>
             <div style={{display:'flex',alignItems:'center',gap:8}}>
               <div style={{width:34,height:34,borderRadius:'50%',background:'linear-gradient(135deg,#006837,#00A550)',display:'flex',alignItems:'center',justifyContent:'center',color:'#fff',fontSize:12,fontWeight:700}}>{currentUser.name.split(' ').map(w=>w[0]).join('')}</div>
-              <button className="bs" style={{padding:'8px 12px',fontSize:12}} onClick={()=>{setCurrentUser(null);setLoginForm({username:'',password:''});}}><LogOut size={14}/><span className="logout-text">{sidebarOpen?'Logout':''}</span></button>
+              <button className="bs" style={{padding:'8px 12px',fontSize:12}} onClick={()=>{api.logout();setCurrentUser(null);setLoginForm({username:'',password:''});}}><LogOut size={14}/><span className="logout-text">{sidebarOpen?'Logout':''}</span></button>
             </div>
           </div>
         </header>

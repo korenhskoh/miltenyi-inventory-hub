@@ -2,6 +2,7 @@ import { Router } from 'express';
 import bcrypt from 'bcryptjs';
 import { query } from '../db.js';
 import { snakeToCamel, camelToSnake } from '../utils.js';
+import { generateToken } from '../middleware/auth.js';
 
 const router = Router();
 
@@ -27,9 +28,15 @@ router.post('/login', async (req, res) => {
       return res.status(401).json({ error: 'Invalid username or password' });
     }
 
-    // Remove password_hash before returning
+    if (user.status !== 'active') {
+      return res.status(401).json({ error: 'Account not approved or inactive' });
+    }
+
+    // Generate JWT token and return with user data
     const { password_hash, ...userWithoutPassword } = user;
-    res.json(snakeToCamel(userWithoutPassword));
+    const userData = snakeToCamel(userWithoutPassword);
+    const token = generateToken(userData);
+    res.json({ user: userData, token });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
