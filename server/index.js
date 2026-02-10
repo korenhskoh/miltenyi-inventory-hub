@@ -300,6 +300,14 @@ app.get('/api/whatsapp/templates', (req, res) => {
 // Public routes (no auth required)
 app.use('/api/auth', authLimiter, authRouter);
 
+// Public config (logo — no auth so login page can show it)
+app.get('/api/public/logo', async (req, res) => {
+  try {
+    const result = await (await import('./db.js')).query("SELECT value FROM app_config WHERE key = 'customLogo'");
+    res.json({ logo: result.rows.length ? result.rows[0].value : null });
+  } catch { res.json({ logo: null }); }
+});
+
 // Protected routes (require valid JWT)
 app.use('/api/orders', verifyToken, ordersRouter);
 app.use('/api/bulk-groups', verifyToken, bulkGroupsRouter);

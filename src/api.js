@@ -85,6 +85,29 @@ function logout() {
   setToken(null);
 }
 
+// Validate token and get fresh user data from DB
+async function getMe() {
+  try {
+    const res = await fetch(`${BASE}/api/auth/me`, { headers: authHeadersGet() });
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
+// Public: fetch logo (no auth required)
+async function getPublicLogo() {
+  try {
+    const res = await fetch(`${BASE}/api/public/logo`);
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data.logo;
+  } catch {
+    return null;
+  }
+}
+
 // ─── Orders (protected) ───
 
 async function getOrders(filters = {}) {
@@ -450,6 +473,8 @@ const api = {
   setToken,
   getToken,
   logout,
+  getMe,
+  getPublicLogo,
   onAuthError,
   getOrders,
   createOrder,

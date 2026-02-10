@@ -310,9 +310,33 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
   // ── localStorage Persistence ──
   const LS_KEYS = { orders: 'mih_orders', bulkGroups: 'mih_bulkGroups', emailConfig: 'mih_emailConfig', emailTemplates: 'mih_emailTemplates', priceConfig: 'mih_priceConfig', notifLog: 'mih_notifLog', pendingApprovals: 'mih_pendingApprovals', users: 'mih_users', waNotifyRules: 'mih_waNotifyRules', scheduledNotifs: 'mih_scheduledNotifs', customLogo: 'mih_customLogo', stockChecks: 'mih_stockChecks' };
 
-  // Load data on mount — try API first, fall back to localStorage
+  // Load data on mount — refresh session, fetch logo, then load all data from DB
   useEffect(() => {
-    async function loadFromApi() {
+    async function loadOnMount() {
+      // 1. Always fetch latest logo from public endpoint (works before login)
+      try {
+        const dbLogo = await api.getPublicLogo();
+        if (dbLogo !== null) setCustomLogo(dbLogo);
+      } catch {}
+
+      // 2. If we have a stored token, validate session and refresh user from DB
+      const hasToken = !!api.getToken();
+      if (hasToken) {
+        try {
+          const meResult = await api.getMe();
+          if (meResult && meResult.user) {
+            setCurrentUser(meResult.user); // Fresh data from DB (permissions, role, etc.)
+          } else {
+            // Token invalid/expired — clear session
+            setCurrentUser(null);
+            api.logout();
+          }
+        } catch {
+          // API unreachable — keep localStorage user as fallback
+        }
+      }
+
+      // 3. Load all app data from DB (requires valid token for protected routes)
       try {
         const [apiOrders, apiBulk, apiUsers, apiChecks, apiNotifs, apiApprovals, apiConfig, apiCatalog] = await Promise.all([
           api.getOrders(), api.getBulkGroups(), api.getUsers(), api.getStockChecks(),
@@ -337,6 +361,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
         if (apiCatalog.length) { setPartsCatalog(apiCatalog.map(p => ({ m: p.materialNo, d: p.description, c: p.category, sg: p.sgPrice, dist: p.distPrice, tp: p.transferPrice, rsp: p.rspEur }))); }
         if (fromDb) { console.log('Data loaded from database'); return; }
       } catch (e) { console.log('API not available, using localStorage'); }
+
       // Fallback to localStorage
       try {
         const saved = {};
@@ -355,7 +380,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
         if (saved.stockChecks?.length) setStockChecks(saved.stockChecks);
       } catch (e) { console.warn('Failed to load saved data:', e); }
     }
-    loadFromApi().finally(() => setIsLoading(false));
+    loadOnMount().finally(() => setIsLoading(false));
   }, []);
 
   // Save to localStorage on changes
