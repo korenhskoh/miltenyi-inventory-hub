@@ -1347,42 +1347,263 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
 
   // ════════════════════════════ LOGIN SCREEN ═════════════════════════
   if (!currentUser) {
+    // Miltenyi Biotec product data for 3D carousel
+    const miltenyiProducts = [
+      { name: 'MACSQuant Analyzer 16', img: 'https://static.miltenyibiotec.com/asset/150655405641/document_n8v15e6un15d7oqj2utjh91ia5/MACSQuant-Analyzer-16-background-image.png', color: '#00A550' },
+      { name: 'gentleMACS Octo Dissociator', img: 'https://static.miltenyibiotec.com/asset/150655405641/document_d8rr4h80cqqjt3r1bnl9e7e2v6/gentleMACS-Octo-Dissociator-with-Heaters.png', color: '#006837' },
+      { name: 'CliniMACS Prodigy', img: 'https://static.miltenyibiotec.com/asset/150655405641/document_6lhcj1t1b1kfq1qsb2g4rh3i15/CliniMACS-Prodigy-background-image.png', color: '#00C853' },
+      { name: 'MACSQuant Tyto', img: 'https://static.miltenyibiotec.com/asset/150655405641/document_h1s2lq6ed1kbhaqolj2djt5ifs/MACSQuant-Tyto-background-image.png', color: '#43A047' },
+      { name: 'MACS MicroBeads', img: 'https://static.miltenyibiotec.com/asset/150655405641/document_b1qfgt49b5odr5l0aemeh6c5cd/CD4-MicroBeads-human.png', color: '#2E7D32' },
+      { name: 'MultiMACS M96', img: 'https://static.miltenyibiotec.com/asset/150655405641/document_fmui4o2ru1b7h0f4ehj7dh1p3d/MultiMACS-M96-background-image.png', color: '#1B5E20' },
+      { name: 'MACSQuant X', img: 'https://static.miltenyibiotec.com/asset/150655405641/document_u0p9jfp72t7mu7sfp4cjr1ia6a/MACSQuant-X-background-image.png', color: '#388E3C' },
+      { name: 'gentleMACS Dissociator', img: 'https://static.miltenyibiotec.com/asset/150655405641/document_eoei7gq4o9c6d2jj4h1bia6g30/gentleMACS-Dissociator-background-image.png', color: '#4CAF50' },
+    ];
+
     return (
-      <div style={{ minHeight:'100vh', background:'linear-gradient(135deg, #003020 0%, #006837 40%, #00A550 100%)', display:'flex', alignItems:'center', justifyContent:'center', fontFamily:"'DM Sans',system-ui,sans-serif" }}>
-        <style>{`@import url('https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,600;9..40,700&family=JetBrains+Mono:wght@400;500&display=swap'); @keyframes fadeUp { from { opacity:0;transform:translateY(20px); } to { opacity:1;transform:translateY(0); } } input{font-family:inherit;font-size:13px;padding:11px 14px;border:1.5px solid #E2E8F0;border-radius:10px;outline:none;transition:border-color 0.2s;color:#1A202C;background:#fff;width:100%;box-sizing:border-box;} input:focus{border-color:#0B7A3E;box-shadow:0 0 0 3px rgba(11,122,62,0.15);}`}</style>
-        <div className="login-box" style={{ animation:'fadeUp 0.5s ease', width:420, maxWidth:'92vw', background:'#fff', borderRadius:20, padding:'40px 36px', boxShadow:'0 24px 80px rgba(0,0,0,0.3)' }}>
+      <div style={{ minHeight:'100vh', background:'#001a0f', display:'flex', alignItems:'center', justifyContent:'center', fontFamily:"'DM Sans',system-ui,sans-serif", overflow:'hidden', position:'relative' }}>
+        <style>{`
+          @import url('https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,600;9..40,700&family=Sora:wght@300;400;500;600;700&display=swap');
+
+          @keyframes fadeUp { from { opacity:0;transform:translateY(30px); } to { opacity:1;transform:translateY(0); } }
+          @keyframes fadeIn { from { opacity:0; } to { opacity:1; } }
+          @keyframes shimmer { 0% { background-position: -200% center; } 100% { background-position: 200% center; } }
+
+          @keyframes orbit3d {
+            0%   { transform: rotateY(0deg)   translateZ(320px) rotateY(0deg)   scale(0.7); opacity: 0.3; }
+            25%  { transform: rotateY(90deg)  translateZ(320px) rotateY(-90deg) scale(1.1); opacity: 0.9; }
+            50%  { transform: rotateY(180deg) translateZ(320px) rotateY(-180deg) scale(0.7); opacity: 0.3; }
+            75%  { transform: rotateY(270deg) translateZ(320px) rotateY(-270deg) scale(1.1); opacity: 0.9; }
+            100% { transform: rotateY(360deg) translateZ(320px) rotateY(-360deg) scale(0.7); opacity: 0.3; }
+          }
+          @keyframes orbit3d-reverse {
+            0%   { transform: rotateY(0deg)   translateZ(250px) rotateY(0deg)   scale(0.6); opacity: 0.2; }
+            25%  { transform: rotateY(-90deg)  translateZ(250px) rotateY(90deg) scale(0.9); opacity: 0.7; }
+            50%  { transform: rotateY(-180deg) translateZ(250px) rotateY(180deg) scale(0.6); opacity: 0.2; }
+            75%  { transform: rotateY(-270deg) translateZ(250px) rotateY(270deg) scale(0.9); opacity: 0.7; }
+            100% { transform: rotateY(-360deg) translateZ(250px) rotateY(360deg) scale(0.6); opacity: 0.2; }
+          }
+          @keyframes float-gentle { 0%,100% { transform: translateY(0px); } 50% { transform: translateY(-15px); } }
+          @keyframes pulse-glow { 0%,100% { opacity: 0.4; } 50% { opacity: 0.8; } }
+          @keyframes rotate-slow { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+          @keyframes grid-pulse { 0%,100% { opacity: 0.03; } 50% { opacity: 0.07; } }
+
+          .login-bg-gradient {
+            position: absolute; inset: 0; z-index: 0;
+            background: radial-gradient(ellipse 80% 60% at 30% 40%, rgba(0,168,80,0.15) 0%, transparent 70%),
+                        radial-gradient(ellipse 60% 50% at 70% 60%, rgba(0,104,55,0.12) 0%, transparent 70%),
+                        radial-gradient(ellipse 40% 30% at 50% 80%, rgba(0,200,83,0.08) 0%, transparent 60%),
+                        linear-gradient(180deg, #001a0f 0%, #002815 40%, #001a0f 100%);
+          }
+          .login-grid-overlay {
+            position: absolute; inset: 0; z-index: 1;
+            background-image: linear-gradient(rgba(0,168,80,0.04) 1px, transparent 1px),
+                              linear-gradient(90deg, rgba(0,168,80,0.04) 1px, transparent 1px);
+            background-size: 60px 60px;
+            animation: grid-pulse 8s ease-in-out infinite;
+          }
+          .login-particles { position: absolute; inset: 0; z-index: 1; overflow: hidden; }
+          .login-particle {
+            position: absolute; border-radius: 50%; background: rgba(0,200,83,0.3);
+            animation: float-gentle 6s ease-in-out infinite;
+          }
+
+          .product-orbit-container {
+            position: absolute; z-index: 2; pointer-events: none;
+            width: 700px; height: 700px;
+            top: 50%; left: 50%; transform: translate(-50%, -50%);
+            perspective: 1200px;
+          }
+          .product-orbit-ring {
+            position: absolute; inset: 0;
+            transform-style: preserve-3d;
+            animation: rotate-slow 40s linear infinite;
+          }
+          .product-orbit-ring-2 {
+            position: absolute; inset: 50px;
+            transform-style: preserve-3d;
+            animation: rotate-slow 30s linear infinite reverse;
+          }
+          .product-card-3d {
+            position: absolute; top: 50%; left: 50%;
+            width: 110px; height: 130px; margin: -65px 0 0 -55px;
+            transform-style: preserve-3d;
+            transition: all 0.5s ease;
+          }
+          .product-card-3d-inner {
+            width: 100%; height: 100%;
+            background: rgba(255,255,255,0.06);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 16px;
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            padding: 10px; box-sizing: border-box;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.1);
+          }
+          .product-card-3d-inner img {
+            width: 70px; height: 70px; object-fit: contain;
+            filter: brightness(1.1) drop-shadow(0 4px 8px rgba(0,200,83,0.3));
+            margin-bottom: 8px;
+          }
+          .product-card-3d-inner .product-label {
+            font-size: 8px; font-weight: 600; color: rgba(255,255,255,0.7);
+            text-align: center; line-height: 1.2; letter-spacing: 0.3px;
+            font-family: 'Sora', 'DM Sans', sans-serif;
+          }
+
+          .login-card-glass {
+            animation: fadeUp 0.7s ease;
+            width: 420px; max-width: 92vw;
+            background: rgba(255,255,255,0.95);
+            backdrop-filter: blur(20px);
+            border-radius: 24px;
+            padding: 44px 40px;
+            box-shadow: 0 32px 100px rgba(0,0,0,0.4), 0 0 0 1px rgba(255,255,255,0.1);
+            position: relative; z-index: 10;
+          }
+
+          .login-input {
+            font-family: 'DM Sans', sans-serif; font-size: 13px;
+            padding: 12px 16px; border: 1.5px solid #E2E8F0; border-radius: 12px;
+            outline: none; transition: all 0.3s ease; color: #1A202C;
+            background: #fff; width: 100%; box-sizing: border-box;
+          }
+          .login-input:focus {
+            border-color: #00A550;
+            box-shadow: 0 0 0 4px rgba(0,165,80,0.12), 0 2px 8px rgba(0,165,80,0.08);
+          }
+          .login-input::placeholder { color: #A0AEC0; }
+
+          .login-btn-primary {
+            width: 100%; padding: 13px; border-radius: 12px; border: none;
+            background: linear-gradient(135deg, #006837 0%, #00A550 50%, #00C853 100%);
+            background-size: 200% auto;
+            color: #fff; font-size: 14px; font-weight: 600;
+            cursor: pointer; font-family: 'DM Sans', sans-serif;
+            display: flex; align-items: center; justify-content: center; gap: 8px;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 16px rgba(0,165,80,0.3);
+          }
+          .login-btn-primary:hover { background-position: right center; box-shadow: 0 6px 24px rgba(0,165,80,0.4); transform: translateY(-1px); }
+          .login-btn-primary:active { transform: translateY(0px); }
+
+          .login-link { background: none; border: none; color: #00A550; font-weight: 600; cursor: pointer; font-family: 'DM Sans', sans-serif; font-size: 13px; transition: color 0.2s; }
+          .login-link:hover { color: #006837; }
+
+          .login-header-line {
+            width: 40px; height: 3px; border-radius: 2px;
+            background: linear-gradient(90deg, #00A550, #00C853);
+            margin: 0 auto 16px; animation: shimmer 3s ease-in-out infinite;
+            background-size: 200% auto;
+          }
+
+          @media (max-width: 768px) {
+            .product-orbit-container { width: 500px; height: 500px; }
+            .product-card-3d { width: 80px; height: 100px; margin: -50px 0 0 -40px; }
+            .product-card-3d-inner img { width: 50px; height: 50px; }
+            .product-card-3d-inner .product-label { font-size: 7px; }
+            .login-card-glass { padding: 32px 28px; }
+          }
+          @media (max-width: 480px) {
+            .product-orbit-container { width: 380px; height: 380px; }
+          }
+        `}</style>
+
+        {/* Background layers */}
+        <div className="login-bg-gradient" />
+        <div className="login-grid-overlay" />
+
+        {/* Floating particles */}
+        <div className="login-particles">
+          {[...Array(20)].map((_,i) => (
+            <div key={i} className="login-particle" style={{
+              width: 2 + Math.random()*4, height: 2 + Math.random()*4,
+              left: `${Math.random()*100}%`, top: `${Math.random()*100}%`,
+              animationDelay: `${Math.random()*6}s`,
+              animationDuration: `${4+Math.random()*6}s`,
+              opacity: 0.1 + Math.random()*0.3,
+            }} />
+          ))}
+        </div>
+
+        {/* Ambient glow orbs */}
+        <div style={{ position:'absolute', width:400, height:400, borderRadius:'50%', background:'radial-gradient(circle, rgba(0,200,83,0.08) 0%, transparent 70%)', top:'10%', left:'5%', animation:'pulse-glow 6s ease-in-out infinite', zIndex:1 }} />
+        <div style={{ position:'absolute', width:300, height:300, borderRadius:'50%', background:'radial-gradient(circle, rgba(0,104,55,0.1) 0%, transparent 70%)', bottom:'15%', right:'10%', animation:'pulse-glow 8s ease-in-out infinite 2s', zIndex:1 }} />
+
+        {/* 3D Product Orbit */}
+        <div className="product-orbit-container">
+          <div className="product-orbit-ring">
+            {miltenyiProducts.slice(0,5).map((p,i) => (
+              <div key={i} className="product-card-3d" style={{
+                animation: `orbit3d 40s linear infinite`,
+                animationDelay: `${i * -8}s`,
+              }}>
+                <div className="product-card-3d-inner">
+                  <img src={p.img} alt={p.name} onError={e => { e.target.style.display='none'; }} />
+                  <div className="product-label">{p.name}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+          <div className="product-orbit-ring-2">
+            {miltenyiProducts.slice(5).map((p,i) => (
+              <div key={i} className="product-card-3d" style={{
+                animation: `orbit3d-reverse 30s linear infinite`,
+                animationDelay: `${i * -10}s`,
+              }}>
+                <div className="product-card-3d-inner">
+                  <img src={p.img} alt={p.name} onError={e => { e.target.style.display='none'; }} />
+                  <div className="product-label">{p.name}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Login Card */}
+        <div className="login-card-glass">
           <div style={{ textAlign:'center', marginBottom:32 }}>
-            <div style={{ width:56,height:56,borderRadius:16,background:customLogo?'#fff':'linear-gradient(135deg,#006837,#00A550)',display:'inline-flex',alignItems:'center',justifyContent:'center',marginBottom:16,overflow:'hidden',border:customLogo?'2px solid #E2E8F0':'none' }}>{customLogo?<img src={customLogo} alt="Logo" style={{width:'100%',height:'100%',objectFit:'contain'}}/>:<Package size={28} color="#fff"/>}</div>
-            <h1 style={{ fontSize:22,fontWeight:700,color:'#0F172A',letterSpacing:-0.5 }}>Miltenyi Inventory Hub</h1>
-            <p style={{ fontSize:13,color:'#94A3B8',marginTop:4 }}>Service Spare Parts Management — Singapore</p>
+            <div className="login-header-line" />
+            <div style={{ width:64,height:64,borderRadius:18,background:customLogo?'#fff':'linear-gradient(135deg,#006837,#00A550)',display:'inline-flex',alignItems:'center',justifyContent:'center',marginBottom:16,overflow:'hidden',border:customLogo?'2px solid #E8EDF2':'none',boxShadow:'0 8px 24px rgba(0,104,55,0.2)' }}>
+              {customLogo?<img src={customLogo} alt="Logo" style={{width:'100%',height:'100%',objectFit:'contain'}}/>:<Package size={30} color="#fff"/>}
+            </div>
+            <h1 style={{ fontSize:24,fontWeight:700,color:'#0F172A',letterSpacing:-0.5,fontFamily:"'Sora','DM Sans',sans-serif",margin:0 }}>Miltenyi Inventory Hub</h1>
+            <p style={{ fontSize:10,color:'#94A3B8',marginTop:6,letterSpacing:0.5,textTransform:'uppercase',fontWeight:500 }}>Service Spare Parts Management &mdash; Singapore</p>
           </div>
 
           {authView === 'login' ? (
             <div>
-              <div style={{ marginBottom:16 }}><label style={{display:'block',fontSize:12,fontWeight:600,color:'#4A5568',marginBottom:6}}>Username</label><input value={loginForm.username} onChange={e=>setLoginForm(p=>({...p,username:e.target.value}))} placeholder="Enter username" onKeyDown={e=>e.key==='Enter'&&handleLogin()}/></div>
-              <div style={{ marginBottom:24 }}><label style={{display:'block',fontSize:12,fontWeight:600,color:'#4A5568',marginBottom:6}}>Password</label><input type="password" value={loginForm.password} onChange={e=>setLoginForm(p=>({...p,password:e.target.value}))} placeholder="Enter password" onKeyDown={e=>e.key==='Enter'&&handleLogin()}/></div>
-              <button onClick={handleLogin} disabled={isSubmitting} style={{ width:'100%',padding:'12px',borderRadius:10,border:'none',background:'linear-gradient(135deg,#006837,#00A550)',color:'#fff',fontSize:14,fontWeight:600,cursor:'pointer',fontFamily:'inherit',display:'flex',alignItems:'center',justifyContent:'center',gap:8,opacity:isSubmitting?.6:1 }}><Lock size={16}/> {isSubmitting?'Signing in...':'Sign In'}</button>
-              <div style={{ textAlign:'center', marginTop:20, fontSize:13, color:'#64748B' }}>
-                Don't have an account? <button onClick={()=>setAuthView('register')} style={{ background:'none',border:'none',color:'#0B7A3E',fontWeight:600,cursor:'pointer',fontFamily:'inherit',fontSize:13 }}>Register here</button>
+              <div style={{ marginBottom:16 }}>
+                <label style={{display:'block',fontSize:11,fontWeight:600,color:'#4A5568',marginBottom:6,textTransform:'uppercase',letterSpacing:0.5}}>Username</label>
+                <input className="login-input" value={loginForm.username} onChange={e=>setLoginForm(p=>({...p,username:e.target.value}))} placeholder="Enter username" onKeyDown={e=>e.key==='Enter'&&handleLogin()}/>
               </div>
-              <div style={{ marginTop:24,padding:12,borderRadius:8,background:'#F8FAFB',fontSize:11,color:'#94A3B8' }}>
-                <div style={{fontWeight:600,marginBottom:4,color:'#64748B'}}>Default Admin:</div>
+              <div style={{ marginBottom:24 }}>
+                <label style={{display:'block',fontSize:11,fontWeight:600,color:'#4A5568',marginBottom:6,textTransform:'uppercase',letterSpacing:0.5}}>Password</label>
+                <input className="login-input" type="password" value={loginForm.password} onChange={e=>setLoginForm(p=>({...p,password:e.target.value}))} placeholder="Enter password" onKeyDown={e=>e.key==='Enter'&&handleLogin()}/>
+              </div>
+              <button onClick={handleLogin} disabled={isSubmitting} className="login-btn-primary" style={{opacity:isSubmitting?.6:1}}>
+                <Lock size={16}/> {isSubmitting?'Signing in...':'Sign In'}
+              </button>
+              <div style={{ textAlign:'center', marginTop:20, fontSize:13, color:'#64748B' }}>
+                Don't have an account? <button onClick={()=>setAuthView('register')} className="login-link">Register here</button>
+              </div>
+              <div style={{ marginTop:24,padding:12,borderRadius:10,background:'linear-gradient(135deg,#F0FFF4,#F8FAFB)',fontSize:11,color:'#94A3B8',border:'1px solid #E8F5E9' }}>
+                <div style={{fontWeight:600,marginBottom:4,color:'#4CAF50',fontSize:10,textTransform:'uppercase',letterSpacing:0.5}}>Getting Started</div>
                 <div>Contact your administrator for login credentials</div>
               </div>
             </div>
           ) : (
             <div>
-              <div style={{ marginBottom:14 }}><label style={{display:'block',fontSize:12,fontWeight:600,color:'#4A5568',marginBottom:6}}>Full Name *</label><input value={regForm.name} onChange={e=>setRegForm(p=>({...p,name:e.target.value}))} placeholder="Your full name"/></div>
-              <div style={{ marginBottom:14 }}><label style={{display:'block',fontSize:12,fontWeight:600,color:'#4A5568',marginBottom:6}}>Email *</label><input type="email" value={regForm.email} onChange={e=>setRegForm(p=>({...p,email:e.target.value}))} placeholder="name@miltenyibiotec.com"/></div>
-              <div style={{ marginBottom:14 }}><label style={{display:'block',fontSize:12,fontWeight:600,color:'#4A5568',marginBottom:6}}>Phone</label><input value={regForm.phone} onChange={e=>setRegForm(p=>({...p,phone:e.target.value}))} placeholder="+65 9XXX XXXX"/></div>
+              <div style={{ marginBottom:14 }}><label style={{display:'block',fontSize:11,fontWeight:600,color:'#4A5568',marginBottom:6,textTransform:'uppercase',letterSpacing:0.5}}>Full Name *</label><input className="login-input" value={regForm.name} onChange={e=>setRegForm(p=>({...p,name:e.target.value}))} placeholder="Your full name"/></div>
+              <div style={{ marginBottom:14 }}><label style={{display:'block',fontSize:11,fontWeight:600,color:'#4A5568',marginBottom:6,textTransform:'uppercase',letterSpacing:0.5}}>Email *</label><input className="login-input" type="email" value={regForm.email} onChange={e=>setRegForm(p=>({...p,email:e.target.value}))} placeholder="name@miltenyibiotec.com"/></div>
+              <div style={{ marginBottom:14 }}><label style={{display:'block',fontSize:11,fontWeight:600,color:'#4A5568',marginBottom:6,textTransform:'uppercase',letterSpacing:0.5}}>Phone</label><input className="login-input" value={regForm.phone} onChange={e=>setRegForm(p=>({...p,phone:e.target.value}))} placeholder="+65 9XXX XXXX"/></div>
               <div className="grid-2" style={{ display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:14 }}>
-                <div><label style={{display:'block',fontSize:12,fontWeight:600,color:'#4A5568',marginBottom:6}}>Username *</label><input value={regForm.username} onChange={e=>setRegForm(p=>({...p,username:e.target.value}))} placeholder="Choose username"/></div>
-                <div><label style={{display:'block',fontSize:12,fontWeight:600,color:'#4A5568',marginBottom:6}}>Password *</label><input type="password" value={regForm.password} onChange={e=>setRegForm(p=>({...p,password:e.target.value}))} placeholder="Create password"/></div>
+                <div><label style={{display:'block',fontSize:11,fontWeight:600,color:'#4A5568',marginBottom:6,textTransform:'uppercase',letterSpacing:0.5}}>Username *</label><input className="login-input" value={regForm.username} onChange={e=>setRegForm(p=>({...p,username:e.target.value}))} placeholder="Choose username"/></div>
+                <div><label style={{display:'block',fontSize:11,fontWeight:600,color:'#4A5568',marginBottom:6,textTransform:'uppercase',letterSpacing:0.5}}>Password *</label><input className="login-input" type="password" value={regForm.password} onChange={e=>setRegForm(p=>({...p,password:e.target.value}))} placeholder="Create password"/></div>
               </div>
-              <div style={{ padding:10,borderRadius:8,background:'#FEF3C7',fontSize:11,color:'#92400E',marginBottom:20,display:'flex',alignItems:'center',gap:6 }}><AlertTriangle size={13}/> Your account will need admin approval before you can login.</div>
-              <button onClick={handleRegister} style={{ width:'100%',padding:'12px',borderRadius:10,border:'none',background:'linear-gradient(135deg,#006837,#00A550)',color:'#fff',fontSize:14,fontWeight:600,cursor:'pointer',fontFamily:'inherit',display:'flex',alignItems:'center',justifyContent:'center',gap:8 }}><UserPlus size={16}/> Request Account</button>
+              <div style={{ padding:10,borderRadius:10,background:'linear-gradient(135deg,#FFFBEB,#FEF3C7)',fontSize:11,color:'#92400E',marginBottom:20,display:'flex',alignItems:'center',gap:6,border:'1px solid #FDE68A' }}><AlertTriangle size={13}/> Your account will need admin approval before you can login.</div>
+              <button onClick={handleRegister} className="login-btn-primary"><UserPlus size={16}/> Request Account</button>
               <div style={{ textAlign:'center', marginTop:16, fontSize:13, color:'#64748B' }}>
-                Already have an account? <button onClick={()=>setAuthView('login')} style={{ background:'none',border:'none',color:'#0B7A3E',fontWeight:600,cursor:'pointer',fontFamily:'inherit',fontSize:13 }}>Sign in</button>
+                Already have an account? <button onClick={()=>setAuthView('login')} className="login-link">Sign in</button>
               </div>
             </div>
           )}
