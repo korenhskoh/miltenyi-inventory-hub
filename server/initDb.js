@@ -108,7 +108,7 @@ export async function initDatabase() {
 
       for (const entry of configEntries) {
         await query(
-          `INSERT INTO app_config (key, value) VALUES ($1, $2)`,
+          `INSERT INTO app_config (key, user_id, value) VALUES ($1, '__global__', $2)`,
           [entry.key, JSON.stringify(entry.value)]
         );
       }

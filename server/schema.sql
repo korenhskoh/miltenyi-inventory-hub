@@ -89,9 +89,11 @@ CREATE TABLE IF NOT EXISTS parts_catalog (
 );
 
 CREATE TABLE IF NOT EXISTS app_config (
-  key VARCHAR(50) PRIMARY KEY,
+  key VARCHAR(50) NOT NULL,
+  user_id VARCHAR(20) NOT NULL DEFAULT '__global__',
   value JSONB NOT NULL,
-  updated_at TIMESTAMP DEFAULT NOW()
+  updated_at TIMESTAMP DEFAULT NOW(),
+  PRIMARY KEY (key, user_id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status);
@@ -99,5 +101,25 @@ CREATE INDEX IF NOT EXISTS idx_orders_month ON orders(month);
 CREATE INDEX IF NOT EXISTS idx_orders_order_by ON orders(order_by);
 CREATE INDEX IF NOT EXISTS idx_pending_approvals_status ON pending_approvals(status);
 
+CREATE TABLE IF NOT EXISTS wa_auth (
+  key_type VARCHAR(50) NOT NULL,
+  key_id VARCHAR(100) NOT NULL,
+  value TEXT NOT NULL,
+  PRIMARY KEY (key_type, key_id)
+);
+
 -- Migrations for existing databases
 ALTER TABLE users ADD COLUMN IF NOT EXISTS permissions JSONB DEFAULT '{}';
+ALTER TABLE app_config ADD COLUMN IF NOT EXISTS user_id VARCHAR(20) DEFAULT '__global__';
+DO $$ BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.table_constraints
+    WHERE table_name='app_config' AND constraint_type='PRIMARY KEY' AND constraint_name='app_config_pkey'
+  ) THEN
+    IF (SELECT COUNT(*) FROM information_schema.key_column_usage
+        WHERE table_name='app_config' AND constraint_name='app_config_pkey') = 1 THEN
+      ALTER TABLE app_config DROP CONSTRAINT app_config_pkey;
+      ALTER TABLE app_config ADD PRIMARY KEY (key, user_id);
+    END IF;
+  END IF;
+END $$;

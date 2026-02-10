@@ -324,6 +324,36 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
   // ── localStorage Persistence ──
   const LS_KEYS = { orders: 'mih_orders', bulkGroups: 'mih_bulkGroups', emailConfig: 'mih_emailConfig', emailTemplates: 'mih_emailTemplates', priceConfig: 'mih_priceConfig', notifLog: 'mih_notifLog', pendingApprovals: 'mih_pendingApprovals', users: 'mih_users', waNotifyRules: 'mih_waNotifyRules', scheduledNotifs: 'mih_scheduledNotifs', customLogo: 'mih_customLogo', stockChecks: 'mih_stockChecks' };
 
+  // Shared function to load all app data from DB
+  const loadAppData = useCallback(async () => {
+    try {
+      const [apiOrders, apiBulk, apiUsers, apiChecks, apiNotifs, apiApprovals, apiConfig, apiCatalog] = await Promise.all([
+        api.getOrders(), api.getBulkGroups(), api.getUsers(), api.getStockChecks(),
+        api.getNotifLog(), api.getApprovals(), api.getConfig(), api.getCatalog()
+      ]);
+      if (apiOrders.length) setOrders(apiOrders);
+      if (apiBulk.length) setBulkGroups(apiBulk);
+      if (apiUsers.length) setUsers(apiUsers);
+      if (apiChecks.length) setStockChecks(apiChecks);
+      if (apiNotifs.length) setNotifLog(apiNotifs);
+      if (apiApprovals.length) setPendingApprovals(apiApprovals);
+      if (apiConfig && Object.keys(apiConfig).length) {
+        if (apiConfig.emailConfig) setEmailConfig(apiConfig.emailConfig);
+        if (apiConfig.emailTemplates) setEmailTemplates(apiConfig.emailTemplates);
+        if (apiConfig.priceConfig) setPriceConfig(apiConfig.priceConfig);
+        if (apiConfig.waNotifyRules) setWaNotifyRules(apiConfig.waNotifyRules);
+        if (apiConfig.scheduledNotifs) setScheduledNotifs(apiConfig.scheduledNotifs);
+        if (apiConfig.customLogo) setCustomLogo(apiConfig.customLogo);
+      }
+      if (apiCatalog.length) { setPartsCatalog(apiCatalog.map(p => ({ m: p.materialNo, d: p.description, c: p.category, sg: p.sgPrice, dist: p.distPrice, tp: p.transferPrice, rsp: p.rspEur }))); }
+      console.log('Data loaded from database');
+      return true;
+    } catch (e) {
+      console.log('API not available:', e.message);
+      return false;
+    }
+  }, []);
+
   // Load data on mount — refresh session, fetch logo, then load all data from DB
   useEffect(() => {
     async function loadOnMount() {
@@ -353,30 +383,8 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
       }
 
       // 3. Load all app data from DB (requires valid token for protected routes)
-      try {
-        const [apiOrders, apiBulk, apiUsers, apiChecks, apiNotifs, apiApprovals, apiConfig, apiCatalog] = await Promise.all([
-          api.getOrders(), api.getBulkGroups(), api.getUsers(), api.getStockChecks(),
-          api.getNotifLog(), api.getApprovals(), api.getConfig(), api.getCatalog()
-        ]);
-        let fromDb = false;
-        if (apiOrders.length) { setOrders(apiOrders); fromDb = true; }
-        if (apiBulk.length) { setBulkGroups(apiBulk); fromDb = true; }
-        if (apiUsers.length) { setUsers(apiUsers); fromDb = true; }
-        if (apiChecks.length) { setStockChecks(apiChecks); fromDb = true; }
-        if (apiNotifs.length) { setNotifLog(apiNotifs); fromDb = true; }
-        if (apiApprovals.length) { setPendingApprovals(apiApprovals); fromDb = true; }
-        if (apiConfig && Object.keys(apiConfig).length) {
-          if (apiConfig.emailConfig) setEmailConfig(apiConfig.emailConfig);
-          if (apiConfig.emailTemplates) setEmailTemplates(apiConfig.emailTemplates);
-          if (apiConfig.priceConfig) setPriceConfig(apiConfig.priceConfig);
-          if (apiConfig.waNotifyRules) setWaNotifyRules(apiConfig.waNotifyRules);
-          if (apiConfig.scheduledNotifs) setScheduledNotifs(apiConfig.scheduledNotifs);
-          if (apiConfig.customLogo) setCustomLogo(apiConfig.customLogo);
-          fromDb = true;
-        }
-        if (apiCatalog.length) { setPartsCatalog(apiCatalog.map(p => ({ m: p.materialNo, d: p.description, c: p.category, sg: p.sgPrice, dist: p.distPrice, tp: p.transferPrice, rsp: p.rspEur }))); }
-        if (fromDb) { console.log('Data loaded from database'); return; }
-      } catch (e) { console.log('API not available, using localStorage'); }
+      const loaded = await loadAppData();
+      if (loaded) return;
 
       // Fallback to localStorage
       try {
@@ -398,6 +406,79 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
     }
     loadOnMount().finally(() => setIsLoading(false));
   }, []);
+
+  // Targeted data refresh when switching tabs
+  const refreshPageData = useCallback(async (pageId) => {
+    try {
+      switch (pageId) {
+        case 'dashboard': {
+          const [o, b] = await Promise.all([api.getOrders(), api.getBulkGroups()]);
+          if (o) setOrders(o); if (b) setBulkGroups(b);
+          break;
+        }
+        case 'orders': {
+          const o = await api.getOrders();
+          if (o) setOrders(o);
+          break;
+        }
+        case 'bulkorders': {
+          const [o, b] = await Promise.all([api.getOrders(), api.getBulkGroups()]);
+          if (o) setOrders(o); if (b) setBulkGroups(b);
+          break;
+        }
+        case 'stockcheck': {
+          const c = await api.getStockChecks();
+          if (c) setStockChecks(c);
+          break;
+        }
+        case 'delivery': {
+          const [o, b] = await Promise.all([api.getOrders(), api.getBulkGroups()]);
+          if (o) setOrders(o); if (b) setBulkGroups(b);
+          break;
+        }
+        case 'analytics': {
+          const [o, b] = await Promise.all([api.getOrders(), api.getBulkGroups()]);
+          if (o) setOrders(o); if (b) setBulkGroups(b);
+          break;
+        }
+        case 'notifications': {
+          const n = await api.getNotifLog();
+          if (n) setNotifLog(n);
+          break;
+        }
+        case 'users': {
+          const u = await api.getUsers();
+          if (u) setUsers(u);
+          break;
+        }
+        case 'settings': {
+          const cfg = await api.getConfig();
+          if (cfg && Object.keys(cfg).length) {
+            if (cfg.emailConfig) setEmailConfig(cfg.emailConfig);
+            if (cfg.emailTemplates) setEmailTemplates(cfg.emailTemplates);
+            if (cfg.priceConfig) setPriceConfig(cfg.priceConfig);
+            if (cfg.waNotifyRules) setWaNotifyRules(cfg.waNotifyRules);
+            if (cfg.scheduledNotifs) setScheduledNotifs(cfg.scheduledNotifs);
+            if (cfg.customLogo) setCustomLogo(cfg.customLogo);
+          }
+          break;
+        }
+        case 'catalog': {
+          const cat = await api.getCatalog();
+          if (cat && cat.length) {
+            setPartsCatalog(cat.map(p => ({ m: p.materialNo, d: p.description, c: p.category, sg: p.sgPrice, dist: p.distPrice, tp: p.transferPrice, rsp: p.rspEur })));
+          }
+          break;
+        }
+        default: break;
+      }
+    } catch (e) { console.log('Tab refresh:', e.message); }
+  }, []);
+
+  // Refresh data when tab changes
+  useEffect(() => {
+    if (currentUser && page) refreshPageData(page);
+  }, [page, refreshPageData, currentUser]);
 
   // Save to localStorage on changes
   useEffect(() => { try { localStorage.setItem(LS_KEYS.orders, JSON.stringify(orders)); } catch(e){} }, [orders]);
@@ -886,6 +967,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
     if (result && result.user) {
       setCurrentUser(result.user);
       api.resetAuthError(); // allow future session-expired toasts
+      await loadAppData(); // fetch all data from DB after login
       notify(`Welcome back, ${result.user.name}`, result.user.role==='admin'?'Admin access granted':'User access granted', 'success');
     } else {
       // Fallback: local login when backend/DB is unavailable
@@ -2260,6 +2342,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
         const fullyReceived = bgOrders.filter(o=>o.qtyReceived>=o.quantity&&o.quantity>0).length;
         const pending = bgOrders.filter(o=>o.qtyReceived<o.quantity).length;
         const hasBackOrder = bgOrders.some(o=>o.backOrder<0);
+        const unapprovedCount = bgOrders.filter(o=>o.approvalStatus!=='approved').length;
         return (
           <div key={bg.id} style={{padding:'16px 20px',border:'1px solid #E2E8F0',borderRadius:12,background:selectedBulkForArrival===bg.id?'#E6F4ED':'#fff'}}>
             <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
@@ -2286,6 +2369,12 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
             {/* Expanded Items List */}
             {selectedBulkForArrival===bg.id && (
               <div style={{marginTop:16,borderTop:'1px solid #E8ECF0',paddingTop:16}}>
+                {unapprovedCount > 0 && (
+                  <div style={{padding:'10px 16px',background:'#FEF3C7',border:'1px solid #FDE68A',borderRadius:8,marginBottom:12,display:'flex',alignItems:'center',gap:8,fontSize:12,color:'#92400E'}}>
+                    <AlertTriangle size={16}/>
+                    <span><strong>{unapprovedCount} order(s)</strong> not yet approved — arrival inputs disabled until approved.</span>
+                  </div>
+                )}
                 <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
                   <thead><tr style={{background:'#F8FAFB'}}><th className="th">Material No.</th><th className="th">Description</th><th className="th" style={{width:70}}>Ordered</th><th className="th" style={{width:80}}>Received</th><th className="th" style={{width:70}}>B/O</th><th className="th" style={{width:100}}>Status</th><th className="th" style={{width:100}}>Action</th></tr></thead>
                   <tbody>
@@ -2295,7 +2384,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
                         <td className="td" style={{maxWidth:180,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{o.description}</td>
                         <td className="td" style={{textAlign:'center',fontWeight:600}}>{o.quantity}</td>
                         <td className="td" style={{textAlign:'center'}}>
-                          <input type="number" min="0" max={o.quantity} value={o.qtyReceived} onChange={e=>{const val=parseInt(e.target.value)||0;const updates={qtyReceived:val,backOrder:val-o.quantity,status:val>=o.quantity?'Received':val>0?'Back Order':'Pending'};setOrders(prev=>prev.map(x=>x.id===o.id?{...x,...updates}:x));api.updateOrder(o.id,updates);}} style={{width:50,padding:'4px 6px',textAlign:'center',borderRadius:6,border:'1px solid #E2E8F0',fontSize:12}}/>
+                          <input type="number" min="0" max={o.quantity} value={o.qtyReceived} disabled={o.approvalStatus!=='approved'} title={o.approvalStatus!=='approved'?'Order must be approved first':''} onChange={e=>{const val=parseInt(e.target.value)||0;const updates={qtyReceived:val,backOrder:val-o.quantity,status:val>=o.quantity?'Received':val>0?'Back Order':'Pending'};setOrders(prev=>prev.map(x=>x.id===o.id?{...x,...updates}:x));api.updateOrder(o.id,updates);}} style={{width:50,padding:'4px 6px',textAlign:'center',borderRadius:6,border:'1px solid #E2E8F0',fontSize:12,opacity:o.approvalStatus!=='approved'?0.5:1,cursor:o.approvalStatus!=='approved'?'not-allowed':'text'}}/>
                         </td>
                         <td className="td" style={{textAlign:'center',fontWeight:600,color:o.quantity-o.qtyReceived>0?'#DC2626':'#059669'}}>{o.quantity-o.qtyReceived>0?`-${o.quantity-o.qtyReceived}`:'✓'}</td>
                         <td className="td"><Pill bg={o.qtyReceived>=o.quantity?'#D1FAE5':o.qtyReceived>0?'#DBEAFE':'#FEF3C7'} color={o.qtyReceived>=o.quantity?'#059669':o.qtyReceived>0?'#2563EB':'#D97706'}>{o.qtyReceived>=o.quantity?'Full':o.qtyReceived>0?'Partial':'Pending'}</Pill></td>
@@ -2364,6 +2453,43 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
       })}
     </div>
   </div>
+
+  {/* Individual Orders - Arrival Verification */}
+  {(()=>{
+    const bulkMonths = new Set(bulkGroups.map(bg=>String(bg.month||'')));
+    const indivOrders = orders.filter(o=>!bulkMonths.has(o.month)&&o.approvalStatus==='approved'&&o.quantity>0);
+    if (!indivOrders.length) return null;
+    return (
+      <div className="card" style={{padding:'20px 24px',marginBottom:20}}>
+        <h3 style={{fontSize:15,fontWeight:700,marginBottom:16}}>Individual Orders - Arrival Verification</h3>
+        <div style={{fontSize:12,color:'#64748B',marginBottom:12}}>{indivOrders.length} approved individual order(s) not part of any bulk group</div>
+        <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
+          <thead><tr style={{background:'#F8FAFB'}}><th className="th">Material No.</th><th className="th">Description</th><th className="th" style={{width:70}}>Ordered</th><th className="th" style={{width:80}}>Received</th><th className="th" style={{width:70}}>B/O</th><th className="th" style={{width:100}}>Status</th><th className="th" style={{width:100}}>Action</th></tr></thead>
+          <tbody>
+            {indivOrders.map(o=>(
+              <tr key={o.id} style={{borderBottom:'1px solid #F0F2F5'}}>
+                <td className="td mono" style={{fontSize:11,color:'#0B7A3E',fontWeight:600}}>{o.materialNo||'\u2014'}</td>
+                <td className="td" style={{maxWidth:180,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{o.description}</td>
+                <td className="td" style={{textAlign:'center',fontWeight:600}}>{o.quantity}</td>
+                <td className="td" style={{textAlign:'center'}}>
+                  <input type="number" min="0" max={o.quantity} value={o.qtyReceived} onChange={e=>{const val=parseInt(e.target.value)||0;const updates={qtyReceived:val,backOrder:val-o.quantity,status:val>=o.quantity?'Received':val>0?'Back Order':'Pending'};setOrders(prev=>prev.map(x=>x.id===o.id?{...x,...updates}:x));api.updateOrder(o.id,updates);}} style={{width:50,padding:'4px 6px',textAlign:'center',borderRadius:6,border:'1px solid #E2E8F0',fontSize:12}}/>
+                </td>
+                <td className="td" style={{textAlign:'center',fontWeight:600,color:o.quantity-(o.qtyReceived||0)>0?'#DC2626':'#059669'}}>{o.quantity-(o.qtyReceived||0)>0?`-${o.quantity-(o.qtyReceived||0)}`:'\u2713'}</td>
+                <td className="td"><Pill bg={o.qtyReceived>=o.quantity?'#D1FAE5':o.qtyReceived>0?'#DBEAFE':'#FEF3C7'} color={o.qtyReceived>=o.quantity?'#059669':o.qtyReceived>0?'#2563EB':'#D97706'}>{o.qtyReceived>=o.quantity?'Full':o.qtyReceived>0?'Partial':'Pending'}</Pill></td>
+                <td className="td">{o.qtyReceived>=o.quantity && <Check size={14} color="#059669"/>}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        <div style={{display:'flex',gap:10,marginTop:16,paddingTop:16,borderTop:'1px solid #E8ECF0'}}>
+          <button className="be" onClick={()=>{
+            notify('Email Sent','Individual orders arrival report sent','success');
+            addNotifEntry({id:`N-${Date.now()}-${Math.random().toString(36).slice(2,6)}`,type:'email',to:'service-sg@miltenyibiotec.com',subject:'Arrival Check: Individual Orders',date:new Date().toISOString().slice(0,10),status:'Sent'});
+          }}><Mail size={14}/> Email Report</button>
+        </div>
+      </div>
+    );
+  })()}
 
   {/* Recent Arrivals Table */}
   <div className="card" style={{overflow:'hidden'}}>

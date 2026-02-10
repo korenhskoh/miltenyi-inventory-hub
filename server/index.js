@@ -4,10 +4,12 @@ import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import makeWASocket, { useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } from '@whiskeysockets/baileys';
+import makeWASocket, { DisconnectReason, fetchLatestBaileysVersion } from '@whiskeysockets/baileys';
+import { usePostgresAuthState } from './waAuthState.js';
 import QRCode from 'qrcode';
 import pino from 'pino';
 import { initDatabase } from './initDb.js';
+import { query as dbQuery } from './db.js';
 import { verifyToken, requireAdmin } from './middleware/auth.js';
 
 // API Routes
@@ -58,7 +60,7 @@ import { messageTemplates } from './messageTemplates.js';
 // Initialize WhatsApp Connection
 async function connectWhatsApp() {
   try {
-    const { state, saveCreds } = await useMultiFileAuthState('./auth_session');
+    const { state, saveCreds } = await usePostgresAuthState();
     const { version } = await fetchLatestBaileysVersion();
 
     sock = makeWASocket({
@@ -173,6 +175,8 @@ app.post('/api/whatsapp/disconnect', async (req, res) => {
     connectionStatus = 'disconnected';
     qrCode = null;
     sessionInfo = null;
+    // Clear stored session from DB so next connect generates fresh QR
+    try { await dbQuery('DELETE FROM wa_auth'); } catch (e) { /* ignore */ }
   }
   res.json({ success: true, message: 'Disconnected' });
 });
@@ -303,7 +307,7 @@ app.use('/api/auth', authLimiter, authRouter);
 // Public config (logo — no auth so login page can show it)
 app.get('/api/public/logo', async (req, res) => {
   try {
-    const result = await (await import('./db.js')).query("SELECT value FROM app_config WHERE key = 'customLogo'");
+    const result = await (await import('./db.js')).query("SELECT value FROM app_config WHERE key = 'customLogo' AND user_id = '__global__'");
     res.json({ logo: result.rows.length ? result.rows[0].value : null });
   } catch { res.json({ logo: null }); }
 });
@@ -318,7 +322,7 @@ app.use('/api/catalog', verifyToken, catalogRouter);
 
 // Admin-only routes (require JWT + admin role)
 app.use('/api/users', verifyToken, requireAdmin, usersRouter);
-app.use('/api/config', verifyToken, requireAdmin, configRouter);
+app.use('/api/config', verifyToken, configRouter);
 app.use('/api/migrate', verifyToken, requireAdmin, migrateRouter);
 
 // Health check

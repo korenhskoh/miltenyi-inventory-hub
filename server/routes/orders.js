@@ -106,6 +106,15 @@ router.put('/:id', async (req, res) => {
   try {
     const { id } = req.params;
     const snakeBody = pickAllowed(camelToSnake(req.body), ORDER_FIELDS);
+
+    // Enforce approval before allowing part arrival updates
+    if (snakeBody.qty_received !== undefined) {
+      const check = await query('SELECT approval_status FROM orders WHERE id = $1', [id]);
+      if (check.rows.length && check.rows[0].approval_status !== 'approved') {
+        return res.status(403).json({ error: 'Order must be approved before recording part arrival' });
+      }
+    }
+
     const keys = Object.keys(snakeBody);
     const values = Object.values(snakeBody);
 
