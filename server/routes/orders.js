@@ -127,6 +127,16 @@ router.put('/:id', async (req, res) => {
   }
 });
 
+// DELETE /all - delete all orders
+router.delete('/all', async (req, res) => {
+  try {
+    await query('DELETE FROM orders');
+    res.json({ success: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // DELETE /:id - delete order by id
 router.delete('/:id', async (req, res) => {
   try {

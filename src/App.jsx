@@ -593,7 +593,9 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
   // Batch Actions — Stock Checks
   const batchDeleteStockChecks = () => {
     if (!selStockChecks.size || !window.confirm(`Delete ${selStockChecks.size} stock check(s)?`)) return;
+    const ids = [...selStockChecks];
     setStockChecks(prev => prev.filter(s => !selStockChecks.has(s.id)));
+    ids.forEach(id => api.deleteStockCheck(id));
     notify('Batch Delete', `${selStockChecks.size} stock checks deleted`, 'success');
     setSelStockChecks(new Set());
   };
@@ -601,7 +603,9 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
   // Batch Actions — Notifications
   const batchDeleteNotifs = () => {
     if (!selNotifs.size || !window.confirm(`Delete ${selNotifs.size} notification(s)?`)) return;
+    const ids = [...selNotifs];
     setNotifLog(prev => prev.filter(n => !selNotifs.has(n.id)));
+    ids.forEach(id => api.deleteNotifEntry(id));
     notify('Batch Delete', `${selNotifs.size} notifications deleted`, 'success');
     setSelNotifs(new Set());
   };
@@ -1023,6 +1027,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
         const po = lastBotMsg.pendingOrder;
         const newOrd = { id: `ORD-${2000 + orders.length}`, ...po, totalCost: po.listPrice * po.quantity, orderDate: new Date().toISOString().slice(0, 10), arrivalDate: "", qtyReceived: 0, backOrder: -po.quantity, engineer: "", emailFull: "", emailBack: "", status: "Pending", orderBy: currentUser.name, month: "Feb_2026", year: "2026", remark: "Created via AI Assistant" };
         setOrders(prev => [newOrd, ...prev]);
+        api.createOrder(newOrd);
         notify("Order Created", `${po.description} × ${po.quantity}`, "success");
         return { type: "success", text: `✅ **Order Created Successfully!**\n\n• Order ID: ${newOrd.id}\n• Item: ${po.description}\n• Quantity: ${po.quantity}\n• Total: ${fmt(newOrd.totalCost)}\n\nYou can track this order by asking "Status ${newOrd.id}"` };
       }
@@ -1261,9 +1266,11 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
 
   const confirmHistoryImport = () => {
     setOrders(prev => [...prev, ...historyImportData]);
+    historyImportData.forEach(o => api.createOrder(o));
     // Also add any bulk groups from Excel sheets
     if (window.__pendingBulkGroups && window.__pendingBulkGroups.length > 0) {
       setBulkGroups(prev => [...window.__pendingBulkGroups, ...prev]);
+      window.__pendingBulkGroups.forEach(g => api.createBulkGroup(g));
       notify('History Imported', historyImportData.length + ' orders + ' + window.__pendingBulkGroups.length + ' bulk batches added', 'success');
       window.__pendingBulkGroups = null;
     } else {
@@ -2137,7 +2144,9 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
         <div style={{display:'flex',gap:8}}>
           <button className="bp" onClick={()=>{
             const discrepancies = stockInventoryList.filter(i=>i.checked && i.physicalQty !== i.systemQty).length;
-            setStockChecks(prev=>prev.map((s,idx)=>idx===0?{...s,status:'Completed',disc:discrepancies,notes:`Completed by ${currentUser.name}. ${discrepancies} discrepancies found.`}:s));
+            const scUpdates = {status:'Completed',disc:discrepancies,notes:`Completed by ${currentUser.name}. ${discrepancies} discrepancies found.`};
+            setStockChecks(prev=>prev.map((s,idx)=>idx===0?{...s,...scUpdates}:s));
+            if(stockChecks[0]) api.updateStockCheck(stockChecks[0].id, scUpdates);
             setStockCheckMode(false);
             setStockInventoryList([]);
             notify('Stock Check Completed',`${discrepancies} discrepancies found`,'success');
@@ -2215,7 +2224,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
           {r.status==='Completed' && (
             <button className="bs" style={{padding:'4px 8px',fontSize:11}} onClick={()=>{notify('Report Downloaded',`${r.id} exported`,'success');}}><Download size={12}/></button>
           )}
-          {hasPermission('deleteStockChecks')&&<button onClick={()=>{if(window.confirm(`Delete stock check ${r.id}?`)){setStockChecks(prev=>prev.filter(x=>x.id!==r.id));notify('Deleted',r.id,'success');}}} style={{background:'#DC2626',color:'#fff',border:'none',borderRadius:6,padding:'4px 8px',fontSize:10,cursor:'pointer'}}><Trash2 size={11}/></button>}
+          {hasPermission('deleteStockChecks')&&<button onClick={()=>{if(window.confirm(`Delete stock check ${r.id}?`)){setStockChecks(prev=>prev.filter(x=>x.id!==r.id));api.deleteStockCheck(r.id);notify('Deleted',r.id,'success');}}} style={{background:'#DC2626',color:'#fff',border:'none',borderRadius:6,padding:'4px 8px',fontSize:10,cursor:'pointer'}}><Trash2 size={11}/></button>}
           </div>
         </td>
       </tr>)}</tbody>
@@ -2283,7 +2292,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
                         <td className="td" style={{maxWidth:180,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{o.description}</td>
                         <td className="td" style={{textAlign:'center',fontWeight:600}}>{o.quantity}</td>
                         <td className="td" style={{textAlign:'center'}}>
-                          <input type="number" min="0" max={o.quantity} value={o.qtyReceived} onChange={e=>{const val=parseInt(e.target.value)||0;setOrders(prev=>prev.map(x=>x.id===o.id?{...x,qtyReceived:val,backOrder:val-x.quantity,status:val>=x.quantity?'Received':val>0?'Back Order':'Pending'}:x));}} style={{width:50,padding:'4px 6px',textAlign:'center',borderRadius:6,border:'1px solid #E2E8F0',fontSize:12}}/>
+                          <input type="number" min="0" max={o.quantity} value={o.qtyReceived} onChange={e=>{const val=parseInt(e.target.value)||0;const updates={qtyReceived:val,backOrder:val-o.quantity,status:val>=o.quantity?'Received':val>0?'Back Order':'Pending'};setOrders(prev=>prev.map(x=>x.id===o.id?{...x,...updates}:x));api.updateOrder(o.id,updates);}} style={{width:50,padding:'4px 6px',textAlign:'center',borderRadius:6,border:'1px solid #E2E8F0',fontSize:12}}/>
                         </td>
                         <td className="td" style={{textAlign:'center',fontWeight:600,color:o.quantity-o.qtyReceived>0?'#DC2626':'#059669'}}>{o.quantity-o.qtyReceived>0?`-${o.quantity-o.qtyReceived}`:'✓'}</td>
                         <td className="td"><Pill bg={o.qtyReceived>=o.quantity?'#D1FAE5':o.qtyReceived>0?'#DBEAFE':'#FEF3C7'} color={o.qtyReceived>=o.quantity?'#059669':o.qtyReceived>0?'#2563EB':'#D97706'}>{o.qtyReceived>=o.quantity?'Full':o.qtyReceived>0?'Partial':'Pending'}</Pill></td>
@@ -2329,6 +2338,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
                     const allReceived = bgOrders.every(o=>o.qtyReceived>=o.quantity);
                     if (allReceived) {
                       setBulkGroups(prev=>prev.map(g=>g.id===bg.id?{...g,status:'Completed'}:g));
+                      api.updateBulkGroup(bg.id, {status:'Completed'});
                       notify('Arrival Complete',`${bg.month} marked as fully received`,'success');
                       if (waConnected && waNotifyRules.partArrivalDone) {
                         try {
@@ -3493,9 +3503,9 @@ if(scheduledNotifs.emailEnabled){                    addNotifEntry({id:'N-'+Date
           <div style={{color:'#64748B',fontSize:11}}>Last import will add to existing records</div>
         </div>
         <div style={{display:'flex',gap:8}}>
-          <button onClick={()=>{if(window.confirm('Clear ALL orders? This cannot be undone.')){setOrders([]);notify('Orders Cleared','All orders removed from system','info');}}} style={{padding:'6px 14px',background:'#DC2626',color:'#fff',border:'none',borderRadius:6,fontSize:11,fontWeight:600,cursor:'pointer',display:'flex',alignItems:'center',gap:4}}><Trash2 size={12}/> Clear All Orders</button>
-          <button onClick={()=>{if(window.confirm('Clear ALL bulk order batches? This cannot be undone.')){setBulkGroups([]);notify('Bulk Orders Cleared','All bulk batches removed','info');}}} style={{padding:'6px 14px',background:'#7C3AED',color:'#fff',border:'none',borderRadius:6,fontSize:11,fontWeight:600,cursor:'pointer',display:'flex',alignItems:'center',gap:4}}><Trash2 size={12}/> Clear Bulk Batches</button>
-          <button onClick={()=>{if(window.confirm('Clear ALL data (orders + bulk batches + notifications)? This cannot be undone.')){setOrders([]);setBulkGroups([]);setNotifLog([]);setPendingApprovals([]);Object.values(LS_KEYS).forEach(k=>localStorage.removeItem(k));notify('All Data Cleared','System reset complete','info');}}} style={{padding:'6px 14px',background:'#374151',color:'#fff',border:'none',borderRadius:6,fontSize:11,fontWeight:600,cursor:'pointer',display:'flex',alignItems:'center',gap:4}}><RefreshCw size={12}/> Reset All Data</button>
+          <button onClick={()=>{if(window.confirm('Clear ALL orders? This cannot be undone.')){setOrders([]);api.clearOrders();notify('Orders Cleared','All orders removed from system','info');}}} style={{padding:'6px 14px',background:'#DC2626',color:'#fff',border:'none',borderRadius:6,fontSize:11,fontWeight:600,cursor:'pointer',display:'flex',alignItems:'center',gap:4}}><Trash2 size={12}/> Clear All Orders</button>
+          <button onClick={()=>{if(window.confirm('Clear ALL bulk order batches? This cannot be undone.')){setBulkGroups([]);api.clearBulkGroups();notify('Bulk Orders Cleared','All bulk batches removed','info');}}} style={{padding:'6px 14px',background:'#7C3AED',color:'#fff',border:'none',borderRadius:6,fontSize:11,fontWeight:600,cursor:'pointer',display:'flex',alignItems:'center',gap:4}}><Trash2 size={12}/> Clear Bulk Batches</button>
+          <button onClick={()=>{if(window.confirm('Clear ALL data (orders + bulk batches + notifications)? This cannot be undone.')){setOrders([]);setBulkGroups([]);setNotifLog([]);setPendingApprovals([]);api.clearOrders();api.clearBulkGroups();api.clearNotifLog();api.clearApprovals();Object.values(LS_KEYS).forEach(k=>localStorage.removeItem(k));notify('All Data Cleared','System reset complete','info');}}} style={{padding:'6px 14px',background:'#374151',color:'#fff',border:'none',borderRadius:6,fontSize:11,fontWeight:600,cursor:'pointer',display:'flex',alignItems:'center',gap:4}}><RefreshCw size={12}/> Reset All Data</button>
         </div>
       </div>
     )}
@@ -3666,6 +3676,7 @@ if(scheduledNotifs.emailEnabled){                    addNotifEntry({id:'N-'+Date
                 const updatedOrder = {...selectedOrder, qtyReceived: val, backOrder: newBackOrder, status: newStatus, arrivalDate: val > 0 ? (selectedOrder.arrivalDate || new Date().toISOString().slice(0,10)) : selectedOrder.arrivalDate};
                 setOrders(prev=>prev.map(o=>o.id===selectedOrder.id ? updatedOrder : o));
                 setSelectedOrder(updatedOrder);
+                api.updateOrder(selectedOrder.id, {qtyReceived:val, backOrder:newBackOrder, status:newStatus, arrivalDate:updatedOrder.arrivalDate});
               }} style={{width:'100%',padding:'8px 12px',fontSize:16,fontWeight:600,borderRadius:8,border:'1.5px solid #BBF7D0',textAlign:'center'}}/>
             </div>
             <div>

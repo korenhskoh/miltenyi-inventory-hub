@@ -34,4 +34,28 @@ router.post('/', async (req, res) => {
   }
 });
 
+// DELETE /:id - delete notification log entry
+router.delete('/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const result = await query('DELETE FROM notif_log WHERE id = $1 RETURNING *', [id]);
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Notification not found' });
+    }
+    res.json({ success: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// DELETE / - delete all notification logs
+router.delete('/', async (req, res) => {
+  try {
+    await query('DELETE FROM notif_log');
+    res.json({ success: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 export default router;

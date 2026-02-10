@@ -451,6 +451,71 @@ async function clearCatalog() {
   }
 }
 
+// ─── Delete All (admin-only) ───
+
+async function clearOrders() {
+  try {
+    const res = handleResponse(await fetch(`${BASE}/api/orders/all`, { method: 'DELETE', headers: authHeadersGet() }));
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+async function clearBulkGroups() {
+  try {
+    const res = handleResponse(await fetch(`${BASE}/api/bulk-groups/all`, { method: 'DELETE', headers: authHeadersGet() }));
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+async function deleteStockCheck(id) {
+  try {
+    const res = handleResponse(await fetch(`${BASE}/api/stock-checks/${id}`, { method: 'DELETE', headers: authHeadersGet() }));
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+async function clearStockChecks() {
+  try {
+    const res = handleResponse(await fetch(`${BASE}/api/stock-checks`, { method: 'DELETE', headers: authHeadersGet() }));
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+async function deleteNotifEntry(id) {
+  try {
+    const res = handleResponse(await fetch(`${BASE}/api/notif-log/${id}`, { method: 'DELETE', headers: authHeadersGet() }));
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+async function clearNotifLog() {
+  try {
+    const res = handleResponse(await fetch(`${BASE}/api/notif-log`, { method: 'DELETE', headers: authHeadersGet() }));
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+async function clearApprovals() {
+  try {
+    const res = handleResponse(await fetch(`${BASE}/api/pending-approvals`, { method: 'DELETE', headers: authHeadersGet() }));
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
 // ─── Migration (admin-only) ───
 
 async function migrateData(data) {
@@ -505,6 +570,13 @@ const api = {
   getCatalog,
   uploadCatalog,
   clearCatalog,
+  clearOrders,
+  clearBulkGroups,
+  deleteStockCheck,
+  clearStockChecks,
+  deleteNotifEntry,
+  clearNotifLog,
+  clearApprovals,
   migrateData,
 };
 

@@ -71,4 +71,14 @@ router.put('/:id', async (req, res) => {
   }
 });
 
+// DELETE / - delete all approvals
+router.delete('/', async (req, res) => {
+  try {
+    await query('DELETE FROM pending_approvals');
+    res.json({ success: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 export default router;
