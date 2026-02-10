@@ -10,7 +10,7 @@ const ORDER_FIELDS = [
   'id', 'material_no', 'description', 'quantity', 'list_price', 'total_cost',
   'order_date', 'order_by', 'remark', 'arrival_date', 'qty_received',
   'back_order', 'engineer', 'email_full', 'email_back', 'status',
-  'approval_status', 'approval_sent_date', 'month', 'year'
+  'approval_status', 'approval_sent_date', 'month', 'year', 'bulk_group_id'
 ];
 const ORDER_REQUIRED = ['id', 'description', 'quantity'];
 

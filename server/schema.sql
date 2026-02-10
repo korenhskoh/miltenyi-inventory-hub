@@ -32,6 +32,7 @@ CREATE TABLE IF NOT EXISTS orders (
   approval_sent_date DATE,
   month VARCHAR(30),
   year VARCHAR(4),
+  bulk_group_id VARCHAR(20),
   created_at TIMESTAMP DEFAULT NOW()
 );
 
@@ -123,3 +124,12 @@ DO $$ BEGIN
     END IF;
   END IF;
 END $$;
+
+-- Migration: Add bulk_group_id for explicit bulk group linking
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS bulk_group_id VARCHAR(20);
+-- Backfill: Link existing orders to bulk groups by matching month field
+UPDATE orders o SET bulk_group_id = bg.id
+FROM bulk_groups bg
+WHERE REPLACE(COALESCE(o.month,''), '_', ' ') = REPLACE(COALESCE(bg.month,''), '_', ' ')
+  AND o.bulk_group_id IS NULL;
+CREATE INDEX IF NOT EXISTS idx_orders_bulk_group_id ON orders(bulk_group_id);

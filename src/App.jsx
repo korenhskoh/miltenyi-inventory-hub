@@ -211,15 +211,15 @@ const [selectedUser, setSelectedUser] = useState(null);
   const numCatalog = arr => arr.map(p => ({...p, sgPrice:Number(p.sgPrice)||0, distPrice:Number(p.distPrice)||0, transferPrice:Number(p.transferPrice)||0, rspEur:Number(p.rspEur)||0}));
   const numStockChecks = arr => arr.map(c => ({...c, items:Number(c.items)||0, disc:Number(c.disc)||0}));
 
-  // Helper: recalculate bulk group items/totalCost for affected months after order changes
-  const recalcBulkGroupForMonths = useCallback((months, ordersAfterChange) => {
-    const norm = s => String(s || '').replace(/_/g, ' ').trim();
-    const monthSet = new Set(months.map(norm));
+  // Helper: recalculate bulk group items/totalCost for affected bulk group IDs after order changes
+  const recalcBulkGroupForMonths = useCallback((bgIds, ordersAfterChange) => {
+    const idSet = new Set(bgIds.filter(Boolean));
+    if (!idSet.size) return;
     setBulkGroups(prev => prev.map(bg => {
-      if (!monthSet.has(norm(bg.month))) return bg;
-      const monthOrders = ordersAfterChange.filter(o => norm(o.month) === norm(bg.month));
-      const newItems = monthOrders.length;
-      const newTotalCost = monthOrders.reduce((s, o) => s + (o.totalCost || 0), 0);
+      if (!idSet.has(bg.id)) return bg;
+      const bgOrders = ordersAfterChange.filter(o => o.bulkGroupId === bg.id);
+      const newItems = bgOrders.length;
+      const newTotalCost = bgOrders.reduce((s, o) => s + (o.totalCost || 0), 0);
       if (bg.items !== newItems || Math.abs((bg.totalCost || 0) - newTotalCost) > 0.01) {
         dbSync(api.updateBulkGroup(bg.id, { items: newItems, totalCost: newTotalCost }), 'Bulk group tally sync');
         return { ...bg, items: newItems, totalCost: newTotalCost };
@@ -229,11 +229,11 @@ const [selectedUser, setSelectedUser] = useState(null);
   }, [dbSync]);
 
   // Helper: auto-complete bulk group when all orders received
-  const checkBulkGroupCompletion = useCallback((month, ordersAfterChange) => {
-    const norm = s => String(s || '').replace(/_/g, ' ').trim();
+  const checkBulkGroupCompletion = useCallback((bulkGroupId, ordersAfterChange) => {
+    if (!bulkGroupId) return;
     setBulkGroups(prev => prev.map(bg => {
-      if (norm(bg.month) !== norm(month) || bg.status === 'Completed') return bg;
-      const bgOrders = ordersAfterChange.filter(o => norm(o.month) === norm(bg.month));
+      if (bg.id !== bulkGroupId || bg.status === 'Completed') return bg;
+      const bgOrders = ordersAfterChange.filter(o => o.bulkGroupId === bg.id);
       if (bgOrders.length > 0 && bgOrders.every(o => (o.qtyReceived || 0) >= o.quantity)) {
         dbSync(api.updateBulkGroup(bg.id, { status: 'Completed' }), 'Bulk group completion sync');
         return { ...bg, status: 'Completed' };
@@ -554,7 +554,8 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
   };
 
   // ── New Order ──
-  const [newOrder, setNewOrder] = useState({ materialNo:'', description:'', quantity:1, listPrice:0, orderBy:'', remark:'' });
+  const [newOrder, setNewOrder] = useState({ materialNo:'', description:'', quantity:1, listPrice:0, orderBy:'', remark:'', bulkGroupId:'' });
+  const [newBulkMonth, setNewBulkMonth] = useState(''); // for "+ Create New Bulk Batch" inline picker
   const handleMaterialLookup = (matNo) => { const p=catalogLookup[matNo]; if(p) { setNewOrder(prev=>({...prev,materialNo:matNo,description:p.d,listPrice:p.tp})); notify('Part Found',`${p.d}`, 'success'); }};
   const handleSubmitOrder = async () => {
     if (!newOrder.materialNo?.trim()) { notify('Missing Field','Material No. is required','warning'); return; }
@@ -564,8 +565,10 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
     setIsSubmitting(true);
     const now = new Date();
     const monthStr = `${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][now.getMonth()]} ${now.getFullYear()}`;
-    const o = { id:`ORD-${2000+orders.length}`,...newOrder, quantity:parseInt(newOrder.quantity), listPrice:parseFloat(newOrder.listPrice)||0, totalCost:(parseFloat(newOrder.listPrice)||0)*parseInt(newOrder.quantity), orderDate:now.toISOString().slice(0,10), arrivalDate:null, qtyReceived:0, backOrder:-parseInt(newOrder.quantity), engineer:'', emailFull:'', emailBack:'', status:'Pending Approval', approvalStatus:'pending', approvalSentDate:now.toISOString().slice(0,10), month:monthStr, year:String(now.getFullYear()) };
-    setOrders(prev=>[o,...prev]); setShowNewOrder(false); setNewOrder({materialNo:'',description:'',quantity:1,listPrice:0,orderBy:'',remark:''});
+    const linkedBg = newOrder.bulkGroupId ? bulkGroups.find(bg => bg.id === newOrder.bulkGroupId) : null;
+    const o = { id:`ORD-${2000+orders.length}`,...newOrder, bulkGroupId:linkedBg ? linkedBg.id : null, quantity:parseInt(newOrder.quantity), listPrice:parseFloat(newOrder.listPrice)||0, totalCost:(parseFloat(newOrder.listPrice)||0)*parseInt(newOrder.quantity), orderDate:now.toISOString().slice(0,10), arrivalDate:null, qtyReceived:0, backOrder:-parseInt(newOrder.quantity), engineer:'', emailFull:'', emailBack:'', status:'Pending Approval', approvalStatus:'pending', approvalSentDate:now.toISOString().slice(0,10), month:linkedBg ? linkedBg.month : monthStr, year:String(now.getFullYear()) };
+    setOrders(prev=>[o,...prev]); setShowNewOrder(false); setNewOrder({materialNo:'',description:'',quantity:1,listPrice:0,orderBy:'',remark:'',bulkGroupId:''}); setNewBulkMonth('');
+    if (linkedBg) recalcBulkGroupForMonths([linkedBg.id], [o, ...orders]);
     const created = await api.createOrder(o);
     setIsSubmitting(false);
     if (!created) { notify('Save Failed','Order not saved to database. Please retry.','error'); return; }
@@ -676,8 +679,8 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
     setOrders(remainingOrders);
     ids.forEach(id => dbSync(api.deleteOrder(id), 'Order delete not saved'));
     // Recalculate affected bulk group totals
-    const affectedMonths = [...new Set(deletedOrders.map(o => o.month).filter(Boolean))];
-    if (affectedMonths.length) recalcBulkGroupForMonths(affectedMonths, remainingOrders);
+    const affectedBgIds = [...new Set(deletedOrders.map(o => o.bulkGroupId).filter(Boolean))];
+    if (affectedBgIds.length) recalcBulkGroupForMonths(affectedBgIds, remainingOrders);
     notify('Batch Delete', `${ids.length} orders deleted`, 'success');
     setSelOrders(new Set());
   };
@@ -694,13 +697,10 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
   const batchDeleteBulk = () => {
     if (!selBulk.size || !window.confirm(`Delete ${selBulk.size} bulk group(s) and their orders?`)) return;
     const ids = [...selBulk];
-    const norm = s => String(s || '').replace(/_/g, ' ').trim();
-    const deletedGroups = bulkGroups.filter(g => selBulk.has(g.id));
-    const deletedMonths = new Set(deletedGroups.map(g => norm(g.month)));
-    // Cascade delete orphaned orders
-    const orphanedOrders = orders.filter(o => deletedMonths.has(norm(o.month)));
+    // Cascade delete orders linked to these bulk groups
+    const orphanedOrders = orders.filter(o => o.bulkGroupId && selBulk.has(o.bulkGroupId));
     if (orphanedOrders.length) {
-      setOrders(prev => prev.filter(o => !deletedMonths.has(norm(o.month))));
+      setOrders(prev => prev.filter(o => !(o.bulkGroupId && selBulk.has(o.bulkGroupId))));
       orphanedOrders.forEach(o => dbSync(api.deleteOrder(o.id), 'Orphaned order delete not saved'));
     }
     setBulkGroups(prev => prev.filter(g => !selBulk.has(g.id)));
@@ -980,15 +980,16 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
     if(!validItems.length) { notify('No Valid Items','Each item needs Material No. and Description','warning'); return; }
     if(!bulkOrderBy) { notify('Missing Field','Order By is required','warning'); return; }
     setIsSubmitting(true);
+    const bgId = `BG-${String(bulkGroups.length+1).padStart(3,'0')}`;
     const newOrders = validItems.map((item,idx)=>({
       id:`ORD-${2000+orders.length+idx}`, materialNo:item.materialNo, description:item.description,
       quantity:parseInt(item.quantity)||1, listPrice:parseFloat(item.listPrice)||0,
       totalCost:(parseFloat(item.listPrice)||0)*(parseInt(item.quantity)||1),
       orderDate:new Date().toISOString().slice(0,10), orderBy:bulkOrderBy, remark:`Bulk: ${bulkMonth} — ${bulkRemark}`,
       arrivalDate:null, qtyReceived:0, backOrder:-(parseInt(item.quantity)||1), engineer:'',
-      emailFull:'', emailBack:'', status:'Pending', month:bulkMonth, year:String(new Date().getFullYear())
+      emailFull:'', emailBack:'', status:'Pending', month:bulkMonth, year:String(new Date().getFullYear()),
+      bulkGroupId:bgId
     }));
-    const bgId = `BG-${String(bulkGroups.length+1).padStart(3,'0')}`;
     const totalCost = newOrders.reduce((s,o)=>s+o.totalCost,0);
     setOrders(prev=>[...newOrders,...prev]);
     newOrders.forEach(o => dbSync(api.createOrder(o), 'Bulk order item not saved'));
@@ -2070,7 +2071,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
           <div style={{display:'flex',gap:4}}>
             {(hasPermission('editAllOrders')||o.orderBy===currentUser?.name)&&<button onClick={(e)=>{e.stopPropagation();setEditingOrder({...o});}} style={{background:'#2563EB',color:'#fff',border:'none',borderRadius:6,padding:'4px 8px',fontSize:10,cursor:'pointer',display:'flex',alignItems:'center',gap:3}}><Edit3 size={11}/> Edit</button>}
             <button onClick={(e)=>{e.stopPropagation();handleDuplicateOrder(o);}} style={{background:'#7C3AED',color:'#fff',border:'none',borderRadius:6,padding:'4px 8px',fontSize:10,cursor:'pointer',display:'flex',alignItems:'center',gap:3}}><Copy size={11}/></button>
-            {hasPermission('deleteOrders')&&<button onClick={(e)=>{e.stopPropagation();if(window.confirm(`Delete order ${o.id}?`)){const remaining=orders.filter(x=>x.id!==o.id);setOrders(remaining);dbSync(api.deleteOrder(o.id),'Order delete not saved');if(o.month)recalcBulkGroupForMonths([o.month],remaining);notify('Deleted',o.id,'success');}}} style={{background:'#DC2626',color:'#fff',border:'none',borderRadius:6,padding:'4px 8px',fontSize:10,cursor:'pointer',display:'flex',alignItems:'center',gap:3}}><Trash2 size={11}/></button>}
+            {hasPermission('deleteOrders')&&<button onClick={(e)=>{e.stopPropagation();if(window.confirm(`Delete order ${o.id}?`)){const remaining=orders.filter(x=>x.id!==o.id);setOrders(remaining);dbSync(api.deleteOrder(o.id),'Order delete not saved');if(o.bulkGroupId)recalcBulkGroupForMonths([o.bulkGroupId],remaining);notify('Deleted',o.id,'success');}}} style={{background:'#DC2626',color:'#fff',border:'none',borderRadius:6,padding:'4px 8px',fontSize:10,cursor:'pointer',display:'flex',alignItems:'center',gap:3}}><Trash2 size={11}/></button>}
           </div>
         </td>
       </tr>))}</tbody>
@@ -2113,7 +2114,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
             <div style={{display:'flex',gap:6}}>
               {(hasPermission('editAllBulkOrders')||g.createdBy===currentUser?.name)&&<button onClick={()=>setSelectedBulkGroup({...g})} style={{background:'#2563EB',color:'#fff',border:'none',borderRadius:6,padding:'4px 8px',fontSize:10,cursor:'pointer',display:'flex',alignItems:'center',gap:3}}><Edit3 size={11}/> Edit</button>}
               <button onClick={()=>setExpandedMonth(expandedMonth===g.month?null:g.month)} style={{background:expandedMonth===g.month?'#064E3B':'#0B7A3E',color:'#fff',border:'none',borderRadius:6,padding:'4px 8px',fontSize:10,cursor:'pointer',display:'flex',alignItems:'center',gap:3}}><Eye size={11}/> {expandedMonth===g.month?'Hide':'View'}</button>
-              {hasPermission('deleteBulkOrders')&&<button onClick={()=>{if(window.confirm(`Delete bulk group ${g.id} and its orders?`)){const norm=s=>String(s||'').replace(/_/g,' ').trim();const orphaned=orders.filter(o=>norm(o.month)===norm(g.month));if(orphaned.length){setOrders(prev=>prev.filter(o=>norm(o.month)!==norm(g.month)));orphaned.forEach(o=>dbSync(api.deleteOrder(o.id),'Orphaned order delete'));}setBulkGroups(prev=>prev.filter(x=>x.id!==g.id));dbSync(api.deleteBulkGroup(g.id),'Bulk group delete not saved');notify('Deleted',`${g.id} + ${orphaned.length} orders`,'success');}}} style={{background:'#DC2626',color:'#fff',border:'none',borderRadius:6,padding:'4px 8px',fontSize:10,cursor:'pointer',display:'flex',alignItems:'center',gap:3}}><Trash2 size={11}/></button>}
+              {hasPermission('deleteBulkOrders')&&<button onClick={()=>{if(window.confirm(`Delete bulk group ${g.id} and its linked orders?`)){const orphaned=orders.filter(o=>o.bulkGroupId===g.id);if(orphaned.length){setOrders(prev=>prev.filter(o=>o.bulkGroupId!==g.id));orphaned.forEach(o=>dbSync(api.deleteOrder(o.id),'Orphaned order delete'));}setBulkGroups(prev=>prev.filter(x=>x.id!==g.id));dbSync(api.deleteBulkGroup(g.id),'Bulk group delete not saved');notify('Deleted',`${g.id} + ${orphaned.length} orders`,'success');}}} style={{background:'#DC2626',color:'#fff',border:'none',borderRadius:6,padding:'4px 8px',fontSize:10,cursor:'pointer',display:'flex',alignItems:'center',gap:3}}><Trash2 size={11}/></button>}
             </div>
           </td>
         </tr>))}</tbody>
@@ -2168,7 +2169,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
               <div style={{display:'flex',gap:4}}>
               {(hasPermission('editAllOrders')||o.orderBy===currentUser?.name)&&<button onClick={(e)=>{e.stopPropagation();setEditingOrder({...o});}} style={{background:'#2563EB',color:'#fff',border:'none',borderRadius:6,padding:'4px 8px',fontSize:10,cursor:'pointer',display:'flex',alignItems:'center',gap:3}}><Edit3 size={11}/> Edit</button>}
               <button onClick={(e)=>{e.stopPropagation();handleDuplicateOrder(o);}} style={{background:'#7C3AED',color:'#fff',border:'none',borderRadius:6,padding:'4px 8px',fontSize:10,cursor:'pointer',display:'flex',alignItems:'center',gap:3}}><Copy size={11}/></button>
-              {hasPermission('deleteOrders')&&<button onClick={(e)=>{e.stopPropagation();if(window.confirm(`Delete ${o.id}?`)){const remaining=orders.filter(x=>x.id!==o.id);setOrders(remaining);dbSync(api.deleteOrder(o.id),'Order delete not saved');if(o.month)recalcBulkGroupForMonths([o.month],remaining);notify('Deleted',o.id,'success');}}} style={{background:'#DC2626',color:'#fff',border:'none',borderRadius:6,padding:'4px 8px',fontSize:10,cursor:'pointer'}}><Trash2 size={11}/></button>}
+              {hasPermission('deleteOrders')&&<button onClick={(e)=>{e.stopPropagation();if(window.confirm(`Delete ${o.id}?`)){const remaining=orders.filter(x=>x.id!==o.id);setOrders(remaining);dbSync(api.deleteOrder(o.id),'Order delete not saved');if(o.bulkGroupId)recalcBulkGroupForMonths([o.bulkGroupId],remaining);notify('Deleted',o.id,'success');}}} style={{background:'#DC2626',color:'#fff',border:'none',borderRadius:6,padding:'4px 8px',fontSize:10,cursor:'pointer'}}><Trash2 size={11}/></button>}
               </div>
             </td>
           </tr>))}</tbody>
@@ -2392,7 +2393,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
 {/* ═══════════ PART ARRIVAL CHECK ═══════════ */}
 {page==='delivery'&&(<div>
   <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:20}}>
-    <p style={{fontSize:13,color:'#64748B'}}>Check and verify material arrivals from bulk orders</p>
+    <p style={{fontSize:13,color:'#64748B'}}>Check and verify material arrivals from single orders and bulk batches</p>
   </div>
 
   {/* Stats Cards */}
@@ -2410,7 +2411,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
     <h3 style={{fontSize:15,fontWeight:700,marginBottom:16}}>Bulk Orders - Arrival Verification</h3>
     <div style={{display:'grid',gap:12}}>
       {bulkGroups.map(bg=>{
-        const bgOrders = orders.filter(o=>o.month===String(bg.month||'').replace(' ','_'));
+        const bgOrders = orders.filter(o=>o.bulkGroupId===bg.id);
         const fullyReceived = bgOrders.filter(o=>o.qtyReceived>=o.quantity&&o.quantity>0).length;
         const pending = bgOrders.filter(o=>o.qtyReceived<o.quantity).length;
         const hasBackOrder = bgOrders.some(o=>o.backOrder<0);
@@ -2456,7 +2457,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
                         <td className="td" style={{maxWidth:180,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{o.description}</td>
                         <td className="td" style={{textAlign:'center',fontWeight:600}}>{o.quantity}</td>
                         <td className="td" style={{textAlign:'center'}}>
-                          <input type="number" min="0" max={o.quantity} value={o.qtyReceived} disabled={o.approvalStatus!=='approved'} title={o.approvalStatus!=='approved'?'Order must be approved first':''} onChange={e=>{const val=parseInt(e.target.value)||0;const updates={qtyReceived:val,backOrder:val-o.quantity,status:val>=o.quantity?'Received':val>0?'Back Order':'Pending'};const updatedOrders=orders.map(x=>x.id===o.id?{...x,...updates}:x);setOrders(updatedOrders);dbSync(api.updateOrder(o.id,updates),'Arrival update not saved');if(o.month)checkBulkGroupCompletion(o.month,updatedOrders);}} style={{width:50,padding:'4px 6px',textAlign:'center',borderRadius:6,border:'1px solid #E2E8F0',fontSize:12,opacity:o.approvalStatus!=='approved'?0.5:1,cursor:o.approvalStatus!=='approved'?'not-allowed':'text'}}/>
+                          <input type="number" min="0" max={o.quantity} value={o.qtyReceived} disabled={o.approvalStatus!=='approved'} title={o.approvalStatus!=='approved'?'Order must be approved first':''} onChange={e=>{const val=parseInt(e.target.value)||0;const updates={qtyReceived:val,backOrder:val-o.quantity,status:val>=o.quantity?'Received':val>0?'Back Order':'Pending'};const updatedOrders=orders.map(x=>x.id===o.id?{...x,...updates}:x);setOrders(updatedOrders);dbSync(api.updateOrder(o.id,updates),'Arrival update not saved');if(o.bulkGroupId)checkBulkGroupCompletion(o.bulkGroupId,updatedOrders);}} style={{width:50,padding:'4px 6px',textAlign:'center',borderRadius:6,border:'1px solid #E2E8F0',fontSize:12,opacity:o.approvalStatus!=='approved'?0.5:1,cursor:o.approvalStatus!=='approved'?'not-allowed':'text'}}/>
                         </td>
                         <td className="td" style={{textAlign:'center',fontWeight:600,color:o.quantity-o.qtyReceived>0?'#DC2626':'#059669'}}>{o.quantity-o.qtyReceived>0?`-${o.quantity-o.qtyReceived}`:'✓'}</td>
                         <td className="td"><Pill bg={o.qtyReceived>=o.quantity?'#D1FAE5':o.qtyReceived>0?'#DBEAFE':'#FEF3C7'} color={o.qtyReceived>=o.quantity?'#059669':o.qtyReceived>0?'#2563EB':'#D97706'}>{o.qtyReceived>=o.quantity?'Full':o.qtyReceived>0?'Partial':'Pending'}</Pill></td>
@@ -2526,14 +2527,13 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
     </div>
   </div>
 
-  {/* Individual Orders - Arrival Verification */}
+  {/* Single Orders - Arrival Verification */}
   {(()=>{
-    const bulkMonths = new Set(bulkGroups.map(bg=>String(bg.month||'')));
-    const indivOrders = orders.filter(o=>!bulkMonths.has(o.month)&&o.approvalStatus==='approved'&&o.quantity>0);
+    const indivOrders = orders.filter(o=>!o.bulkGroupId&&o.approvalStatus==='approved'&&o.quantity>0);
     if (!indivOrders.length) return null;
     return (
       <div className="card" style={{padding:'20px 24px',marginBottom:20}}>
-        <h3 style={{fontSize:15,fontWeight:700,marginBottom:16}}>Individual Orders - Arrival Verification</h3>
+        <h3 style={{fontSize:15,fontWeight:700,marginBottom:16}}>Single Orders - Arrival Verification</h3>
         <div style={{fontSize:12,color:'#64748B',marginBottom:12}}>{indivOrders.length} approved individual order(s) not part of any bulk group</div>
         <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
           <thead><tr style={{background:'#F8FAFB'}}><th className="th">Material No.</th><th className="th">Description</th><th className="th" style={{width:70}}>Ordered</th><th className="th" style={{width:80}}>Received</th><th className="th" style={{width:70}}>B/O</th><th className="th" style={{width:100}}>Status</th><th className="th" style={{width:100}}>Action</th></tr></thead>
@@ -3042,8 +3042,7 @@ if(scheduledNotifs.emailEnabled){                    addNotifEntry({id:'N-'+Date
 
 {/* Edit Bulk Order Modal */}
 {selectedBulkGroup&&(()=>{
-  const normMonth=s=>String(s||'').replace(/_/g,' ').trim();
-  const bgOrders=orders.filter(o=>normMonth(o.month)===normMonth(selectedBulkGroup.month));
+  const bgOrders=orders.filter(o=>o.bulkGroupId===selectedBulkGroup.id);
   const actualItems=bgOrders.length;
   const actualCost=bgOrders.reduce((s,o)=>s+(o.totalCost||0),0);
   return (<div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.5)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:9999}} onClick={()=>setSelectedBulkGroup(null)}>
@@ -3116,11 +3115,10 @@ if(scheduledNotifs.emailEnabled){                    addNotifEntry({id:'N-'+Date
           const newMonth = selectedBulkGroup.month;
           setBulkGroups(prev=>prev.map(g=>g.id===selectedBulkGroup.id?selectedBulkGroup:g));
           dbSync(api.updateBulkGroup(selectedBulkGroup.id,selectedBulkGroup),'Bulk group edit not saved');
-          // If month changed, update all orders that belonged to the old month
+          // If month changed, update orders linked to this bulk group
           if(oldMonth && newMonth && oldMonth!==newMonth){
-            const norm=s=>String(s||'').replace(/_/g,' ').trim();
-            setOrders(prev=>prev.map(o=>norm(o.month)===norm(oldMonth)?{...o,month:newMonth}:o));
-            orders.filter(o=>norm(o.month)===norm(oldMonth)).forEach(o=>{
+            setOrders(prev=>prev.map(o=>o.bulkGroupId===selectedBulkGroup.id?{...o,month:newMonth}:o));
+            orders.filter(o=>o.bulkGroupId===selectedBulkGroup.id).forEach(o=>{
               dbSync(api.updateOrder(o.id,{month:newMonth}),'Order month sync failed');
             });
           }
@@ -3231,8 +3229,11 @@ if(scheduledNotifs.emailEnabled){                    addNotifEntry({id:'N-'+Date
 
       <div className="grid-2" style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
         <div>
-          <label style={{display:'block',fontSize:12,fontWeight:600,color:'#4A5568',marginBottom:6}}>Month Batch</label>
-          <input value={editingOrder.month||''} onChange={e=>setEditingOrder(prev=>({...prev,month:e.target.value}))} placeholder="Feb 2026" style={{width:'100%',padding:'10px 12px',borderRadius:8,border:'1.5px solid #E2E8F0',fontSize:13,boxSizing:'border-box'}}/>
+          <label style={{display:'block',fontSize:12,fontWeight:600,color:'#4A5568',marginBottom:6}}>Linked Bulk Batch</label>
+          <select value={editingOrder.bulkGroupId||''} onChange={e=>{const bgId=e.target.value||null;const bg=bulkGroups.find(g=>g.id===bgId);setEditingOrder(prev=>({...prev,bulkGroupId:bgId,month:bg?bg.month:prev.month}));}} style={{width:'100%',padding:'10px 12px',borderRadius:8,border:'1.5px solid #E2E8F0',fontSize:13,boxSizing:'border-box'}}>
+            <option value="">-- None (Individual) --</option>
+            {bulkGroups.map(bg=><option key={bg.id} value={bg.id}>{bg.month} ({bg.id})</option>)}
+          </select>
         </div>
         <div>
           <label style={{display:'block',fontSize:12,fontWeight:600,color:'#4A5568',marginBottom:6}}>Arrival Date</label>
@@ -3252,13 +3253,12 @@ if(scheduledNotifs.emailEnabled){                    addNotifEntry({id:'N-'+Date
           setOrders(updatedOrders);
           dbSync(api.updateOrder(editingOrder.id, editingOrder), 'Order edit not saved');
           // Recalculate parent bulk group totals if this order belongs to one
-          if(editingOrder.month){
-            const norm=s=>String(s||'').replace(/_/g,' ').trim();
-            const bg = bulkGroups.find(g=>norm(g.month)===norm(editingOrder.month));
+          if(editingOrder.bulkGroupId){
+            const bg = bulkGroups.find(g=>g.id===editingOrder.bulkGroupId);
             if(bg){
-              const monthOrders = updatedOrders.filter(o=>norm(o.month)===norm(bg.month));
-              const newItems = monthOrders.length;
-              const newTotalCost = monthOrders.reduce((s,o)=>s+(o.totalCost||0),0);
+              const bgOrders = updatedOrders.filter(o=>o.bulkGroupId===bg.id);
+              const newItems = bgOrders.length;
+              const newTotalCost = bgOrders.reduce((s,o)=>s+(o.totalCost||0),0);
               if(bg.items!==newItems||bg.totalCost!==newTotalCost){
                 const updatedBg = {...bg, items:newItems, totalCost:newTotalCost};
                 setBulkGroups(prev=>prev.map(g=>g.id===bg.id?updatedBg:g));
@@ -3753,7 +3753,7 @@ if(scheduledNotifs.emailEnabled){                    addNotifEntry({id:'N-'+Date
         </div>
         <div style={{display:'flex',gap:8}}>
           <button onClick={async ()=>{if(window.confirm('Clear ALL orders? This cannot be undone. Bulk group totals will be reset to 0.')){setOrders([]);setBulkGroups(prev=>prev.map(bg=>({...bg,items:0,totalCost:0})));const ok=await api.clearOrders();if(ok){bulkGroups.forEach(bg=>dbSync(api.updateBulkGroup(bg.id,{items:0,totalCost:0}),'Bulk group reset'));notify('Orders Cleared','All orders removed, bulk group totals reset','info');}else{notify('Clear Failed','Orders not cleared from database','error');}}}} style={{padding:'6px 14px',background:'#DC2626',color:'#fff',border:'none',borderRadius:6,fontSize:11,fontWeight:600,cursor:'pointer',display:'flex',alignItems:'center',gap:4}}><Trash2 size={12}/> Clear All Orders</button>
-          <button onClick={async ()=>{if(window.confirm('Clear ALL bulk batches and their associated orders? This cannot be undone.')){const norm=s=>String(s||'').replace(/_/g,' ').trim();const bgMonths=new Set(bulkGroups.map(bg=>norm(bg.month)));const bgOrderIds=orders.filter(o=>bgMonths.has(norm(o.month))).map(o=>o.id);setOrders(prev=>prev.filter(o=>!bgMonths.has(norm(o.month))));setBulkGroups([]);const deleteResults=await Promise.all([api.clearBulkGroups(),...bgOrderIds.map(id=>api.deleteOrder(id))]);const failed=deleteResults.filter(r=>!r).length;if(failed===0){notify('Bulk Orders Cleared',`All bulk batches + ${bgOrderIds.length} orders removed`,'info');}else{notify('Partial Clear',`Bulk batches cleared but ${failed} order deletes failed`,'warning');}}}} style={{padding:'6px 14px',background:'#7C3AED',color:'#fff',border:'none',borderRadius:6,fontSize:11,fontWeight:600,cursor:'pointer',display:'flex',alignItems:'center',gap:4}}><Trash2 size={12}/> Clear Bulk Batches</button>
+          <button onClick={async ()=>{if(window.confirm('Clear ALL bulk batches and their linked orders? This cannot be undone.')){const bgOrderIds=orders.filter(o=>o.bulkGroupId).map(o=>o.id);setOrders(prev=>prev.filter(o=>!o.bulkGroupId));setBulkGroups([]);const deleteResults=await Promise.all([api.clearBulkGroups(),...bgOrderIds.map(id=>api.deleteOrder(id))]);const failed=deleteResults.filter(r=>!r).length;if(failed===0){notify('Bulk Orders Cleared',`All bulk batches + ${bgOrderIds.length} linked orders removed`,'info');}else{notify('Partial Clear',`Bulk batches cleared but ${failed} order deletes failed`,'warning');}}}} style={{padding:'6px 14px',background:'#7C3AED',color:'#fff',border:'none',borderRadius:6,fontSize:11,fontWeight:600,cursor:'pointer',display:'flex',alignItems:'center',gap:4}}><Trash2 size={12}/> Clear Bulk Batches</button>
           <button onClick={async ()=>{if(window.confirm('Clear ALL data (orders + bulk batches + notifications)? This cannot be undone.')){setOrders([]);setBulkGroups([]);setNotifLog([]);setPendingApprovals([]);const results=await Promise.all([api.clearOrders(),api.clearBulkGroups(),api.clearNotifLog(),api.clearApprovals()]);Object.values(LS_KEYS).forEach(k=>localStorage.removeItem(k));const failed=results.filter(r=>!r).length;if(failed===0){notify('All Data Cleared','System reset complete','info');}else{notify('Partial Clear',`${results.length-failed}/${results.length} clears succeeded. Some data may not be cleared from database.`,'warning');}}}} style={{padding:'6px 14px',background:'#374151',color:'#fff',border:'none',borderRadius:6,fontSize:11,fontWeight:600,cursor:'pointer',display:'flex',alignItems:'center',gap:4}}><RefreshCw size={12}/> Reset All Data</button>
         </div>
       </div>
@@ -3808,6 +3808,18 @@ if(scheduledNotifs.emailEnabled){                    addNotifEntry({id:'N-'+Date
           {newOrder.materialNo&&catalogLookup[newOrder.materialNo]&&<div style={{padding:12,borderRadius:8,background:'#F0FDF4',border:'1px solid #BBF7D0',fontSize:12}}><strong style={{color:'#0B7A3E'}}>✓ Catalog Match</strong><div className="grid-3" style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:8,marginTop:6}}>
             <div>SG: <strong className="mono">{fmt(catalogLookup[newOrder.materialNo].sg)}</strong></div><div>Dist: <strong className="mono">{fmt(catalogLookup[newOrder.materialNo].dist)}</strong></div><div>TP: <strong className="mono">{fmt(catalogLookup[newOrder.materialNo].tp)}</strong></div></div></div>}
           <div><label style={{display:'block',fontSize:12,fontWeight:600,color:'#4A5568',marginBottom:6}}>Order By</label><select value={newOrder.orderBy} onChange={e=>setNewOrder(p=>({...p,orderBy:e.target.value}))} style={{width:'100%'}}><option value="">— Select —</option>{users.filter(u=>u.status==='active').map(u=><option key={u.id} value={u.name}>{u.name}</option>)}</select></div>
+          <div>
+            <label style={{display:'block',fontSize:12,fontWeight:600,color:'#4A5568',marginBottom:6}}>Link to Bulk Batch <span style={{fontWeight:400,color:'#94A3B8'}}>(optional)</span></label>
+            <select value={newOrder.bulkGroupId||''} onChange={e=>{const v=e.target.value;if(v==='__new__'){setNewOrder(p=>({...p,bulkGroupId:'__new__'}));setNewBulkMonth(MONTH_OPTIONS[0]);}else{setNewOrder(p=>({...p,bulkGroupId:v}));setNewBulkMonth('');}}} style={{width:'100%'}}>
+              <option value="">-- None (Individual Order) --</option>
+              {bulkGroups.filter(bg=>bg.status!=='Completed').map(bg=><option key={bg.id} value={bg.id}>{bg.month} ({bg.id}) — {bg.items} items, {fmt(bg.totalCost)}</option>)}
+              <option value="__new__">+ Create New Bulk Batch...</option>
+            </select>
+            {newOrder.bulkGroupId==='__new__'&&<div style={{display:'flex',gap:8,marginTop:8,alignItems:'center'}}>
+              <select value={newBulkMonth} onChange={e=>setNewBulkMonth(e.target.value)} style={{flex:1}}>{MONTH_OPTIONS.map(m=><option key={m}>{m}</option>)}</select>
+              <button type="button" onClick={()=>{if(!newBulkMonth)return;const bgId=`BG-${String(bulkGroups.length+1).padStart(3,'0')}`;const bg={id:bgId,month:newBulkMonth,createdBy:currentUser?.name||'',items:0,totalCost:0,status:'Pending',date:new Date().toISOString().slice(0,10)};setBulkGroups(prev=>[bg,...prev]);dbSync(api.createBulkGroup(bg),'New bulk group not saved');setNewOrder(p=>({...p,bulkGroupId:bgId}));setNewBulkMonth('');notify('Bulk Batch Created',`${bgId} — ${newBulkMonth}`,'success');}} style={{padding:'6px 14px',background:'#4338CA',color:'#fff',border:'none',borderRadius:6,fontSize:11,fontWeight:600,cursor:'pointer',whiteSpace:'nowrap'}}>Create</button>
+            </div>}
+          </div>
           <div><label style={{display:'block',fontSize:12,fontWeight:600,color:'#4A5568',marginBottom:6}}>Remark</label><textarea value={newOrder.remark} onChange={e=>setNewOrder(p=>({...p,remark:e.target.value}))} rows={2} style={{width:'100%',resize:'vertical'}}/></div>
 
           {/* Auto-Notify Status */}
@@ -3900,6 +3912,10 @@ if(scheduledNotifs.emailEnabled){                    addNotifEntry({id:'N-'+Date
             <Calendar size={14} color="#0B7A3E"/>
             <div><div style={{fontSize:10,color:'#64748B',fontWeight:600}}>MONTH BATCH</div><div style={{fontSize:13,fontWeight:700,color:'#0B7A3E'}}>{String(selectedOrder.month).replace('_',' ')}</div></div>
           </div>}
+          {selectedOrder.bulkGroupId&&<div style={{display:'flex',alignItems:'center',gap:8,padding:'8px 14px',background:'#EDE9FE',borderRadius:8}}>
+            <Layers size={14} color="#7C3AED"/>
+            <div><div style={{fontSize:10,color:'#64748B',fontWeight:600}}>BULK BATCH</div><div style={{fontSize:13,fontWeight:700,color:'#7C3AED'}}>{selectedOrder.bulkGroupId}</div></div>
+          </div>}
           {selectedOrder.orderDate&&<div style={{display:'flex',alignItems:'center',gap:8,padding:'8px 14px',background:'#F8FAFB',borderRadius:8}}>
             <Clock size={14} color="#64748B"/>
             <div><div style={{fontSize:10,color:'#64748B',fontWeight:600}}>ORDER DATE</div><div style={{fontSize:13,fontWeight:700,color:'#374151'}}>{fmtDate(selectedOrder.orderDate)}</div></div>
@@ -3927,7 +3943,7 @@ if(scheduledNotifs.emailEnabled){                    addNotifEntry({id:'N-'+Date
                 setOrders(updatedOrders);
                 setSelectedOrder(updatedOrder);
                 dbSync(api.updateOrder(selectedOrder.id, {qtyReceived:val, backOrder:newBackOrder, status:newStatus, arrivalDate:updatedOrder.arrivalDate}), 'Arrival update not saved');
-                if(selectedOrder.month) checkBulkGroupCompletion(selectedOrder.month, updatedOrders);
+                if(selectedOrder.bulkGroupId) checkBulkGroupCompletion(selectedOrder.bulkGroupId, updatedOrders);
               }} style={{width:'100%',padding:'8px 12px',fontSize:16,fontWeight:600,borderRadius:8,border:'1.5px solid #BBF7D0',textAlign:'center'}}/>
             </div>
             <div>
@@ -3941,7 +3957,7 @@ if(scheduledNotifs.emailEnabled){                    addNotifEntry({id:'N-'+Date
 
         <div className="grid-2" style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginTop:14}}>{[{l:'Price',v:selectedOrder.listPrice>0?fmt(selectedOrder.listPrice):'—'},{l:'Total',v:selectedOrder.totalCost>0?fmt(selectedOrder.totalCost):'—'},{l:'Ordered',v:fmtDate(selectedOrder.orderDate)},{l:'By',v:selectedOrder.orderBy||'—'},{l:'Arrival',v:selectedOrder.arrivalDate?fmtDate(selectedOrder.arrivalDate):'—'},{l:'Engineer',v:selectedOrder.engineer||'—'},{l:'Month',v:selectedOrder.month?.replace('_',' ')||'—'},{l:'Remark',v:selectedOrder.remark||'—'}].map((f,i)=><div key={i} style={{padding:10,borderRadius:8,background:'#F8FAFB'}}><div style={{fontSize:10,color:'#94A3B8',fontWeight:600,textTransform:'uppercase',letterSpacing:.5,marginBottom:3}}>{f.l}</div><div style={{fontSize:13,fontWeight:600}}>{f.v}</div></div>)}</div>
         <div style={{display:'flex',gap:10,marginTop:18}}>
-          <button className="bp" onClick={async ()=>{const updatedOrders=orders.map(o=>o.id===selectedOrder.id?selectedOrder:o);setOrders(updatedOrders);const ok=await api.updateOrder(selectedOrder.id,selectedOrder);if(ok){notify('Order Updated',`${selectedOrder.id} saved to database`,'success');if(selectedOrder.month)recalcBulkGroupForMonths([selectedOrder.month],updatedOrders);}else{notify('Save Failed',`${selectedOrder.id} not saved to database`,'error');}setSelectedOrder(null);}}><Check size={14}/> Save & Close</button>
+          <button className="bp" onClick={async ()=>{const updatedOrders=orders.map(o=>o.id===selectedOrder.id?selectedOrder:o);setOrders(updatedOrders);const ok=await api.updateOrder(selectedOrder.id,selectedOrder);if(ok){notify('Order Updated',`${selectedOrder.id} saved to database`,'success');if(selectedOrder.bulkGroupId)recalcBulkGroupForMonths([selectedOrder.bulkGroupId],updatedOrders);}else{notify('Save Failed',`${selectedOrder.id} not saved to database`,'error');}setSelectedOrder(null);}}><Check size={14}/> Save & Close</button>
           <button className="be" onClick={()=>{notify('Email Sent','Update sent','success');setSelectedOrder(null);}}><Mail size={14}/> Email</button>
           {waConnected&&<button className="bw" onClick={()=>{notify('WhatsApp Sent','Alert sent','success');setSelectedOrder(null);}}><MessageSquare size={14}/> WhatsApp</button>}
           <button className="bs" onClick={()=>setSelectedOrder(null)}>Cancel</button>
