@@ -204,6 +204,13 @@ const [selectedUser, setSelectedUser] = useState(null);
     dbSync(api.createStockCheck(entry), 'Stock check not saved');
   }, [dbSync]);
 
+  // Numeric coercion helpers — PostgreSQL NUMERIC(12,2) returns strings
+  const numOrders = arr => arr.map(o => ({...o, totalCost:Number(o.totalCost)||0, quantity:Number(o.quantity)||0, qtyReceived:Number(o.qtyReceived)||0, backOrder:Number(o.backOrder)||0, listPrice:Number(o.listPrice)||0}));
+  const numBulk = arr => arr.map(g => ({...g, totalCost:Number(g.totalCost)||0, items:Number(g.items)||0}));
+  const numApprovals = arr => arr.map(a => ({...a, totalCost:Number(a.totalCost)||0, quantity:Number(a.quantity)||0}));
+  const numCatalog = arr => arr.map(p => ({...p, sgPrice:Number(p.sgPrice)||0, distPrice:Number(p.distPrice)||0, transferPrice:Number(p.transferPrice)||0, rspEur:Number(p.rspEur)||0}));
+  const numStockChecks = arr => arr.map(c => ({...c, items:Number(c.items)||0, disc:Number(c.disc)||0}));
+
   // Helper: recalculate bulk group items/totalCost for affected months after order changes
   const recalcBulkGroupForMonths = useCallback((months, ordersAfterChange) => {
     const norm = s => String(s || '').replace(/_/g, ' ').trim();
@@ -282,7 +289,7 @@ const [selectedUser, setSelectedUser] = useState(null);
   const stats = useMemo(() => {
     const t=orders.length, r=orders.filter(o=>o.status==='Received').length, b=orders.filter(o=>o.status==='Back Order').length;
     const p=orders.filter(o=>o.status==='Pending'||o.status==='Processed').length;
-    const tc=orders.reduce((s,o)=>s+o.totalCost,0), tq=orders.reduce((s,o)=>s+o.quantity,0), tr=orders.reduce((s,o)=>s+o.qtyReceived,0);
+    const tc=orders.reduce((s,o)=>s+(Number(o.totalCost)||0),0), tq=orders.reduce((s,o)=>s+(Number(o.quantity)||0),0), tr=orders.reduce((s,o)=>s+(Number(o.qtyReceived)||0),0);
     return { total:t, received:r, backOrder:b, pending:p, totalCost:tc, fulfillmentRate: tq>0?((tr/tq)*100).toFixed(1):0 };
   }, [orders]);
   const filteredOrders = useMemo(() => orders.filter(o => {
@@ -293,12 +300,12 @@ const [selectedUser, setSelectedUser] = useState(null);
     const months=['Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec','Jan'];
     const mm={'Feb 2025':0,'March 2025':1,'April 2025':2,'May 2025':3,'June 2025':4,'July 2025':5,'2_July 2025':5,'3_July 2025':5,'4_July 2025':5,'2_Sep 2025':7,'Sep 2025':7,'Oct 2025':8,'Nov 2025':9,'1_Dec_2025':10,'Jan_2026':11};
     const d=months.map(m=>({name:m,orders:0,cost:0,received:0,backOrder:0}));
-    orders.forEach(o=>{const i=mm[o.month];if(i!==undefined){d[i].orders++;d[i].cost+=o.totalCost;if(o.status==='Received')d[i].received++;if(o.status==='Back Order')d[i].backOrder++;}});
+    orders.forEach(o=>{const i=mm[o.month];if(i!==undefined){d[i].orders++;d[i].cost+=(Number(o.totalCost)||0);if(o.status==='Received')d[i].received++;if(o.status==='Back Order')d[i].backOrder++;}});
     return d;
   }, [orders]);
   const statusPieData = useMemo(() => [{name:'Received',value:stats.received,color:'#0B7A3E'},{name:'Back Order',value:stats.backOrder,color:'#C53030'},{name:'Processed/Pending',value:stats.pending,color:'#2563EB'}], [stats]);
   const topItems = useMemo(() => {
-    const m={}; orders.forEach(o=>{if(!m[o.description])m[o.description]={name:o.description.length>30?o.description.slice(0,30)+'...':o.description,qty:0,cost:0};m[o.description].qty+=o.quantity;m[o.description].cost+=o.totalCost;});
+    const m={}; orders.forEach(o=>{if(!m[o.description])m[o.description]={name:o.description.length>30?o.description.slice(0,30)+'...':o.description,qty:0,cost:0};m[o.description].qty+=(Number(o.quantity)||0);m[o.description].cost+=(Number(o.totalCost)||0);});
     return Object.values(m).sort((a,b)=>b.cost-a.cost).slice(0,8);
   }, [orders]);
   const catPriceData = useMemo(() => Object.entries(CATEGORIES).map(([k,c])=>{const i=partsCatalog.filter(p=>p.c===k);if(!i.length)return null;return{name:c.short,sg:Math.round(i.reduce((s,p)=>s+p.sg,0)/i.length),dist:Math.round(i.reduce((s,p)=>s+p.dist,0)/i.length),count:i.length,color:c.color};}).filter(Boolean),[partsCatalog]);
@@ -370,24 +377,24 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
         api.getOrders(), api.getBulkGroups(), api.getUsers(), api.getStockChecks(),
         api.getNotifLog(), api.getApprovals(), api.getConfig(), api.getCatalog()
       ]);
-      if (apiOrders !== null) setOrders(apiOrders);
-      if (apiBulk !== null) setBulkGroups(apiBulk);
+      if (apiOrders !== null) setOrders(numOrders(apiOrders));
+      if (apiBulk !== null) setBulkGroups(numBulk(apiBulk));
       if (apiUsers !== null) setUsers(apiUsers);
-      if (apiChecks !== null) setStockChecks(apiChecks);
+      if (apiChecks !== null) setStockChecks(numStockChecks(apiChecks));
       if (apiNotifs !== null) setNotifLog(apiNotifs);
-      if (apiApprovals !== null) setPendingApprovals(apiApprovals);
+      if (apiApprovals !== null) setPendingApprovals(numApprovals(apiApprovals));
       if (apiConfig && Object.keys(apiConfig).length) {
-        if (apiConfig.emailConfig) setEmailConfig(apiConfig.emailConfig);
-        if (apiConfig.emailTemplates && typeof apiConfig.emailTemplates === 'object') setEmailTemplates(apiConfig.emailTemplates);
-        if (apiConfig.priceConfig) setPriceConfig(apiConfig.priceConfig);
-        if (apiConfig.waNotifyRules) setWaNotifyRules(apiConfig.waNotifyRules);
-        if (apiConfig.scheduledNotifs) setScheduledNotifs(apiConfig.scheduledNotifs);
+        if (apiConfig.emailConfig && typeof apiConfig.emailConfig === 'object') setEmailConfig(prev => ({...prev, ...apiConfig.emailConfig}));
+        if (apiConfig.emailTemplates && typeof apiConfig.emailTemplates === 'object') setEmailTemplates(prev => ({...prev, ...apiConfig.emailTemplates}));
+        if (apiConfig.priceConfig && typeof apiConfig.priceConfig === 'object') setPriceConfig(prev => ({...prev, ...apiConfig.priceConfig}));
+        if (apiConfig.waNotifyRules && typeof apiConfig.waNotifyRules === 'object') setWaNotifyRules(prev => ({...prev, ...apiConfig.waNotifyRules}));
+        if (apiConfig.scheduledNotifs && typeof apiConfig.scheduledNotifs === 'object') setScheduledNotifs(prev => ({...prev, ...apiConfig.scheduledNotifs, reports: {...prev.reports, ...(apiConfig.scheduledNotifs.reports||{})}}));
         if (apiConfig.customLogo) setCustomLogo(apiConfig.customLogo);
-        if (apiConfig.aiBotConfig) setAiBotConfig(apiConfig.aiBotConfig);
+        if (apiConfig.aiBotConfig && typeof apiConfig.aiBotConfig === 'object') setAiBotConfig(prev => ({...prev, ...apiConfig.aiBotConfig}));
         if (apiConfig.waAutoReply !== undefined) setWaAutoReply(apiConfig.waAutoReply);
-        if (apiConfig.waAllowedSenders) setWaAllowedSenders(apiConfig.waAllowedSenders);
+        if (Array.isArray(apiConfig.waAllowedSenders)) setWaAllowedSenders(apiConfig.waAllowedSenders);
       }
-      if (apiCatalog !== null) { setPartsCatalog(apiCatalog.map(p => ({ m: p.materialNo, d: p.description, c: p.category, sg: p.sgPrice, dist: p.distPrice, tp: p.transferPrice, rsp: p.rspEur }))); }
+      if (apiCatalog !== null) { const nc = numCatalog(apiCatalog); setPartsCatalog(nc.map(p => ({ m: p.materialNo, d: p.description, c: p.category, sg: p.sgPrice, dist: p.distPrice, tp: p.transferPrice, rsp: p.rspEur }))); }
       console.log('Data loaded from database');
       return true;
     } catch (e) {
@@ -455,32 +462,32 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
       switch (pageId) {
         case 'dashboard': {
           const [o, b] = await Promise.all([api.getOrders(), api.getBulkGroups()]);
-          if (o) setOrders(o); if (b) setBulkGroups(b);
+          if (o) setOrders(numOrders(o)); if (b) setBulkGroups(numBulk(b));
           break;
         }
         case 'orders': {
           const o = await api.getOrders();
-          if (o) setOrders(o);
+          if (o) setOrders(numOrders(o));
           break;
         }
         case 'bulkorders': {
           const [o, b] = await Promise.all([api.getOrders(), api.getBulkGroups()]);
-          if (o) setOrders(o); if (b) setBulkGroups(b);
+          if (o) setOrders(numOrders(o)); if (b) setBulkGroups(numBulk(b));
           break;
         }
         case 'stockcheck': {
           const c = await api.getStockChecks();
-          if (c) setStockChecks(c);
+          if (c) setStockChecks(numStockChecks(c));
           break;
         }
         case 'delivery': {
           const [o, b] = await Promise.all([api.getOrders(), api.getBulkGroups()]);
-          if (o) setOrders(o); if (b) setBulkGroups(b);
+          if (o) setOrders(numOrders(o)); if (b) setBulkGroups(numBulk(b));
           break;
         }
         case 'analytics': {
           const [o, b] = await Promise.all([api.getOrders(), api.getBulkGroups()]);
-          if (o) setOrders(o); if (b) setBulkGroups(b);
+          if (o) setOrders(numOrders(o)); if (b) setBulkGroups(numBulk(b));
           break;
         }
         case 'notifications': {
@@ -496,22 +503,23 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
         case 'settings': {
           const cfg = await api.getConfig();
           if (cfg && Object.keys(cfg).length) {
-            if (cfg.emailConfig) setEmailConfig(cfg.emailConfig);
-            if (cfg.emailTemplates && typeof cfg.emailTemplates === 'object') setEmailTemplates(cfg.emailTemplates);
-            if (cfg.priceConfig) setPriceConfig(cfg.priceConfig);
-            if (cfg.waNotifyRules) setWaNotifyRules(cfg.waNotifyRules);
-            if (cfg.scheduledNotifs) setScheduledNotifs(cfg.scheduledNotifs);
+            if (cfg.emailConfig && typeof cfg.emailConfig === 'object') setEmailConfig(prev => ({...prev, ...cfg.emailConfig}));
+            if (cfg.emailTemplates && typeof cfg.emailTemplates === 'object') setEmailTemplates(prev => ({...prev, ...cfg.emailTemplates}));
+            if (cfg.priceConfig && typeof cfg.priceConfig === 'object') setPriceConfig(prev => ({...prev, ...cfg.priceConfig}));
+            if (cfg.waNotifyRules && typeof cfg.waNotifyRules === 'object') setWaNotifyRules(prev => ({...prev, ...cfg.waNotifyRules}));
+            if (cfg.scheduledNotifs && typeof cfg.scheduledNotifs === 'object') setScheduledNotifs(prev => ({...prev, ...cfg.scheduledNotifs, reports: {...prev.reports, ...(cfg.scheduledNotifs.reports||{})}}));
             if (cfg.customLogo) setCustomLogo(cfg.customLogo);
-            if (cfg.aiBotConfig) setAiBotConfig(cfg.aiBotConfig);
+            if (cfg.aiBotConfig && typeof cfg.aiBotConfig === 'object') setAiBotConfig(prev => ({...prev, ...cfg.aiBotConfig}));
             if (cfg.waAutoReply !== undefined) setWaAutoReply(cfg.waAutoReply);
-            if (cfg.waAllowedSenders) setWaAllowedSenders(cfg.waAllowedSenders);
+            if (Array.isArray(cfg.waAllowedSenders)) setWaAllowedSenders(cfg.waAllowedSenders);
           }
           break;
         }
         case 'catalog': {
           const cat = await api.getCatalog();
           if (cat !== null) {
-            setPartsCatalog(cat.map(p => ({ m: p.materialNo, d: p.description, c: p.category, sg: p.sgPrice, dist: p.distPrice, tp: p.transferPrice, rsp: p.rspEur })));
+            const nc = numCatalog(cat);
+            setPartsCatalog(nc.map(p => ({ m: p.materialNo, d: p.description, c: p.category, sg: p.sgPrice, dist: p.distPrice, tp: p.transferPrice, rsp: p.rspEur })));
           }
           break;
         }
@@ -2736,10 +2744,10 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
                   {key:'pendingApprovals',label:'Pending Approvals',desc:'Orders awaiting approval'},
                   {key:'orderStats',label:'Order Statistics',desc:'Trends and analytics'}
                 ].map(r=>(
-                  <label key={r.key} style={{display:'flex',alignItems:'flex-start',gap:8,padding:10,background:scheduledNotifs.reports[r.key]?'#EDE9FE':'#F8FAFB',borderRadius:8,cursor:'pointer',border:scheduledNotifs.reports[r.key]?'1px solid #C4B5FD':'1px solid #E8ECF0'}}>
-                    <input type="checkbox" checked={scheduledNotifs.reports[r.key]} onChange={e=>setScheduledNotifs(prev=>({...prev,reports:{...prev.reports,[r.key]:e.target.checked}}))} style={{marginTop:2}}/>
+                  <label key={r.key} style={{display:'flex',alignItems:'flex-start',gap:8,padding:10,background:scheduledNotifs.reports?.[r.key]?'#EDE9FE':'#F8FAFB',borderRadius:8,cursor:'pointer',border:scheduledNotifs.reports?.[r.key]?'1px solid #C4B5FD':'1px solid #E8ECF0'}}>
+                    <input type="checkbox" checked={scheduledNotifs.reports?.[r.key]} onChange={e=>setScheduledNotifs(prev=>({...prev,reports:{...prev.reports,[r.key]:e.target.checked}}))} style={{marginTop:2}}/>
                     <div>
-                      <div style={{fontSize:12,fontWeight:600,color:scheduledNotifs.reports[r.key]?'#5B21B6':'#374151'}}>{r.label}</div>
+                      <div style={{fontSize:12,fontWeight:600,color:scheduledNotifs.reports?.[r.key]?'#5B21B6':'#374151'}}>{r.label}</div>
                       <div style={{fontSize:10,color:'#94A3B8'}}>{r.desc}</div>
                     </div>
                   </label>
@@ -3315,8 +3323,8 @@ if(scheduledNotifs.emailEnabled){                    addNotifEntry({id:'N-'+Date
     <div style={{marginTop:16,padding:14,background:'#F0FDF4',borderRadius:10,display:'flex',alignItems:'center',justifyContent:'space-between'}}>
       <div style={{fontSize:12}}>
         <strong style={{color:'#059669'}}>Summary:</strong> {historyImportData.length} orders |
-        Total Qty: {historyImportData.reduce((s,o)=>s+o.quantity,0)} |
-        Total Value: <strong className="mono">{fmt(historyImportData.reduce((s,o)=>s+o.totalCost,0))}</strong>
+        Total Qty: {historyImportData.reduce((s,o)=>s+(Number(o.quantity)||0),0)} |
+        Total Value: <strong className="mono">{fmt(historyImportData.reduce((s,o)=>s+(Number(o.totalCost)||0),0))}</strong>
       </div>
       <div style={{display:'flex',gap:10}}>
         <button onClick={()=>{setHistoryImportPreview(false);setHistoryImportData([]);}} style={{padding:'10px 20px',borderRadius:8,border:'1.5px solid #E2E8F0',background:'#fff',color:'#64748B',fontWeight:600,fontSize:13,cursor:'pointer'}}>Cancel</button>
@@ -3603,7 +3611,7 @@ if(scheduledNotifs.emailEnabled){                    addNotifEntry({id:'N-'+Date
     <h3 style={{fontSize:15,fontWeight:600,marginBottom:20,display:'flex',alignItems:'center',gap:10}}><FileText size={18} color="#2563EB"/> Email & Notification Templates</h3>
     <p style={{fontSize:12,color:'#64748B',marginBottom:16}}>Customize email templates for approvals, notifications, and alerts. Use {'{placeholder}'} variables that get replaced with actual data.</p>
     <div style={{display:'flex',flexDirection:'column',gap:10}}>
-      {Object.entries(emailTemplates).map(([key, tmpl]) => {
+      {(typeof emailTemplates === 'object' && emailTemplates ? Object.entries(emailTemplates) : []).map(([key, tmpl]) => {
         const labels = { orderApproval: 'Order Approval', bulkApproval: 'Bulk Order Approval', orderNotification: 'Order Notification', backOrderAlert: 'Back Order Alert', monthlySummary: 'Monthly Summary' };
         const icons = { orderApproval: Shield, bulkApproval: Layers, orderNotification: Bell, backOrderAlert: AlertTriangle, monthlySummary: BarChart3 };
         const Icon = icons[key] || Mail;
@@ -3655,7 +3663,7 @@ if(scheduledNotifs.emailEnabled){                    addNotifEntry({id:'N-'+Date
     <div style={{marginBottom:16}}>
       <label style={{display:'block',fontSize:12,fontWeight:600,color:'#4A5568',marginBottom:8}}>Allowed Senders</label>
       <div style={{display:'flex',flexWrap:'wrap',gap:8,marginBottom:12}}>
-        {waAllowedSenders.map(username => {
+        {(Array.isArray(waAllowedSenders) ? waAllowedSenders : []).map(username => {
           const user = users.find(u => u.username === username);
           return (
             <div key={username} style={{display:'flex',alignItems:'center',gap:6,padding:'6px 12px',background:'#E6F4ED',borderRadius:20,fontSize:12}}>
@@ -3745,7 +3753,7 @@ if(scheduledNotifs.emailEnabled){                    addNotifEntry({id:'N-'+Date
         </div>
         <div style={{display:'flex',gap:8}}>
           <button onClick={async ()=>{if(window.confirm('Clear ALL orders? This cannot be undone. Bulk group totals will be reset to 0.')){setOrders([]);setBulkGroups(prev=>prev.map(bg=>({...bg,items:0,totalCost:0})));const ok=await api.clearOrders();if(ok){bulkGroups.forEach(bg=>dbSync(api.updateBulkGroup(bg.id,{items:0,totalCost:0}),'Bulk group reset'));notify('Orders Cleared','All orders removed, bulk group totals reset','info');}else{notify('Clear Failed','Orders not cleared from database','error');}}}} style={{padding:'6px 14px',background:'#DC2626',color:'#fff',border:'none',borderRadius:6,fontSize:11,fontWeight:600,cursor:'pointer',display:'flex',alignItems:'center',gap:4}}><Trash2 size={12}/> Clear All Orders</button>
-          <button onClick={async ()=>{if(window.confirm('Clear ALL bulk batches and their orders? This cannot be undone.')){const orderCount=orders.filter(o=>bulkGroups.some(bg=>{const norm=s=>String(s||'').replace(/_/g,' ').trim();return norm(bg.month)===norm(o.month);})).length;setOrders(prev=>{const norm=s=>String(s||'').replace(/_/g,' ').trim();const bgMonths=new Set(bulkGroups.map(bg=>norm(bg.month)));return prev.filter(o=>!bgMonths.has(norm(o.month)));});setBulkGroups([]);const results=await Promise.all([api.clearBulkGroups(),api.clearOrders()]);if(results.every(r=>r)){notify('Bulk Orders Cleared',`All bulk batches + ${orderCount} orders removed`,'info');}else{notify('Clear Failed','Some data not cleared from database','error');}}}} style={{padding:'6px 14px',background:'#7C3AED',color:'#fff',border:'none',borderRadius:6,fontSize:11,fontWeight:600,cursor:'pointer',display:'flex',alignItems:'center',gap:4}}><Trash2 size={12}/> Clear Bulk Batches</button>
+          <button onClick={async ()=>{if(window.confirm('Clear ALL bulk batches and their associated orders? This cannot be undone.')){const norm=s=>String(s||'').replace(/_/g,' ').trim();const bgMonths=new Set(bulkGroups.map(bg=>norm(bg.month)));const bgOrderIds=orders.filter(o=>bgMonths.has(norm(o.month))).map(o=>o.id);setOrders(prev=>prev.filter(o=>!bgMonths.has(norm(o.month))));setBulkGroups([]);const deleteResults=await Promise.all([api.clearBulkGroups(),...bgOrderIds.map(id=>api.deleteOrder(id))]);const failed=deleteResults.filter(r=>!r).length;if(failed===0){notify('Bulk Orders Cleared',`All bulk batches + ${bgOrderIds.length} orders removed`,'info');}else{notify('Partial Clear',`Bulk batches cleared but ${failed} order deletes failed`,'warning');}}}} style={{padding:'6px 14px',background:'#7C3AED',color:'#fff',border:'none',borderRadius:6,fontSize:11,fontWeight:600,cursor:'pointer',display:'flex',alignItems:'center',gap:4}}><Trash2 size={12}/> Clear Bulk Batches</button>
           <button onClick={async ()=>{if(window.confirm('Clear ALL data (orders + bulk batches + notifications)? This cannot be undone.')){setOrders([]);setBulkGroups([]);setNotifLog([]);setPendingApprovals([]);const results=await Promise.all([api.clearOrders(),api.clearBulkGroups(),api.clearNotifLog(),api.clearApprovals()]);Object.values(LS_KEYS).forEach(k=>localStorage.removeItem(k));const failed=results.filter(r=>!r).length;if(failed===0){notify('All Data Cleared','System reset complete','info');}else{notify('Partial Clear',`${results.length-failed}/${results.length} clears succeeded. Some data may not be cleared from database.`,'warning');}}}} style={{padding:'6px 14px',background:'#374151',color:'#fff',border:'none',borderRadius:6,fontSize:11,fontWeight:600,cursor:'pointer',display:'flex',alignItems:'center',gap:4}}><RefreshCw size={12}/> Reset All Data</button>
         </div>
       </div>
