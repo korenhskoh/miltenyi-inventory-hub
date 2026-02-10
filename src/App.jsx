@@ -296,6 +296,7 @@ const [selectedUser, setSelectedUser] = useState(null);
     return { total:t, received:r, backOrder:b, pending:p, totalCost:tc, fulfillmentRate: tq>0?((tr/tq)*100).toFixed(1):0 };
   }, [orders]);
   const filteredOrders = useMemo(() => orders.filter(o => {
+    if (o.bulkGroupId) return false;
     const ms = !search || o.materialNo.toLowerCase().includes(search.toLowerCase()) || o.description.toLowerCase().includes(search.toLowerCase()) || o.orderBy.toLowerCase().includes(search.toLowerCase());
     return ms && (statusFilter==='All'||o.status===statusFilter);
   }), [orders, search, statusFilter]);
@@ -2156,8 +2157,8 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
 {/* ═══════════ SINGLE ORDERS ═══════════ */}
 {page==='orders'&&(<div>
   <div style={{display:'flex',justifyContent:'space-between',marginBottom:20}}>
-    <div style={{display:'flex',gap:8}}>{['All','Received','Back Order','Processed','Pending'].map(s=><button key={s} onClick={()=>setStatusFilter(s)} style={{padding:'6px 14px',borderRadius:20,border:statusFilter===s?'none':'1px solid #E2E8F0',background:statusFilter===s?'#0B7A3E':'#fff',color:statusFilter===s?'#fff':'#64748B',fontSize:12,fontWeight:500,cursor:'pointer',fontFamily:'inherit'}}>{s} ({s==='All'?orders.length:orders.filter(o=>o.status===s).length})</button>)}</div>
-    <div style={{display:'flex',gap:8}}><button className="bs" onClick={()=>setShowBulkOrder(true)}><Layers size={14}/> Bulk Order</button><button className="bp" onClick={()=>setShowNewOrder(true)}><Plus size={14}/> New Order</button></div>
+    <div style={{display:'flex',gap:8}}>{['All','Received','Back Order','Processed','Pending'].map(s=><button key={s} onClick={()=>setStatusFilter(s)} style={{padding:'6px 14px',borderRadius:20,border:statusFilter===s?'none':'1px solid #E2E8F0',background:statusFilter===s?'#0B7A3E':'#fff',color:statusFilter===s?'#fff':'#64748B',fontSize:12,fontWeight:500,cursor:'pointer',fontFamily:'inherit'}}>{s} ({s==='All'?orders.filter(o=>!o.bulkGroupId).length:orders.filter(o=>!o.bulkGroupId&&o.status===s).length})</button>)}</div>
+    <div style={{display:'flex',gap:8}}><button className="bp" onClick={()=>setShowNewOrder(true)}><Plus size={14}/> New Order</button></div>
   </div>
   {hasPermission('deleteOrders') && <BatchBar count={selOrders.size} onClear={()=>setSelOrders(new Set())}>
     <BatchBtn onClick={()=>batchStatusOrders('Received')} bg="#059669" icon={CheckCircle}>Received</BatchBtn>
@@ -2520,7 +2521,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
 
   {/* Bulk Orders to Check */}
   <div className="card" style={{padding:'20px 24px',marginBottom:20}}>
-    <h3 style={{fontSize:15,fontWeight:700,marginBottom:16}}>Single / Bulk Orders - Arrival Verification</h3>
+    <h3 style={{fontSize:15,fontWeight:700,marginBottom:16}}>Bulk Orders - Arrival Verification</h3>
     <div style={{display:'grid',gap:12}}>
       {bulkGroups.map(bg=>{
         const bgOrders = orders.filter(o=>o.bulkGroupId===bg.id);
