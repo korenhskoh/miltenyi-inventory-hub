@@ -3229,32 +3229,17 @@ if(scheduledNotifs.emailEnabled){                    addNotifEntry({id:'N-'+Date
         </div>
       </div>
 
-      <div className="grid-3" style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:12}}>
+      <div className="grid-2" style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
         <div>
           <label style={{display:'block',fontSize:12,fontWeight:600,color:'#4A5568',marginBottom:6}}>Order Date</label>
           <input type="date" value={editingOrder.orderDate||''} onChange={e=>setEditingOrder(prev=>({...prev,orderDate:e.target.value}))} style={{width:'100%',padding:'10px 12px',borderRadius:8,border:'1.5px solid #E2E8F0',fontSize:13,boxSizing:'border-box'}}/>
         </div>
-        <div>
-          <label style={{display:'block',fontSize:12,fontWeight:600,color:'#4A5568',marginBottom:6}}>Qty Received</label>
-          <input type="number" min="0" value={editingOrder.qtyReceived||0} onChange={e=>{const recv=parseInt(e.target.value)||0;setEditingOrder(prev=>({...prev,qtyReceived:recv,backOrder:recv-(prev.quantity||0)}));}} style={{width:'100%',padding:'10px 12px',borderRadius:8,border:'1.5px solid #E2E8F0',fontSize:13,boxSizing:'border-box'}}/>
-        </div>
-        <div>
-          <label style={{display:'block',fontSize:12,fontWeight:600,color:'#4A5568',marginBottom:6}}>Back Order</label>
-          <div className="mono" style={{padding:'10px 12px',borderRadius:8,background:editingOrder.backOrder<0?'#FEE2E2':'#D1FAE5',fontSize:13,fontWeight:600,color:editingOrder.backOrder<0?'#DC2626':'#059669'}}>{editingOrder.backOrder||0}</div>
-        </div>
-      </div>
-
-      <div className="grid-2" style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
         <div>
           <label style={{display:'block',fontSize:12,fontWeight:600,color:'#4A5568',marginBottom:6}}>Linked Bulk Batch</label>
           <select value={editingOrder.bulkGroupId||''} onChange={e=>{const bgId=e.target.value||null;const bg=bulkGroups.find(g=>g.id===bgId);setEditingOrder(prev=>({...prev,bulkGroupId:bgId,month:bg?bg.month:prev.month}));}} style={{width:'100%',padding:'10px 12px',borderRadius:8,border:'1.5px solid #E2E8F0',fontSize:13,boxSizing:'border-box'}}>
             <option value="">-- None (Individual) --</option>
             {bulkGroups.map(bg=><option key={bg.id} value={bg.id}>{bg.month} ({bg.id})</option>)}
           </select>
-        </div>
-        <div>
-          <label style={{display:'block',fontSize:12,fontWeight:600,color:'#4A5568',marginBottom:6}}>Arrival Date</label>
-          <input type="date" value={editingOrder.arrivalDate||''} onChange={e=>setEditingOrder(prev=>({...prev,arrivalDate:e.target.value}))} style={{width:'100%',padding:'10px 12px',borderRadius:8,border:'1.5px solid #E2E8F0',fontSize:13,boxSizing:'border-box'}}/>
         </div>
       </div>
 
@@ -3268,7 +3253,8 @@ if(scheduledNotifs.emailEnabled){                    addNotifEntry({id:'N-'+Date
         <button onClick={()=>{
           const updatedOrders = orders.map(o=>o.id===editingOrder.id?editingOrder:o);
           setOrders(updatedOrders);
-          dbSync(api.updateOrder(editingOrder.id, editingOrder), 'Order edit not saved');
+          const {qtyReceived, backOrder, arrivalDate, ...editFields} = editingOrder;
+          dbSync(api.updateOrder(editingOrder.id, editFields), 'Order edit not saved');
           // Recalculate parent bulk group totals if this order belongs to one
           if(editingOrder.bulkGroupId){
             const bg = bulkGroups.find(g=>g.id===editingOrder.bulkGroupId);
