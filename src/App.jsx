@@ -309,14 +309,12 @@ const [selectedUser, setSelectedUser] = useState(null);
   const statusPieData = useMemo(() => [{name:'Received',value:stats.received,color:'#0B7A3E'},{name:'Back Order',value:stats.backOrder,color:'#C53030'},{name:'Processed/Pending',value:stats.pending,color:'#2563EB'}], [stats]);
   const allOrdersMonths = useMemo(() => [...new Set([...orders.map(o=>o.month),...bulkGroups.map(g=>g.month)].filter(Boolean))].sort(), [orders, bulkGroups]);
   const allOrdersCombined = useMemo(() => {
-    const singles = orders.filter(o=>!o.bulkGroupId).map(o=>({...o, orderType:'Single'}));
-    const bulks = bulkGroups.map(g=>({id:g.id, orderType:'Bulk', description:`Bulk Batch — ${g.month}`, materialNo:`${g.items} items`, quantity:g.items, totalCost:g.totalCost, orderBy:g.createdBy, orderDate:g.date, status:g.status, month:g.month, listPrice:0}));
-    let combined = [...singles, ...bulks];
+    let combined = orders.map(o=>({...o, orderType: o.bulkGroupId ? 'Bulk' : 'Single'}));
     if (allOrdersTypeFilter!=='All') combined = combined.filter(o=>o.orderType===(allOrdersTypeFilter==='Single Orders'?'Single':'Bulk'));
     if (allOrdersMonth!=='All') combined = combined.filter(o=>o.month===allOrdersMonth);
     if (allOrdersStatus!=='All') combined = combined.filter(o=>o.status===allOrdersStatus);
     return combined;
-  }, [orders, bulkGroups, allOrdersTypeFilter, allOrdersMonth, allOrdersStatus]);
+  }, [orders, allOrdersTypeFilter, allOrdersMonth, allOrdersStatus]);
   const topItems = useMemo(() => {
     const m={}; orders.forEach(o=>{if(!m[o.description])m[o.description]={name:o.description.length>30?o.description.slice(0,30)+'...':o.description,qty:0,cost:0};m[o.description].qty+=(Number(o.quantity)||0);m[o.description].cost+=(Number(o.totalCost)||0);});
     return Object.values(m).sort((a,b)=>b.cost-a.cost).slice(0,8);
@@ -2072,7 +2070,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
     {[
       {l:'Total Orders',v:allOrdersCombined.length,i:Package,c:'#0B7A3E',bg:'linear-gradient(135deg,#006837,#0B9A4E)'},
       {l:'Single Orders',v:orders.filter(o=>!o.bulkGroupId).length,i:Package,c:'#2563EB',bg:'linear-gradient(135deg,#1E40AF,#3B82F6)'},
-      {l:'Bulk Batches',v:bulkGroups.length,i:Layers,c:'#7C3AED',bg:'linear-gradient(135deg,#5B21B6,#7C3AED)'},
+      {l:'Bulk Orders',v:orders.filter(o=>o.bulkGroupId).length,i:Layers,c:'#7C3AED',bg:'linear-gradient(135deg,#5B21B6,#7C3AED)'},
       {l:'Total Value',v:fmt(allOrdersCombined.reduce((s,o)=>s+(Number(o.totalCost)||0),0)),i:DollarSign,c:'#D97706',bg:'linear-gradient(135deg,#92400E,#D97706)'}
     ].map((s,i)=>(
       <div key={i} style={{background:s.bg,borderRadius:12,padding:'20px 22px',color:'#fff'}}>
@@ -2114,7 +2112,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
     <div className="table-wrap" style={{overflowX:'auto'}}><table style={{width:'100%',borderCollapse:'collapse',fontSize:12.5}}>
       <thead><tr style={{background:'#F8FAFB'}}>{['Type','ID','Material / Items','Description','Qty','Total Cost','By','Date','Status'].map(h=><th key={h} className="th" style={{whiteSpace:'nowrap'}}>{h}</th>)}</tr></thead>
       <tbody>{allOrdersCombined.length===0?<tr><td colSpan={9} style={{textAlign:'center',padding:40,color:'#94A3B8',fontSize:13}}>No orders match the selected filters</td></tr>:allOrdersCombined.map((o,i)=>(
-        <tr key={o.id} className="tr" style={{borderBottom:'1px solid #F7FAFC',background:i%2===0?'#fff':'#FCFCFD',cursor:'pointer'}} onClick={()=>{if(o.orderType==='Single'){openOrderInNewTab(o);}else{setPage('bulkorders');setExpandedMonth(o.month);}}}>
+        <tr key={o.id} className="tr" style={{borderBottom:'1px solid #F7FAFC',background:i%2===0?'#fff':'#FCFCFD',cursor:'pointer'}} onClick={()=>openOrderInNewTab(o)}>
           <td className="td"><Pill bg={o.orderType==='Single'?'#DBEAFE':'#EDE9FE'} color={o.orderType==='Single'?'#2563EB':'#7C3AED'}>{o.orderType==='Single'?'Single':'Bulk'}</Pill></td>
           <td className="td mono" style={{fontSize:11,fontWeight:600,color:o.orderType==='Single'?'#0B7A3E':'#4338CA'}}>{o.id}</td>
           <td className="td mono" style={{fontSize:11,color:'#64748B'}}>{o.materialNo||'—'}</td>
@@ -2140,8 +2138,8 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
     <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(180px,1fr))',gap:12}}>
       {allOrdersMonths.map(month=>{
         const singleCount=orders.filter(o=>!o.bulkGroupId&&o.month===month).length;
-        const bulkCount=bulkGroups.filter(g=>g.month===month).length;
-        const totalCost=orders.filter(o=>o.month===month).reduce((s,o)=>s+(Number(o.totalCost)||0),0)+bulkGroups.filter(g=>g.month===month).reduce((s,g)=>s+(Number(g.totalCost)||0),0);
+        const bulkCount=orders.filter(o=>o.bulkGroupId&&o.month===month).length;
+        const totalCost=orders.filter(o=>o.month===month).reduce((s,o)=>s+(Number(o.totalCost)||0),0);
         return <div key={month} onClick={()=>setAllOrdersMonth(allOrdersMonth===month?'All':month)} style={{padding:14,borderRadius:10,background:allOrdersMonth===month?'#E6F4ED':'#F8FAFB',border:allOrdersMonth===month?'2px solid #0B7A3E':'1px solid #E8ECF0',cursor:'pointer',transition:'all 0.2s'}}>
           <div style={{fontWeight:600,fontSize:12,marginBottom:8,color:'#0B7A3E',display:'flex',alignItems:'center',gap:6}}><Calendar size={12}/> {month}</div>
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:4,fontSize:11}}>
