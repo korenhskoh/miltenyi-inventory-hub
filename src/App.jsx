@@ -259,6 +259,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
 
   // ── Loading State ──
   const [isLoading, setIsLoading] = useState(true);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   // ── Auto-logout on token expiry ──
   useEffect(() => {
@@ -339,9 +340,15 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
   const [newOrder, setNewOrder] = useState({ materialNo:'', description:'', quantity:1, listPrice:0, orderBy:'', remark:'' });
   const handleMaterialLookup = (matNo) => { const p=catalogLookup[matNo]; if(p) { setNewOrder(prev=>({...prev,materialNo:matNo,description:p.d,listPrice:p.tp})); notify('Part Found',`${p.d}`, 'success'); }};
   const handleSubmitOrder = async () => {
-    const o = { id:`ORD-${2000+orders.length}`,...newOrder, quantity:parseInt(newOrder.quantity), listPrice:parseFloat(newOrder.listPrice), totalCost:parseFloat(newOrder.listPrice)*parseInt(newOrder.quantity), orderDate:new Date().toISOString().slice(0,10), arrivalDate:'', qtyReceived:0, backOrder:-parseInt(newOrder.quantity), engineer:'', emailFull:'', emailBack:'', status:'Pending Approval', approvalStatus:'pending', approvalSentDate:new Date().toISOString().slice(0,10), month:'Feb_2026', year:'2026' };
+    if (!newOrder.materialNo?.trim()) { notify('Missing Field','Material No. is required','warning'); return; }
+    if (!newOrder.description?.trim()) { notify('Missing Field','Description is required','warning'); return; }
+    if (!parseInt(newOrder.quantity) || parseInt(newOrder.quantity) < 1) { notify('Invalid Quantity','Quantity must be at least 1','warning'); return; }
+    if (!newOrder.orderBy) { notify('Missing Field','Order By is required','warning'); return; }
+    setIsSubmitting(true);
+    const o = { id:`ORD-${2000+orders.length}`,...newOrder, quantity:parseInt(newOrder.quantity), listPrice:parseFloat(newOrder.listPrice)||0, totalCost:(parseFloat(newOrder.listPrice)||0)*parseInt(newOrder.quantity), orderDate:new Date().toISOString().slice(0,10), arrivalDate:'', qtyReceived:0, backOrder:-parseInt(newOrder.quantity), engineer:'', emailFull:'', emailBack:'', status:'Pending Approval', approvalStatus:'pending', approvalSentDate:new Date().toISOString().slice(0,10), month:'Feb_2026', year:'2026' };
     setOrders(prev=>[o,...prev]); setShowNewOrder(false); setNewOrder({materialNo:'',description:'',quantity:1,listPrice:0,orderBy:'',remark:''});
-    api.createOrder(o);
+    await api.createOrder(o);
+    setIsSubmitting(false);
     notify('Order Created',`${o.description} — ${o.quantity} units`,'success');
 
     // Auto-notify if rules enabled
@@ -372,10 +379,18 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
 
   // ── Duplicate Order ──
   const handleDuplicateOrder = (sourceOrder) => {
+    // Strip existing [Copy] or [Copy-N] prefix to get base name
+    const baseName = sourceOrder.description.replace(/^\[Copy(?:-\d+)?\]\s*/, '');
+    // Count existing copies of this base name
+    const copyCount = orders.filter(o => {
+      const stripped = o.description.replace(/^\[Copy(?:-\d+)?\]\s*/, '');
+      return stripped === baseName && o.description !== baseName;
+    }).length;
+    const copyNum = copyCount + 1;
     const copy = {
       ...sourceOrder,
       id: `ORD-${2000+orders.length}`,
-      description: sourceOrder.description.startsWith('[Copy] ') ? sourceOrder.description : `[Copy] ${sourceOrder.description}`,
+      description: `[Copy-${copyNum}] ${baseName}`,
       orderDate: new Date().toISOString().slice(0,10),
       arrivalDate: '',
       qtyReceived: 0,
@@ -388,7 +403,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
     };
     setOrders(prev=>[copy,...prev]);
     api.createOrder(copy);
-    notify('Order Duplicated',`[Copy] ${sourceOrder.description}`,'success');
+    notify('Order Duplicated',`[Copy-${copyNum}] ${baseName}`,'success');
   };
 
   // ── Approval Action Handler ──
@@ -724,7 +739,9 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
   };
   const handleBulkSubmit = async () => {
     const validItems = bulkItems.filter(i=>i.materialNo&&i.description);
-    if(!validItems.length) return;
+    if(!validItems.length) { notify('No Valid Items','Each item needs Material No. and Description','warning'); return; }
+    if(!bulkOrderBy) { notify('Missing Field','Order By is required','warning'); return; }
+    setIsSubmitting(true);
     const newOrders = validItems.map((item,idx)=>({
       id:`ORD-${2000+orders.length+idx}`, materialNo:item.materialNo, description:item.description,
       quantity:parseInt(item.quantity)||1, listPrice:parseFloat(item.listPrice)||0,
@@ -741,6 +758,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
     setBulkGroups(prev=>[bg,...prev]);
     api.createBulkGroup(bg);
     setShowBulkOrder(false); setBulkItems([{materialNo:'',description:'',quantity:1,listPrice:0}]); setBulkRemark('');
+    setIsSubmitting(false);
     notify('Bulk Order Created',`${newOrders.length} items for ${bulkMonth}`,'success');
 
     // Auto-notify if rules enabled
@@ -775,7 +793,9 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
   // ── Auth Handlers ──
   const handleLogin = async () => {
     if (!loginForm.username || !loginForm.password) { notify('Missing Fields','Please enter username and password','warning'); return; }
+    setIsSubmitting(true);
     const result = await api.login(loginForm.username, loginForm.password);
+    setIsSubmitting(false);
     if (result && result.user) {
       setCurrentUser(result.user);
       notify(`Welcome back, ${result.user.name}`, result.user.role==='admin'?'Admin access granted':'User access granted', 'success');
@@ -1265,7 +1285,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
             <div>
               <div style={{ marginBottom:16 }}><label style={{display:'block',fontSize:12,fontWeight:600,color:'#4A5568',marginBottom:6}}>Username</label><input value={loginForm.username} onChange={e=>setLoginForm(p=>({...p,username:e.target.value}))} placeholder="Enter username" onKeyDown={e=>e.key==='Enter'&&handleLogin()}/></div>
               <div style={{ marginBottom:24 }}><label style={{display:'block',fontSize:12,fontWeight:600,color:'#4A5568',marginBottom:6}}>Password</label><input type="password" value={loginForm.password} onChange={e=>setLoginForm(p=>({...p,password:e.target.value}))} placeholder="Enter password" onKeyDown={e=>e.key==='Enter'&&handleLogin()}/></div>
-              <button onClick={handleLogin} style={{ width:'100%',padding:'12px',borderRadius:10,border:'none',background:'linear-gradient(135deg,#006837,#00A550)',color:'#fff',fontSize:14,fontWeight:600,cursor:'pointer',fontFamily:'inherit',display:'flex',alignItems:'center',justifyContent:'center',gap:8 }}><Lock size={16}/> Sign In</button>
+              <button onClick={handleLogin} disabled={isSubmitting} style={{ width:'100%',padding:'12px',borderRadius:10,border:'none',background:'linear-gradient(135deg,#006837,#00A550)',color:'#fff',fontSize:14,fontWeight:600,cursor:'pointer',fontFamily:'inherit',display:'flex',alignItems:'center',justifyContent:'center',gap:8,opacity:isSubmitting?.6:1 }}><Lock size={16}/> {isSubmitting?'Signing in...':'Sign In'}</button>
               <div style={{ textAlign:'center', marginTop:20, fontSize:13, color:'#64748B' }}>
                 Don't have an account? <button onClick={()=>setAuthView('register')} style={{ background:'none',border:'none',color:'#0B7A3E',fontWeight:600,cursor:'pointer',fontFamily:'inherit',fontSize:13 }}>Register here</button>
               </div>
@@ -3093,7 +3113,7 @@ if(scheduledNotifs.emailEnabled){                    setNotifLog(prev=>[{id:'N-'
             </div>
           </div>
 
-          <div style={{display:'flex',gap:10}}><button className="bp" onClick={handleSubmitOrder} style={{flex:1}}><Send size={14}/> Submit & Notify</button><button className="bs" onClick={()=>setShowNewOrder(false)}>Cancel</button></div>
+          <div style={{display:'flex',gap:10}}><button className="bp" onClick={handleSubmitOrder} disabled={isSubmitting} style={{flex:1,opacity:isSubmitting?.6:1}}><Send size={14}/> {isSubmitting?'Submitting...':'Submit & Notify'}</button><button className="bs" onClick={()=>setShowNewOrder(false)}>Cancel</button></div>
         </div>
       </div></div>}
 
@@ -3149,7 +3169,7 @@ if(scheduledNotifs.emailEnabled){                    setNotifLog(prev=>[{id:'N-'
           </div>
         </div>
 
-        <div style={{display:'flex',gap:10}}><button className="bp" onClick={handleBulkSubmit} style={{flex:1}}><Layers size={14}/> Create Bulk Order & Notify ({bulkItems.filter(i=>i.materialNo&&i.description).length} items)</button><button className="bs" onClick={()=>setShowBulkOrder(false)}>Cancel</button></div>
+        <div style={{display:'flex',gap:10}}><button className="bp" onClick={handleBulkSubmit} disabled={isSubmitting} style={{flex:1,opacity:isSubmitting?.6:1}}><Layers size={14}/> {isSubmitting?'Creating...':'Create Bulk Order & Notify'} ({bulkItems.filter(i=>i.materialNo&&i.description).length} items)</button><button className="bs" onClick={()=>setShowBulkOrder(false)}>Cancel</button></div>
       </div></div>}
 
       {/* ═══ ORDER DETAIL MODAL ═══ */}

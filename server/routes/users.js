@@ -2,8 +2,13 @@ import { Router } from 'express';
 import bcrypt from 'bcryptjs';
 import { query } from '../db.js';
 import { snakeToCamel, camelToSnake } from '../utils.js';
+import { pickAllowed, requireFields } from '../validation.js';
 
 const router = Router();
+
+// Allowed fields for user create/update
+const USER_FIELDS = ['username', 'password_hash', 'name', 'email', 'phone', 'role', 'status'];
+const USER_REQUIRED = ['username'];
 
 // GET / - list all users (EXCLUDE password_hash)
 router.get('/', async (req, res) => {
@@ -27,7 +32,10 @@ router.post('/', async (req, res) => {
       delete body.password;
     }
 
-    const snakeBody = camelToSnake(body);
+    const snakeBody = pickAllowed(camelToSnake(body), USER_FIELDS);
+    const err = requireFields(snakeBody, USER_REQUIRED);
+    if (err) return res.status(400).json({ error: err });
+
     const keys = Object.keys(snakeBody);
     const values = Object.values(snakeBody);
     const placeholders = keys.map((_, i) => `$${i + 1}`);
@@ -51,7 +59,7 @@ router.put('/:id', async (req, res) => {
       delete body.password;
     }
 
-    const snakeBody = camelToSnake(body);
+    const snakeBody = pickAllowed(camelToSnake(body), USER_FIELDS);
     const keys = Object.keys(snakeBody);
     const values = Object.values(snakeBody);
 
