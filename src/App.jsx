@@ -1354,19 +1354,92 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
       { name: 'CliniMACS Prodigy', img: 'https://static.miltenyibiotec.com/asset/150655405641/document_6lhcj1t1b1kfq1qsb2g4rh3i15/CliniMACS-Prodigy-background-image.png', color: '#00C853' },
       { name: 'MACSQuant Tyto', img: 'https://static.miltenyibiotec.com/asset/150655405641/document_h1s2lq6ed1kbhaqolj2djt5ifs/MACSQuant-Tyto-background-image.png', color: '#43A047' },
       { name: 'MACS MicroBeads', img: 'https://static.miltenyibiotec.com/asset/150655405641/document_b1qfgt49b5odr5l0aemeh6c5cd/CD4-MicroBeads-human.png', color: '#2E7D32' },
+      { name: 'MACSima Imaging', img: 'https://static.miltenyibiotec.com/asset/150655405641/document_oijt0l5j7t05bnpvr7ss1c0m5e/MACSima-Imaging-System-background-image.png', color: '#1565C0' },
+      { name: 'UltraMicroscope', img: 'https://static.miltenyibiotec.com/asset/150655405641/document_cpii0p39bkitccn4s5qvd17q4c/UltraMicroscope-Blaze-background-image.png', color: '#7B1FA2' },
+      // Inner ring
       { name: 'MultiMACS M96', img: 'https://static.miltenyibiotec.com/asset/150655405641/document_fmui4o2ru1b7h0f4ehj7dh1p3d/MultiMACS-M96-background-image.png', color: '#1B5E20' },
       { name: 'MACSQuant X', img: 'https://static.miltenyibiotec.com/asset/150655405641/document_u0p9jfp72t7mu7sfp4cjr1ia6a/MACSQuant-X-background-image.png', color: '#388E3C' },
       { name: 'gentleMACS Dissociator', img: 'https://static.miltenyibiotec.com/asset/150655405641/document_eoei7gq4o9c6d2jj4h1bia6g30/gentleMACS-Dissociator-background-image.png', color: '#4CAF50' },
+      { name: 'CliniMACS Plus', img: 'https://static.miltenyibiotec.com/asset/150655405641/document_qjkh16r9b9fn9oqhk2p6l1a74u/CliniMACS-Plus-background-image.png', color: '#E65100' },
+      { name: 'autoMACS Neo', img: 'https://static.miltenyibiotec.com/asset/150655405641/document_h7hqt4b9v5qf9e6p7rn8q5m2vd/autoMACS-Neo-background-image.png', color: '#00838F' },
+      { name: 'CellCelector', img: 'https://static.miltenyibiotec.com/asset/150655405641/document_1b0f5v2pu3h5c9mp3p67qhk4h4/CellCelector-background-image.png', color: '#AD1457' },
     ];
 
     return (
-      <div style={{ minHeight:'100vh', background:'#001a0f', display:'flex', alignItems:'center', justifyContent:'center', fontFamily:"'DM Sans',system-ui,sans-serif", overflow:'hidden', position:'relative' }}>
+      <div style={{ minHeight:'100vh', display:'flex', alignItems:'center', justifyContent:'center', fontFamily:"'DM Sans',system-ui,sans-serif", overflow:'hidden', position:'relative', animation:'colorCycleBase 12s ease-in-out infinite' }}>
         <style>{`
           @import url('https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,600;9..40,700&family=Sora:wght@300;400;500;600;700&display=swap');
 
           @keyframes fadeUp { from { opacity:0;transform:translateY(30px); } to { opacity:1;transform:translateY(0); } }
           @keyframes fadeIn { from { opacity:0; } to { opacity:1; } }
           @keyframes shimmer { 0% { background-position: -200% center; } 100% { background-position: 200% center; } }
+
+          /* ── Color cycling: green → blue → orange → green (12s loop) ── */
+          @keyframes colorCycleBg {
+            0%, 100%  { background: radial-gradient(ellipse 80% 60% at 30% 40%, rgba(0,168,80,0.18) 0%, transparent 70%), radial-gradient(ellipse 60% 50% at 70% 60%, rgba(0,104,55,0.14) 0%, transparent 70%), radial-gradient(ellipse 40% 30% at 50% 80%, rgba(0,200,83,0.10) 0%, transparent 60%), linear-gradient(180deg, #001a0f 0%, #002815 40%, #001a0f 100%); }
+            33%       { background: radial-gradient(ellipse 80% 60% at 30% 40%, rgba(30,100,210,0.18) 0%, transparent 70%), radial-gradient(ellipse 60% 50% at 70% 60%, rgba(20,70,160,0.14) 0%, transparent 70%), radial-gradient(ellipse 40% 30% at 50% 80%, rgba(60,140,255,0.10) 0%, transparent 60%), linear-gradient(180deg, #0a0f1a 0%, #0d1928 40%, #0a0f1a 100%); }
+            66%       { background: radial-gradient(ellipse 80% 60% at 30% 40%, rgba(230,130,20,0.18) 0%, transparent 70%), radial-gradient(ellipse 60% 50% at 70% 60%, rgba(200,100,10,0.14) 0%, transparent 70%), radial-gradient(ellipse 40% 30% at 50% 80%, rgba(255,170,50,0.10) 0%, transparent 60%), linear-gradient(180deg, #1a0f00 0%, #281800 40%, #1a0f00 100%); }
+          }
+          @keyframes colorCycleBase {
+            0%, 100%  { background-color: #001a0f; }
+            33%       { background-color: #0a0f1a; }
+            66%       { background-color: #1a0f00; }
+          }
+          @keyframes colorCycleGrid {
+            0%, 100%  { background-image: linear-gradient(rgba(0,168,80,0.05) 1px, transparent 1px), linear-gradient(90deg, rgba(0,168,80,0.05) 1px, transparent 1px); }
+            33%       { background-image: linear-gradient(rgba(30,100,210,0.05) 1px, transparent 1px), linear-gradient(90deg, rgba(30,100,210,0.05) 1px, transparent 1px); }
+            66%       { background-image: linear-gradient(rgba(230,130,20,0.05) 1px, transparent 1px), linear-gradient(90deg, rgba(230,130,20,0.05) 1px, transparent 1px); }
+          }
+          @keyframes colorCycleParticle {
+            0%, 100%  { background: rgba(0,200,83,0.35); }
+            33%       { background: rgba(60,140,255,0.35); }
+            66%       { background: rgba(255,170,50,0.35); }
+          }
+          @keyframes colorCycleGlow1 {
+            0%, 100%  { background: radial-gradient(circle, rgba(0,200,83,0.10) 0%, transparent 70%); }
+            33%       { background: radial-gradient(circle, rgba(60,140,255,0.10) 0%, transparent 70%); }
+            66%       { background: radial-gradient(circle, rgba(255,170,50,0.10) 0%, transparent 70%); }
+          }
+          @keyframes colorCycleGlow2 {
+            0%, 100%  { background: radial-gradient(circle, rgba(0,104,55,0.12) 0%, transparent 70%); }
+            33%       { background: radial-gradient(circle, rgba(20,70,160,0.12) 0%, transparent 70%); }
+            66%       { background: radial-gradient(circle, rgba(200,100,10,0.12) 0%, transparent 70%); }
+          }
+          @keyframes colorCycleImgShadow {
+            0%, 100%  { filter: brightness(1.1) drop-shadow(0 4px 8px rgba(0,200,83,0.3)); }
+            33%       { filter: brightness(1.1) drop-shadow(0 4px 8px rgba(60,140,255,0.3)); }
+            66%       { filter: brightness(1.1) drop-shadow(0 4px 8px rgba(255,170,50,0.3)); }
+          }
+          @keyframes colorCycleBtn {
+            0%, 100%  { background: linear-gradient(135deg, #006837 0%, #00A550 50%, #00C853 100%); box-shadow: 0 4px 16px rgba(0,165,80,0.3); }
+            33%       { background: linear-gradient(135deg, #1446A0 0%, #1E64D2 50%, #3C8CFF 100%); box-shadow: 0 4px 16px rgba(30,100,210,0.3); }
+            66%       { background: linear-gradient(135deg, #C86414 0%, #E68214 50%, #FFAA32 100%); box-shadow: 0 4px 16px rgba(230,130,20,0.3); }
+          }
+          @keyframes colorCycleFocus {
+            0%, 100%  { border-color: #00A550; box-shadow: 0 0 0 4px rgba(0,165,80,0.12), 0 2px 8px rgba(0,165,80,0.08); }
+            33%       { border-color: #1E64D2; box-shadow: 0 0 0 4px rgba(30,100,210,0.12), 0 2px 8px rgba(30,100,210,0.08); }
+            66%       { border-color: #E68214; box-shadow: 0 0 0 4px rgba(230,130,20,0.12), 0 2px 8px rgba(230,130,20,0.08); }
+          }
+          @keyframes colorCycleLink {
+            0%, 100%  { color: #00A550; }
+            33%       { color: #1E64D2; }
+            66%       { color: #E68214; }
+          }
+          @keyframes colorCycleAccentLine {
+            0%, 100%  { background: linear-gradient(90deg, #00A550, #00C853); }
+            33%       { background: linear-gradient(90deg, #1E64D2, #3C8CFF); }
+            66%       { background: linear-gradient(90deg, #E68214, #FFAA32); }
+          }
+          @keyframes colorCycleLogoBg {
+            0%, 100%  { background: linear-gradient(135deg,#006837,#00A550); }
+            33%       { background: linear-gradient(135deg,#1446A0,#1E64D2); }
+            66%       { background: linear-gradient(135deg,#C86414,#E68214); }
+          }
+          @keyframes colorCycleLogoShadow {
+            0%, 100%  { box-shadow: 0 8px 24px rgba(0,104,55,0.25); }
+            33%       { box-shadow: 0 8px 24px rgba(30,100,210,0.25); }
+            66%       { box-shadow: 0 8px 24px rgba(230,130,20,0.25); }
+          }
 
           @keyframes orbit3d {
             0%   { transform: rotateY(0deg)   translateZ(320px) rotateY(0deg)   scale(0.7); opacity: 0.3; }
@@ -1389,22 +1462,17 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
 
           .login-bg-gradient {
             position: absolute; inset: 0; z-index: 0;
-            background: radial-gradient(ellipse 80% 60% at 30% 40%, rgba(0,168,80,0.15) 0%, transparent 70%),
-                        radial-gradient(ellipse 60% 50% at 70% 60%, rgba(0,104,55,0.12) 0%, transparent 70%),
-                        radial-gradient(ellipse 40% 30% at 50% 80%, rgba(0,200,83,0.08) 0%, transparent 60%),
-                        linear-gradient(180deg, #001a0f 0%, #002815 40%, #001a0f 100%);
+            animation: colorCycleBg 12s ease-in-out infinite;
           }
           .login-grid-overlay {
             position: absolute; inset: 0; z-index: 1;
-            background-image: linear-gradient(rgba(0,168,80,0.04) 1px, transparent 1px),
-                              linear-gradient(90deg, rgba(0,168,80,0.04) 1px, transparent 1px);
             background-size: 60px 60px;
-            animation: grid-pulse 8s ease-in-out infinite;
+            animation: colorCycleGrid 12s ease-in-out infinite, grid-pulse 8s ease-in-out infinite;
           }
           .login-particles { position: absolute; inset: 0; z-index: 1; overflow: hidden; }
           .login-particle {
-            position: absolute; border-radius: 50%; background: rgba(0,200,83,0.3);
-            animation: float-gentle 6s ease-in-out infinite;
+            position: absolute; border-radius: 50%;
+            animation: float-gentle 6s ease-in-out infinite, colorCycleParticle 12s ease-in-out infinite;
           }
 
           .product-orbit-container {
@@ -1441,8 +1509,8 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
           }
           .product-card-3d-inner img {
             width: 70px; height: 70px; object-fit: contain;
-            filter: brightness(1.1) drop-shadow(0 4px 8px rgba(0,200,83,0.3));
             margin-bottom: 8px;
+            animation: colorCycleImgShadow 12s ease-in-out infinite;
           }
           .product-card-3d-inner .product-label {
             font-size: 8px; font-weight: 600; color: rgba(255,255,255,0.7);
@@ -1468,32 +1536,35 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
             background: #fff; width: 100%; box-sizing: border-box;
           }
           .login-input:focus {
-            border-color: #00A550;
-            box-shadow: 0 0 0 4px rgba(0,165,80,0.12), 0 2px 8px rgba(0,165,80,0.08);
+            animation: colorCycleFocus 12s ease-in-out infinite;
           }
           .login-input::placeholder { color: #A0AEC0; }
 
           .login-btn-primary {
             width: 100%; padding: 13px; border-radius: 12px; border: none;
-            background: linear-gradient(135deg, #006837 0%, #00A550 50%, #00C853 100%);
             background-size: 200% auto;
             color: #fff; font-size: 14px; font-weight: 600;
             cursor: pointer; font-family: 'DM Sans', sans-serif;
             display: flex; align-items: center; justify-content: center; gap: 8px;
-            transition: all 0.3s ease;
-            box-shadow: 0 4px 16px rgba(0,165,80,0.3);
+            transition: transform 0.3s ease;
+            animation: colorCycleBtn 12s ease-in-out infinite;
           }
-          .login-btn-primary:hover { background-position: right center; box-shadow: 0 6px 24px rgba(0,165,80,0.4); transform: translateY(-1px); }
+          .login-btn-primary:hover { transform: translateY(-1px); filter: brightness(1.1); }
           .login-btn-primary:active { transform: translateY(0px); }
 
-          .login-link { background: none; border: none; color: #00A550; font-weight: 600; cursor: pointer; font-family: 'DM Sans', sans-serif; font-size: 13px; transition: color 0.2s; }
-          .login-link:hover { color: #006837; }
+          .login-link { background: none; border: none; font-weight: 600; cursor: pointer; font-family: 'DM Sans', sans-serif; font-size: 13px; animation: colorCycleLink 12s ease-in-out infinite; }
 
           .login-header-line {
             width: 40px; height: 3px; border-radius: 2px;
-            background: linear-gradient(90deg, #00A550, #00C853);
-            margin: 0 auto 16px; animation: shimmer 3s ease-in-out infinite;
-            background-size: 200% auto;
+            margin: 0 auto 16px;
+            animation: colorCycleAccentLine 12s ease-in-out infinite;
+          }
+
+          .login-logo-box {
+            width: 64px; height: 64px; border-radius: 18px;
+            display: inline-flex; align-items: center; justify-content: center;
+            margin-bottom: 16px; overflow: hidden;
+            animation: colorCycleLogoBg 12s ease-in-out infinite, colorCycleLogoShadow 12s ease-in-out infinite;
           }
 
           @media (max-width: 768px) {
@@ -1526,16 +1597,16 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
         </div>
 
         {/* Ambient glow orbs */}
-        <div style={{ position:'absolute', width:400, height:400, borderRadius:'50%', background:'radial-gradient(circle, rgba(0,200,83,0.08) 0%, transparent 70%)', top:'10%', left:'5%', animation:'pulse-glow 6s ease-in-out infinite', zIndex:1 }} />
-        <div style={{ position:'absolute', width:300, height:300, borderRadius:'50%', background:'radial-gradient(circle, rgba(0,104,55,0.1) 0%, transparent 70%)', bottom:'15%', right:'10%', animation:'pulse-glow 8s ease-in-out infinite 2s', zIndex:1 }} />
+        <div style={{ position:'absolute', width:400, height:400, borderRadius:'50%', top:'10%', left:'5%', animation:'colorCycleGlow1 12s ease-in-out infinite, pulse-glow 6s ease-in-out infinite', zIndex:1 }} />
+        <div style={{ position:'absolute', width:300, height:300, borderRadius:'50%', bottom:'15%', right:'10%', animation:'colorCycleGlow2 12s ease-in-out infinite, pulse-glow 8s ease-in-out infinite 2s', zIndex:1 }} />
 
         {/* 3D Product Orbit */}
         <div className="product-orbit-container">
           <div className="product-orbit-ring">
-            {miltenyiProducts.slice(0,5).map((p,i) => (
+            {miltenyiProducts.slice(0,7).map((p,i) => (
               <div key={i} className="product-card-3d" style={{
-                animation: `orbit3d 40s linear infinite`,
-                animationDelay: `${i * -8}s`,
+                animation: `orbit3d 45s linear infinite`,
+                animationDelay: `${i * -(45/7)}s`,
               }}>
                 <div className="product-card-3d-inner">
                   <img src={p.img} alt={p.name} onError={e => { e.target.style.display='none'; }} />
@@ -1545,10 +1616,10 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
             ))}
           </div>
           <div className="product-orbit-ring-2">
-            {miltenyiProducts.slice(5).map((p,i) => (
+            {miltenyiProducts.slice(7).map((p,i) => (
               <div key={i} className="product-card-3d" style={{
-                animation: `orbit3d-reverse 30s linear infinite`,
-                animationDelay: `${i * -10}s`,
+                animation: `orbit3d-reverse 35s linear infinite`,
+                animationDelay: `${i * -(35/6)}s`,
               }}>
                 <div className="product-card-3d-inner">
                   <img src={p.img} alt={p.name} onError={e => { e.target.style.display='none'; }} />
@@ -1563,7 +1634,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
         <div className="login-card-glass">
           <div style={{ textAlign:'center', marginBottom:32 }}>
             <div className="login-header-line" />
-            <div style={{ width:64,height:64,borderRadius:18,background:customLogo?'#fff':'linear-gradient(135deg,#006837,#00A550)',display:'inline-flex',alignItems:'center',justifyContent:'center',marginBottom:16,overflow:'hidden',border:customLogo?'2px solid #E8EDF2':'none',boxShadow:'0 8px 24px rgba(0,104,55,0.2)' }}>
+            <div className={customLogo?'':'login-logo-box'} style={customLogo?{width:64,height:64,borderRadius:18,background:'#fff',display:'inline-flex',alignItems:'center',justifyContent:'center',marginBottom:16,overflow:'hidden',border:'2px solid #E8EDF2',boxShadow:'0 8px 24px rgba(0,0,0,0.1)'}:{}}>
               {customLogo?<img src={customLogo} alt="Logo" style={{width:'100%',height:'100%',objectFit:'contain'}}/>:<Package size={30} color="#fff"/>}
             </div>
             <h1 style={{ fontSize:24,fontWeight:700,color:'#0F172A',letterSpacing:-0.5,fontFamily:"'Sora','DM Sans',sans-serif",margin:0 }}>Miltenyi Inventory Hub</h1>
