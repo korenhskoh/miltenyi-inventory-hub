@@ -35,14 +35,21 @@ function authHeadersGet() {
 
 // Handle 401 responses (token expired/invalid)
 let _onAuthError = null;
+let _authErrorFired = false;
 function onAuthError(callback) {
   _onAuthError = callback;
+}
+function resetAuthError() {
+  _authErrorFired = false;
 }
 
 function handleResponse(res) {
   if (res.status === 401 || res.status === 403) {
     setToken(null);
-    if (_onAuthError) _onAuthError();
+    if (_onAuthError && !_authErrorFired) {
+      _authErrorFired = true;
+      _onAuthError();
+    }
   }
   return res;
 }
@@ -541,6 +548,7 @@ const api = {
   getMe,
   getPublicLogo,
   onAuthError,
+  resetAuthError,
   getOrders,
   createOrder,
   updateOrder,

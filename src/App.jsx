@@ -341,9 +341,11 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
           if (meResult && meResult.user) {
             setCurrentUser(meResult.user); // Fresh data from DB (permissions, role, etc.)
           } else {
-            // Token invalid/expired — clear session
+            // Token invalid/expired — clear session silently (no toast on first load)
             setCurrentUser(null);
             api.logout();
+            api.resetAuthError(); // suppress any 401 toasts from data-load calls below
+            return; // skip data loading — not authenticated
           }
         } catch {
           // API unreachable — keep localStorage user as fallback
@@ -883,6 +885,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
     setIsSubmitting(false);
     if (result && result.user) {
       setCurrentUser(result.user);
+      api.resetAuthError(); // allow future session-expired toasts
       notify(`Welcome back, ${result.user.name}`, result.user.role==='admin'?'Admin access granted':'User access granted', 'success');
     } else {
       // Fallback: local login when backend/DB is unavailable
