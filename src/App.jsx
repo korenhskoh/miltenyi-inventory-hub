@@ -3245,6 +3245,13 @@ if(scheduledNotifs.emailEnabled){                    addNotifEntry({id:'N-'+Date
             setOrders(prev=>prev.map(o=>o.bulkGroupId===selectedBulkGroup.id?{...o,status:newStatus,approvalStatus}:o));
             linkedOrders.forEach(o=>dbSync(api.updateOrder(o.id,{status:newStatus,approvalStatus}),'Order approval cascade failed'));
           }
+          // If manually set to Completed, mark all linked orders as Received with full arrival data
+          if(oldStatus!==newStatus&&newStatus==='Completed'){
+            const today=new Date().toISOString().slice(0,10);
+            const linkedOrders=orders.filter(o=>o.bulkGroupId===selectedBulkGroup.id);
+            setOrders(prev=>prev.map(o=>o.bulkGroupId===selectedBulkGroup.id?{...o,status:'Received',approvalStatus:'approved',qtyReceived:o.quantity,backOrder:0,arrivalDate:o.arrivalDate||today}:o));
+            linkedOrders.forEach(o=>dbSync(api.updateOrder(o.id,{status:'Received',approvalStatus:'approved',qtyReceived:o.quantity,backOrder:0,arrivalDate:o.arrivalDate||today}),'Order received cascade failed'));
+          }
           setSelectedBulkGroup(null);notify('Bulk Order Updated','Changes saved to database','success');
         }} style={{flex:1,padding:'10px',borderRadius:8,border:'none',background:'linear-gradient(135deg,#4338CA,#6366F1)',color:'#fff',fontWeight:600,fontSize:13,cursor:'pointer'}}>Save Changes</button>
         {(selectedBulkGroup.status==='Pending Approval'||selectedBulkGroup.status==='Pending')&&(
@@ -3357,10 +3364,15 @@ if(scheduledNotifs.emailEnabled){                    addNotifEntry({id:'N-'+Date
       <div style={{display:'flex',gap:10,marginTop:8}}>
         <button onClick={()=>setEditingOrder(null)} style={{flex:1,padding:'12px',borderRadius:8,border:'1.5px solid #E2E8F0',background:'#fff',color:'#64748B',fontWeight:600,fontSize:13,cursor:'pointer'}}>Cancel</button>
         <button onClick={()=>{
-          const updatedOrders = orders.map(o=>o.id===editingOrder.id?editingOrder:o);
+          // If manually set to Received, auto-fill arrival fields so it skips Part Arrival
+          const isManualReceived = editingOrder.status === 'Received';
+          const finalOrder = isManualReceived ? {...editingOrder, qtyReceived: editingOrder.quantity, backOrder: 0, arrivalDate: editingOrder.arrivalDate || new Date().toISOString().slice(0,10), approvalStatus: 'approved'} : editingOrder;
+          const updatedOrders = orders.map(o=>o.id===editingOrder.id?finalOrder:o);
           setOrders(updatedOrders);
-          const {qtyReceived, backOrder, arrivalDate, ...editFields} = editingOrder;
-          dbSync(api.updateOrder(editingOrder.id, editFields), 'Order edit not saved');
+          const {qtyReceived, backOrder, arrivalDate, ...editFields} = finalOrder;
+          // Include arrival fields when manually marking as Received
+          const payload = isManualReceived ? {...editFields, qtyReceived, backOrder, arrivalDate} : editFields;
+          dbSync(api.updateOrder(editingOrder.id, payload), 'Order edit not saved');
           // Recalculate parent bulk group totals if this order belongs to one
           if(editingOrder.bulkGroupId){
             const bg = bulkGroups.find(g=>g.id===editingOrder.bulkGroupId);
