@@ -347,11 +347,13 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
       if (apiApprovals !== null) setPendingApprovals(apiApprovals);
       if (apiConfig && Object.keys(apiConfig).length) {
         if (apiConfig.emailConfig) setEmailConfig(apiConfig.emailConfig);
-        if (apiConfig.emailTemplates) setEmailTemplates(apiConfig.emailTemplates);
+        if (apiConfig.emailTemplates && typeof apiConfig.emailTemplates === 'object') setEmailTemplates(apiConfig.emailTemplates);
         if (apiConfig.priceConfig) setPriceConfig(apiConfig.priceConfig);
         if (apiConfig.waNotifyRules) setWaNotifyRules(apiConfig.waNotifyRules);
         if (apiConfig.scheduledNotifs) setScheduledNotifs(apiConfig.scheduledNotifs);
         if (apiConfig.customLogo) setCustomLogo(apiConfig.customLogo);
+        if (apiConfig.aiBotConfig) setAiBotConfig(apiConfig.aiBotConfig);
+        if (apiConfig.waAutoReply !== undefined) setWaAutoReply(apiConfig.waAutoReply);
       }
       if (apiCatalog !== null) { setPartsCatalog(apiCatalog.map(p => ({ m: p.materialNo, d: p.description, c: p.category, sg: p.sgPrice, dist: p.distPrice, tp: p.transferPrice, rsp: p.rspEur }))); }
       console.log('Data loaded from database');
@@ -463,11 +465,13 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
           const cfg = await api.getConfig();
           if (cfg && Object.keys(cfg).length) {
             if (cfg.emailConfig) setEmailConfig(cfg.emailConfig);
-            if (cfg.emailTemplates) setEmailTemplates(cfg.emailTemplates);
+            if (cfg.emailTemplates && typeof cfg.emailTemplates === 'object') setEmailTemplates(cfg.emailTemplates);
             if (cfg.priceConfig) setPriceConfig(cfg.priceConfig);
             if (cfg.waNotifyRules) setWaNotifyRules(cfg.waNotifyRules);
             if (cfg.scheduledNotifs) setScheduledNotifs(cfg.scheduledNotifs);
             if (cfg.customLogo) setCustomLogo(cfg.customLogo);
+            if (cfg.aiBotConfig) setAiBotConfig(cfg.aiBotConfig);
+            if (cfg.waAutoReply !== undefined) setWaAutoReply(cfg.waAutoReply);
           }
           break;
         }
@@ -2982,17 +2986,34 @@ if(scheduledNotifs.emailEnabled){                    addNotifEntry({id:'N-'+Date
 </div>)}
 
 {/* Edit Bulk Order Modal */}
-{selectedBulkGroup&&(<div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.5)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:9999}} onClick={()=>setSelectedBulkGroup(null)}>
+{selectedBulkGroup&&(()=>{
+  const normMonth=s=>String(s||'').replace(/_/g,' ').trim();
+  const bgOrders=orders.filter(o=>normMonth(o.month)===normMonth(selectedBulkGroup.month));
+  const actualItems=bgOrders.length;
+  const actualCost=bgOrders.reduce((s,o)=>s+(o.totalCost||0),0);
+  return (<div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.5)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:9999}} onClick={()=>setSelectedBulkGroup(null)}>
   <div className="modal-box" onClick={e=>e.stopPropagation()} style={{background:'#fff',borderRadius:16,padding:24,width:500,maxWidth:'94vw',maxHeight:'80vh',overflow:'auto',boxShadow:'0 25px 50px -12px rgba(0,0,0,0.25)'}}>
     <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:20}}>
       <h3 style={{fontSize:16,fontWeight:700,display:'flex',alignItems:'center',gap:8}}><Layers size={18} color="#4338CA"/> Edit Bulk Order</h3>
       <button onClick={()=>setSelectedBulkGroup(null)} style={{background:'none',border:'none',cursor:'pointer'}}><X size={20} color="#64748B"/></button>
     </div>
     <div style={{display:'grid',gap:16}}>
-      <div style={{padding:12,background:'#F8FAFB',borderRadius:8}}>
-        <div style={{fontSize:11,color:'#64748B',marginBottom:4}}>Batch ID</div>
-        <div className="mono" style={{fontWeight:700,color:'#4338CA'}}>{selectedBulkGroup.id}</div>
+      <div style={{padding:12,background:'#F8FAFB',borderRadius:8,display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+        <div>
+          <div style={{fontSize:11,color:'#64748B',marginBottom:4}}>Batch ID</div>
+          <div className="mono" style={{fontWeight:700,color:'#4338CA'}}>{selectedBulkGroup.id}</div>
+        </div>
+        <div style={{textAlign:'right'}}>
+          <div style={{fontSize:11,color:'#64748B',marginBottom:4}}>Actual from Orders</div>
+          <div style={{fontSize:12,fontWeight:600}}>{actualItems} items | {fmt(actualCost)}</div>
+        </div>
       </div>
+      {(selectedBulkGroup.items!==actualItems||Math.abs((selectedBulkGroup.totalCost||0)-actualCost)>0.01)&&(
+        <div style={{padding:10,background:'#FEF3C7',borderRadius:8,fontSize:11,color:'#92400E',display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+          <span><AlertTriangle size={12} style={{verticalAlign:'middle',marginRight:4}}/>Items/cost mismatch with actual orders</span>
+          <button onClick={()=>setSelectedBulkGroup(prev=>({...prev,items:actualItems,totalCost:actualCost}))} style={{padding:'4px 10px',background:'#D97706',color:'#fff',border:'none',borderRadius:6,fontSize:10,fontWeight:600,cursor:'pointer'}}>Sync</button>
+        </div>
+      )}
       <div className="grid-2" style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
         <div>
           <label style={{display:'block',fontSize:12,fontWeight:600,color:'#4A5568',marginBottom:6}}>Month</label>
@@ -3034,7 +3055,22 @@ if(scheduledNotifs.emailEnabled){                    addNotifEntry({id:'N-'+Date
       </div>
       <div style={{display:'flex',gap:10,marginTop:8}}>
         <button onClick={()=>setSelectedBulkGroup(null)} style={{flex:1,padding:'10px',borderRadius:8,border:'1.5px solid #E2E8F0',background:'#fff',color:'#64748B',fontWeight:600,fontSize:13,cursor:'pointer'}}>Cancel</button>
-        <button onClick={()=>{setBulkGroups(prev=>prev.map(g=>g.id===selectedBulkGroup.id?selectedBulkGroup:g));dbSync(api.updateBulkGroup(selectedBulkGroup.id,selectedBulkGroup),'Bulk group edit not saved');setSelectedBulkGroup(null);notify('Bulk Order Updated','Changes saved to database','success');}} style={{flex:1,padding:'10px',borderRadius:8,border:'none',background:'linear-gradient(135deg,#4338CA,#6366F1)',color:'#fff',fontWeight:600,fontSize:13,cursor:'pointer'}}>Save Changes</button>
+        <button onClick={()=>{
+          const origGroup = bulkGroups.find(g=>g.id===selectedBulkGroup.id);
+          const oldMonth = origGroup?.month||'';
+          const newMonth = selectedBulkGroup.month;
+          setBulkGroups(prev=>prev.map(g=>g.id===selectedBulkGroup.id?selectedBulkGroup:g));
+          dbSync(api.updateBulkGroup(selectedBulkGroup.id,selectedBulkGroup),'Bulk group edit not saved');
+          // If month changed, update all orders that belonged to the old month
+          if(oldMonth && newMonth && oldMonth!==newMonth){
+            const norm=s=>String(s||'').replace(/_/g,' ').trim();
+            setOrders(prev=>prev.map(o=>norm(o.month)===norm(oldMonth)?{...o,month:newMonth}:o));
+            orders.filter(o=>norm(o.month)===norm(oldMonth)).forEach(o=>{
+              dbSync(api.updateOrder(o.id,{month:newMonth}),'Order month sync failed');
+            });
+          }
+          setSelectedBulkGroup(null);notify('Bulk Order Updated','Changes saved to database','success');
+        }} style={{flex:1,padding:'10px',borderRadius:8,border:'none',background:'linear-gradient(135deg,#4338CA,#6366F1)',color:'#fff',fontWeight:600,fontSize:13,cursor:'pointer'}}>Save Changes</button>
         {(selectedBulkGroup.status==='Pending Approval'||selectedBulkGroup.status==='Pending')&&(
           <div style={{gridColumn:'span 2',marginTop:8,padding:12,background:'#FEF3C7',borderRadius:8,fontSize:11,color:'#92400E'}}>
             <strong>Tip:</strong> If you made changes to a pending order, consider resending the approval email to notify the approver of the updates.
@@ -3043,7 +3079,7 @@ if(scheduledNotifs.emailEnabled){                    addNotifEntry({id:'N-'+Date
       </div>
     </div>
   </div>
-</div>)}
+</div>);})()}
 
 
 
@@ -3157,8 +3193,24 @@ if(scheduledNotifs.emailEnabled){                    addNotifEntry({id:'N-'+Date
       <div style={{display:'flex',gap:10,marginTop:8}}>
         <button onClick={()=>setEditingOrder(null)} style={{flex:1,padding:'12px',borderRadius:8,border:'1.5px solid #E2E8F0',background:'#fff',color:'#64748B',fontWeight:600,fontSize:13,cursor:'pointer'}}>Cancel</button>
         <button onClick={()=>{
-          setOrders(prev=>prev.map(o=>o.id===editingOrder.id?editingOrder:o));
+          const updatedOrders = orders.map(o=>o.id===editingOrder.id?editingOrder:o);
+          setOrders(updatedOrders);
           dbSync(api.updateOrder(editingOrder.id, editingOrder), 'Order edit not saved');
+          // Recalculate parent bulk group totals if this order belongs to one
+          if(editingOrder.month){
+            const norm=s=>String(s||'').replace(/_/g,' ').trim();
+            const bg = bulkGroups.find(g=>norm(g.month)===norm(editingOrder.month));
+            if(bg){
+              const monthOrders = updatedOrders.filter(o=>norm(o.month)===norm(bg.month));
+              const newItems = monthOrders.length;
+              const newTotalCost = monthOrders.reduce((s,o)=>s+(o.totalCost||0),0);
+              if(bg.items!==newItems||bg.totalCost!==newTotalCost){
+                const updatedBg = {...bg, items:newItems, totalCost:newTotalCost};
+                setBulkGroups(prev=>prev.map(g=>g.id===bg.id?updatedBg:g));
+                dbSync(api.updateBulkGroup(bg.id,{items:newItems,totalCost:newTotalCost}),'Bulk group tally not synced');
+              }
+            }
+          }
           notify('Order Updated',editingOrder.id+' has been updated','success');
           setEditingOrder(null);
         }} style={{flex:1,padding:'12px',borderRadius:8,border:'none',background:'linear-gradient(135deg,#2563EB,#3B82F6)',color:'#fff',fontWeight:600,fontSize:13,cursor:'pointer'}}>Save Changes</button>
@@ -3678,7 +3730,7 @@ if(scheduledNotifs.emailEnabled){                    addNotifEntry({id:'N-'+Date
         }}/>
       </label>
       <button onClick={async ()=>{if(window.confirm(`Clear all ${partsCatalog.length} parts from catalog? You will need to re-upload a catalog file.`)){setPartsCatalog([]);const ok=await api.clearCatalog();if(ok){notify('Catalog Cleared','Parts catalog cleared from database','success');}else{notify('Warning','Catalog cleared locally but failed to clear from database. Changes may not persist.','error');}}}} style={{padding:'8px 16px',background:'#DC2626',color:'#fff',border:'none',borderRadius:8,fontSize:12,fontWeight:600,cursor:'pointer',display:'flex',alignItems:'center',gap:6}}><Trash2 size={14}/> Clear Catalog</button>
-      <button onClick={async ()=>{const cat=await api.getCatalog();if(cat.length){setPartsCatalog(cat.map(p=>({m:p.materialNo,d:p.description,c:p.category,sg:p.sgPrice,dist:p.distPrice,tp:p.transferPrice,rsp:p.rspEur})));notify('Catalog Reloaded',`${cat.length} parts loaded from database`,'success');}else{notify('No Catalog','No parts found in database. Please upload a catalog file.','error');}}} style={{padding:'8px 16px',background:'#059669',color:'#fff',border:'none',borderRadius:8,fontSize:12,fontWeight:600,cursor:'pointer',display:'flex',alignItems:'center',gap:6}}><RefreshCw size={14}/> Reload from DB</button>
+      <button onClick={async ()=>{const cat=await api.getCatalog();if(cat&&cat.length){setPartsCatalog(cat.map(p=>({m:p.materialNo,d:p.description,c:p.category,sg:p.sgPrice,dist:p.distPrice,tp:p.transferPrice,rsp:p.rspEur})));notify('Catalog Reloaded',`${cat.length} parts loaded from database`,'success');}else{notify('No Catalog','No parts found in database. Please upload a catalog file.','error');}}} style={{padding:'8px 16px',background:'#059669',color:'#fff',border:'none',borderRadius:8,fontSize:12,fontWeight:600,cursor:'pointer',display:'flex',alignItems:'center',gap:6}}><RefreshCw size={14}/> Reload from DB</button>
     </div>
   </div>}
 
