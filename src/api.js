@@ -44,7 +44,8 @@ function resetAuthError() {
 }
 
 function handleResponse(res) {
-  if (res.status === 401 || res.status === 403) {
+  // Only clear token on 401 (unauthenticated), NOT 403 (unauthorized/business logic)
+  if (res.status === 401) {
     setToken(null);
     if (_onAuthError && !_authErrorFired) {
       _authErrorFired = true;
@@ -125,10 +126,10 @@ async function getOrders(filters = {}) {
     }
     const qs = params.toString();
     const res = handleResponse(await fetch(`${BASE}/api/orders${qs ? `?${qs}` : ''}`, { headers: authHeadersGet() }));
-    if (!res.ok) return [];
+    if (!res.ok) return null;
     return await res.json();
   } catch {
-    return [];
+    return null;
   }
 }
 
@@ -187,10 +188,10 @@ async function bulkUpdateOrderStatus(ids, status) {
 async function getBulkGroups() {
   try {
     const res = handleResponse(await fetch(`${BASE}/api/bulk-groups`, { headers: authHeadersGet() }));
-    if (!res.ok) return [];
+    if (!res.ok) return null;
     return await res.json();
   } catch {
-    return [];
+    return null;
   }
 }
 
@@ -236,10 +237,10 @@ async function deleteBulkGroup(id) {
 async function getUsers() {
   try {
     const res = handleResponse(await fetch(`${BASE}/api/users`, { headers: authHeadersGet() }));
-    if (!res.ok) return [];
+    if (!res.ok) return null;
     return await res.json();
   } catch {
-    return [];
+    return null;
   }
 }
 
@@ -285,10 +286,10 @@ async function deleteUser(id) {
 async function getStockChecks() {
   try {
     const res = handleResponse(await fetch(`${BASE}/api/stock-checks`, { headers: authHeadersGet() }));
-    if (!res.ok) return [];
+    if (!res.ok) return null;
     return await res.json();
   } catch {
-    return [];
+    return null;
   }
 }
 
@@ -325,10 +326,10 @@ async function updateStockCheck(id, updates) {
 async function getNotifLog() {
   try {
     const res = handleResponse(await fetch(`${BASE}/api/notif-log`, { headers: authHeadersGet() }));
-    if (!res.ok) return [];
+    if (!res.ok) return null;
     return await res.json();
   } catch {
-    return [];
+    return null;
   }
 }
 
@@ -352,10 +353,10 @@ async function getApprovals(status) {
   try {
     const qs = status ? `?status=${encodeURIComponent(status)}` : '';
     const res = handleResponse(await fetch(`${BASE}/api/pending-approvals${qs}`, { headers: authHeadersGet() }));
-    if (!res.ok) return [];
+    if (!res.ok) return null;
     return await res.json();
   } catch {
-    return [];
+    return null;
   }
 }
 
@@ -428,10 +429,10 @@ async function setConfigKey(key, value) {
 async function getCatalog() {
   try {
     const res = handleResponse(await fetch(`${BASE}/api/catalog`, { headers: authHeadersGet() }));
-    if (!res.ok) return [];
+    if (!res.ok) return null;
     return await res.json();
   } catch {
-    return [];
+    return null;
   }
 }
 

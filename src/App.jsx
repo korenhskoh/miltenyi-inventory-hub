@@ -183,19 +183,26 @@ const [selectedUser, setSelectedUser] = useState(null);
     setTimeout(() => setNotifs(prev => prev.slice(1)), 4000);
   }, []);
 
+  // DB sync wrapper: shows toast on API failure (non-blocking)
+  const dbSync = useCallback((promise, msg) => {
+    Promise.resolve(promise).then(r => {
+      if (r === null || r === false) notify('Save Failed', msg || 'Failed to save to database. Please retry.', 'error');
+    }).catch(() => notify('Save Failed', msg || 'Failed to save to database. Please retry.', 'error'));
+  }, []);
+
   // Persist helpers: update local state AND save to DB
   const addNotifEntry = useCallback((entry) => {
     setNotifLog(prev=>[entry,...prev]);
-    api.createNotifEntry(entry);
-  }, []);
+    dbSync(api.createNotifEntry(entry), 'Notification log not saved');
+  }, [dbSync]);
   const addApproval = useCallback((entry) => {
     setPendingApprovals(prev=>[entry,...prev]);
-    api.createApproval(entry);
-  }, []);
+    dbSync(api.createApproval(entry), 'Approval not saved');
+  }, [dbSync]);
   const addStockCheck = useCallback((entry) => {
     setStockChecks(prev=>[entry,...prev]);
-    api.createStockCheck(entry);
-  }, []);
+    dbSync(api.createStockCheck(entry), 'Stock check not saved');
+  }, [dbSync]);
 
   const isAdmin = currentUser?.role === 'admin';
 
@@ -325,18 +332,19 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
   const LS_KEYS = { orders: 'mih_orders', bulkGroups: 'mih_bulkGroups', emailConfig: 'mih_emailConfig', emailTemplates: 'mih_emailTemplates', priceConfig: 'mih_priceConfig', notifLog: 'mih_notifLog', pendingApprovals: 'mih_pendingApprovals', users: 'mih_users', waNotifyRules: 'mih_waNotifyRules', scheduledNotifs: 'mih_scheduledNotifs', customLogo: 'mih_customLogo', stockChecks: 'mih_stockChecks' };
 
   // Shared function to load all app data from DB
+  // Uses !== null checks: null = API failed (skip), [] = DB empty (set empty state)
   const loadAppData = useCallback(async () => {
     try {
       const [apiOrders, apiBulk, apiUsers, apiChecks, apiNotifs, apiApprovals, apiConfig, apiCatalog] = await Promise.all([
         api.getOrders(), api.getBulkGroups(), api.getUsers(), api.getStockChecks(),
         api.getNotifLog(), api.getApprovals(), api.getConfig(), api.getCatalog()
       ]);
-      if (apiOrders.length) setOrders(apiOrders);
-      if (apiBulk.length) setBulkGroups(apiBulk);
-      if (apiUsers.length) setUsers(apiUsers);
-      if (apiChecks.length) setStockChecks(apiChecks);
-      if (apiNotifs.length) setNotifLog(apiNotifs);
-      if (apiApprovals.length) setPendingApprovals(apiApprovals);
+      if (apiOrders !== null) setOrders(apiOrders);
+      if (apiBulk !== null) setBulkGroups(apiBulk);
+      if (apiUsers !== null) setUsers(apiUsers);
+      if (apiChecks !== null) setStockChecks(apiChecks);
+      if (apiNotifs !== null) setNotifLog(apiNotifs);
+      if (apiApprovals !== null) setPendingApprovals(apiApprovals);
       if (apiConfig && Object.keys(apiConfig).length) {
         if (apiConfig.emailConfig) setEmailConfig(apiConfig.emailConfig);
         if (apiConfig.emailTemplates) setEmailTemplates(apiConfig.emailTemplates);
@@ -345,7 +353,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
         if (apiConfig.scheduledNotifs) setScheduledNotifs(apiConfig.scheduledNotifs);
         if (apiConfig.customLogo) setCustomLogo(apiConfig.customLogo);
       }
-      if (apiCatalog.length) { setPartsCatalog(apiCatalog.map(p => ({ m: p.materialNo, d: p.description, c: p.category, sg: p.sgPrice, dist: p.distPrice, tp: p.transferPrice, rsp: p.rspEur }))); }
+      if (apiCatalog !== null) { setPartsCatalog(apiCatalog.map(p => ({ m: p.materialNo, d: p.description, c: p.category, sg: p.sgPrice, dist: p.distPrice, tp: p.transferPrice, rsp: p.rspEur }))); }
       console.log('Data loaded from database');
       return true;
     } catch (e) {
@@ -465,7 +473,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
         }
         case 'catalog': {
           const cat = await api.getCatalog();
-          if (cat && cat.length) {
+          if (cat !== null) {
             setPartsCatalog(cat.map(p => ({ m: p.materialNo, d: p.description, c: p.category, sg: p.sgPrice, dist: p.distPrice, tp: p.transferPrice, rsp: p.rspEur })));
           }
           break;
@@ -566,7 +574,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
       emailBack: '',
     };
     setOrders(prev=>[copy,...prev]);
-    api.createOrder(copy);
+    dbSync(api.createOrder(copy), 'Duplicated order not saved to database');
     notify('Order Duplicated',`[Copy-${copyNum}] ${baseName}`,'success');
   };
 
@@ -576,18 +584,18 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
     if (!approval) return;
 
     setPendingApprovals(prev=>prev.map(a=>a.id===approvalId?{...a,status:action,actionDate:new Date().toISOString().slice(0,10)}:a));
-    api.updateApproval(approvalId, {status:action,actionDate:new Date().toISOString().slice(0,10)});
+    dbSync(api.updateApproval(approvalId, {status:action,actionDate:new Date().toISOString().slice(0,10)}), 'Approval update not saved');
 
     if (action === 'approved') {
       // Update order status to Approved/Pending
       if (approval.orderType === 'single') {
         setOrders(prev=>prev.map(o=>o.id===approval.orderId?{...o,status:'Pending',approvalStatus:'approved'}:o));
-        api.updateOrder(approval.orderId, {status:'Pending',approvalStatus:'approved'});
+        dbSync(api.updateOrder(approval.orderId, {status:'Pending',approvalStatus:'approved'}), 'Order approval not saved');
       } else if (approval.orderType === 'bulk' && approval.orderIds) {
         setOrders(prev=>prev.map(o=>approval.orderIds.includes(o.id)?{...o,status:'Pending',approvalStatus:'approved'}:o));
         setBulkGroups(prev=>prev.map(g=>g.id===approval.orderId?{...g,status:'Approved'}:g));
-        api.bulkUpdateOrderStatus(approval.orderIds, 'Pending');
-        api.updateBulkGroup(approval.orderId, {status:'Approved'});
+        dbSync(api.bulkUpdateOrderStatus(approval.orderIds, 'Pending'), 'Bulk order status not saved');
+        dbSync(api.updateBulkGroup(approval.orderId, {status:'Approved'}), 'Bulk group approval not saved');
       }
       addNotifEntry({id:`N-${Date.now()}-${Math.random().toString(36).slice(2,6)}`,type:'approval',to:approval.requestedBy,subject:`Order ${approval.orderId} Approved`,date:new Date().toISOString().slice(0,10),status:'Approved'});
       notify('Order Approved',`${approval.orderId} has been approved`,'success');
@@ -595,12 +603,12 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
       // Update order status to Rejected
       if (approval.orderType === 'single') {
         setOrders(prev=>prev.map(o=>o.id===approval.orderId?{...o,status:'Rejected',approvalStatus:'rejected'}:o));
-        api.updateOrder(approval.orderId, {status:'Rejected',approvalStatus:'rejected'});
+        dbSync(api.updateOrder(approval.orderId, {status:'Rejected',approvalStatus:'rejected'}), 'Order rejection not saved');
       } else if (approval.orderType === 'bulk' && approval.orderIds) {
         setOrders(prev=>prev.map(o=>approval.orderIds.includes(o.id)?{...o,status:'Rejected',approvalStatus:'rejected'}:o));
         setBulkGroups(prev=>prev.map(g=>g.id===approval.orderId?{...g,status:'Rejected'}:g));
-        api.bulkUpdateOrderStatus(approval.orderIds, 'Rejected');
-        api.updateBulkGroup(approval.orderId, {status:'Rejected'});
+        dbSync(api.bulkUpdateOrderStatus(approval.orderIds, 'Rejected'), 'Bulk order rejection not saved');
+        dbSync(api.updateBulkGroup(approval.orderId, {status:'Rejected'}), 'Bulk group rejection not saved');
       }
       addNotifEntry({id:`N-${Date.now()}-${Math.random().toString(36).slice(2,6)}`,type:'approval',to:approval.requestedBy,subject:`Order ${approval.orderId} Rejected`,date:new Date().toISOString().slice(0,10),status:'Rejected'});
       notify('Order Rejected',`${approval.orderId} has been rejected`,'warning');
@@ -616,7 +624,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
     if (!selOrders.size || !window.confirm(`Delete ${selOrders.size} selected order(s)?`)) return;
     const ids = [...selOrders];
     setOrders(prev => prev.filter(o => !selOrders.has(o.id)));
-    ids.forEach(id => api.deleteOrder(id));
+    ids.forEach(id => dbSync(api.deleteOrder(id), 'Order delete not saved'));
     notify('Batch Delete', `${ids.length} orders deleted`, 'success');
     setSelOrders(new Set());
   };
@@ -624,7 +632,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
     if (!selOrders.size) return;
     const ids = [...selOrders];
     setOrders(prev => prev.map(o => selOrders.has(o.id) ? { ...o, status } : o));
-    api.bulkUpdateOrderStatus(ids, status);
+    dbSync(api.bulkUpdateOrderStatus(ids, status), 'Order status update not saved');
     notify('Batch Update', `${ids.length} orders → ${status}`, 'success');
     setSelOrders(new Set());
   };
@@ -634,7 +642,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
     if (!selBulk.size || !window.confirm(`Delete ${selBulk.size} bulk group(s)?`)) return;
     const ids = [...selBulk];
     setBulkGroups(prev => prev.filter(g => !selBulk.has(g.id)));
-    ids.forEach(id => api.deleteBulkGroup(id));
+    ids.forEach(id => dbSync(api.deleteBulkGroup(id), 'Bulk group delete not saved'));
     notify('Batch Delete', `${ids.length} bulk groups deleted`, 'success');
     setSelBulk(new Set());
   };
@@ -642,7 +650,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
     if (!selBulk.size) return;
     const ids = [...selBulk];
     setBulkGroups(prev => prev.map(g => selBulk.has(g.id) ? { ...g, status } : g));
-    ids.forEach(id => api.updateBulkGroup(id, { status }));
+    ids.forEach(id => dbSync(api.updateBulkGroup(id, { status }), 'Bulk group status not saved'));
     notify('Batch Update', `${ids.length} bulk groups → ${status}`, 'success');
     setSelBulk(new Set());
   };
@@ -652,7 +660,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
     if (!selUsers.size || !window.confirm(`Delete ${selUsers.size} user(s)?`)) return;
     const ids = [...selUsers];
     setUsers(prev => prev.filter(u => !selUsers.has(u.id)));
-    ids.forEach(id => api.deleteUser(id));
+    ids.forEach(id => dbSync(api.deleteUser(id), 'User delete not saved'));
     notify('Batch Delete', `${ids.length} users deleted`, 'success');
     setSelUsers(new Set());
   };
@@ -660,7 +668,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
     if (!selUsers.size) return;
     const ids = [...selUsers];
     setUsers(prev => prev.map(u => selUsers.has(u.id) ? { ...u, role } : u));
-    ids.forEach(id => api.updateUser(id, { role }));
+    ids.forEach(id => dbSync(api.updateUser(id, { role }), 'User role update not saved'));
     notify('Batch Update', `${ids.length} users → ${role}`, 'success');
     setSelUsers(new Set());
   };
@@ -668,7 +676,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
     if (!selUsers.size) return;
     const ids = [...selUsers];
     setUsers(prev => prev.map(u => selUsers.has(u.id) ? { ...u, status } : u));
-    ids.forEach(id => api.updateUser(id, { status }));
+    ids.forEach(id => dbSync(api.updateUser(id, { status }), 'User status not saved'));
     notify('Batch Update', `${ids.length} users → ${status}`, 'success');
     setSelUsers(new Set());
   };
@@ -678,7 +686,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
     if (!selStockChecks.size || !window.confirm(`Delete ${selStockChecks.size} stock check(s)?`)) return;
     const ids = [...selStockChecks];
     setStockChecks(prev => prev.filter(s => !selStockChecks.has(s.id)));
-    ids.forEach(id => api.deleteStockCheck(id));
+    ids.forEach(id => dbSync(api.deleteStockCheck(id), 'Stock check delete not saved'));
     notify('Batch Delete', `${selStockChecks.size} stock checks deleted`, 'success');
     setSelStockChecks(new Set());
   };
@@ -688,7 +696,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
     if (!selNotifs.size || !window.confirm(`Delete ${selNotifs.size} notification(s)?`)) return;
     const ids = [...selNotifs];
     setNotifLog(prev => prev.filter(n => !selNotifs.has(n.id)));
-    ids.forEach(id => api.deleteNotifEntry(id));
+    ids.forEach(id => dbSync(api.deleteNotifEntry(id), 'Notification delete not saved'));
     notify('Batch Delete', `${selNotifs.size} notifications deleted`, 'success');
     setSelNotifs(new Set());
   };
@@ -921,10 +929,10 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
     const bgId = `BG-${String(bulkGroups.length+1).padStart(3,'0')}`;
     const totalCost = newOrders.reduce((s,o)=>s+o.totalCost,0);
     setOrders(prev=>[...newOrders,...prev]);
-    newOrders.forEach(o => api.createOrder(o));
+    newOrders.forEach(o => dbSync(api.createOrder(o), 'Bulk order item not saved'));
     const bg = {id:bgId, month:bulkMonth, createdBy:bulkOrderBy, items:newOrders.length, totalCost, status:'Pending', date:new Date().toISOString().slice(0,10)};
     setBulkGroups(prev=>[bg,...prev]);
-    api.createBulkGroup(bg);
+    dbSync(api.createBulkGroup(bg), 'Bulk group not saved to database');
     setShowBulkOrder(false); setBulkItems([{materialNo:'',description:'',quantity:1,listPrice:0}]); setBulkRemark('');
     setIsSubmitting(false);
     notify('Bulk Order Created',`${newOrders.length} items for ${bulkMonth}`,'success');
@@ -1112,7 +1120,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
         const po = lastBotMsg.pendingOrder;
         const newOrd = { id: `ORD-${2000 + orders.length}`, ...po, totalCost: po.listPrice * po.quantity, orderDate: new Date().toISOString().slice(0, 10), arrivalDate: "", qtyReceived: 0, backOrder: -po.quantity, engineer: "", emailFull: "", emailBack: "", status: "Pending", orderBy: currentUser.name, month: "Feb_2026", year: "2026", remark: "Created via AI Assistant" };
         setOrders(prev => [newOrd, ...prev]);
-        api.createOrder(newOrd);
+        dbSync(api.createOrder(newOrd), 'AI order not saved to database');
         notify("Order Created", `${po.description} × ${po.quantity}`, "success");
         return { type: "success", text: `✅ **Order Created Successfully!**\n\n• Order ID: ${newOrd.id}\n• Item: ${po.description}\n• Quantity: ${po.quantity}\n• Total: ${fmt(newOrd.totalCost)}\n\nYou can track this order by asking "Status ${newOrd.id}"` };
       }
@@ -1351,11 +1359,11 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
 
   const confirmHistoryImport = () => {
     setOrders(prev => [...prev, ...historyImportData]);
-    historyImportData.forEach(o => api.createOrder(o));
+    historyImportData.forEach(o => dbSync(api.createOrder(o), 'History order not saved'));
     // Also add any bulk groups from Excel sheets
     if (window.__pendingBulkGroups && window.__pendingBulkGroups.length > 0) {
       setBulkGroups(prev => [...window.__pendingBulkGroups, ...prev]);
-      window.__pendingBulkGroups.forEach(g => api.createBulkGroup(g));
+      window.__pendingBulkGroups.forEach(g => dbSync(api.createBulkGroup(g), 'History bulk group not saved'));
       notify('History Imported', historyImportData.length + ' orders + ' + window.__pendingBulkGroups.length + ' bulk batches added', 'success');
       window.__pendingBulkGroups = null;
     } else {
@@ -1998,7 +2006,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
           <div style={{display:'flex',gap:4}}>
             {(hasPermission('editAllOrders')||o.orderBy===currentUser?.name)&&<button onClick={(e)=>{e.stopPropagation();setEditingOrder({...o});}} style={{background:'#2563EB',color:'#fff',border:'none',borderRadius:6,padding:'4px 8px',fontSize:10,cursor:'pointer',display:'flex',alignItems:'center',gap:3}}><Edit3 size={11}/> Edit</button>}
             <button onClick={(e)=>{e.stopPropagation();handleDuplicateOrder(o);}} style={{background:'#7C3AED',color:'#fff',border:'none',borderRadius:6,padding:'4px 8px',fontSize:10,cursor:'pointer',display:'flex',alignItems:'center',gap:3}}><Copy size={11}/></button>
-            {hasPermission('deleteOrders')&&<button onClick={(e)=>{e.stopPropagation();if(window.confirm(`Delete order ${o.id}?`)){setOrders(prev=>prev.filter(x=>x.id!==o.id));api.deleteOrder(o.id);notify('Deleted',o.id,'success');}}} style={{background:'#DC2626',color:'#fff',border:'none',borderRadius:6,padding:'4px 8px',fontSize:10,cursor:'pointer',display:'flex',alignItems:'center',gap:3}}><Trash2 size={11}/></button>}
+            {hasPermission('deleteOrders')&&<button onClick={(e)=>{e.stopPropagation();if(window.confirm(`Delete order ${o.id}?`)){setOrders(prev=>prev.filter(x=>x.id!==o.id));dbSync(api.deleteOrder(o.id),'Order delete not saved');notify('Deleted',o.id,'success');}}} style={{background:'#DC2626',color:'#fff',border:'none',borderRadius:6,padding:'4px 8px',fontSize:10,cursor:'pointer',display:'flex',alignItems:'center',gap:3}}><Trash2 size={11}/></button>}
           </div>
         </td>
       </tr>))}</tbody>
@@ -2041,7 +2049,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
             <div style={{display:'flex',gap:6}}>
               {(hasPermission('editAllBulkOrders')||g.createdBy===currentUser?.name)&&<button onClick={()=>setSelectedBulkGroup({...g})} style={{background:'#2563EB',color:'#fff',border:'none',borderRadius:6,padding:'4px 8px',fontSize:10,cursor:'pointer',display:'flex',alignItems:'center',gap:3}}><Edit3 size={11}/> Edit</button>}
               <button onClick={()=>setExpandedMonth(expandedMonth===g.month?null:g.month)} style={{background:expandedMonth===g.month?'#064E3B':'#0B7A3E',color:'#fff',border:'none',borderRadius:6,padding:'4px 8px',fontSize:10,cursor:'pointer',display:'flex',alignItems:'center',gap:3}}><Eye size={11}/> {expandedMonth===g.month?'Hide':'View'}</button>
-              {hasPermission('deleteBulkOrders')&&<button onClick={()=>{if(window.confirm(`Delete bulk group ${g.id}?`)){setBulkGroups(prev=>prev.filter(x=>x.id!==g.id));api.deleteBulkGroup(g.id);notify('Deleted',g.id,'success');}}} style={{background:'#DC2626',color:'#fff',border:'none',borderRadius:6,padding:'4px 8px',fontSize:10,cursor:'pointer',display:'flex',alignItems:'center',gap:3}}><Trash2 size={11}/></button>}
+              {hasPermission('deleteBulkOrders')&&<button onClick={()=>{if(window.confirm(`Delete bulk group ${g.id}?`)){setBulkGroups(prev=>prev.filter(x=>x.id!==g.id));dbSync(api.deleteBulkGroup(g.id),'Bulk group delete not saved');notify('Deleted',g.id,'success');}}} style={{background:'#DC2626',color:'#fff',border:'none',borderRadius:6,padding:'4px 8px',fontSize:10,cursor:'pointer',display:'flex',alignItems:'center',gap:3}}><Trash2 size={11}/></button>}
             </div>
           </td>
         </tr>))}</tbody>
@@ -2096,7 +2104,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
               <div style={{display:'flex',gap:4}}>
               {(hasPermission('editAllOrders')||o.orderBy===currentUser?.name)&&<button onClick={(e)=>{e.stopPropagation();setEditingOrder({...o});}} style={{background:'#2563EB',color:'#fff',border:'none',borderRadius:6,padding:'4px 8px',fontSize:10,cursor:'pointer',display:'flex',alignItems:'center',gap:3}}><Edit3 size={11}/> Edit</button>}
               <button onClick={(e)=>{e.stopPropagation();handleDuplicateOrder(o);}} style={{background:'#7C3AED',color:'#fff',border:'none',borderRadius:6,padding:'4px 8px',fontSize:10,cursor:'pointer',display:'flex',alignItems:'center',gap:3}}><Copy size={11}/></button>
-              {hasPermission('deleteOrders')&&<button onClick={(e)=>{e.stopPropagation();if(window.confirm(`Delete ${o.id}?`)){setOrders(prev=>prev.filter(x=>x.id!==o.id));api.deleteOrder(o.id);notify('Deleted',o.id,'success');}}} style={{background:'#DC2626',color:'#fff',border:'none',borderRadius:6,padding:'4px 8px',fontSize:10,cursor:'pointer'}}><Trash2 size={11}/></button>}
+              {hasPermission('deleteOrders')&&<button onClick={(e)=>{e.stopPropagation();if(window.confirm(`Delete ${o.id}?`)){setOrders(prev=>prev.filter(x=>x.id!==o.id));dbSync(api.deleteOrder(o.id),'Order delete not saved');notify('Deleted',o.id,'success');}}} style={{background:'#DC2626',color:'#fff',border:'none',borderRadius:6,padding:'4px 8px',fontSize:10,cursor:'pointer'}}><Trash2 size={11}/></button>}
               </div>
             </td>
           </tr>))}</tbody>
@@ -2231,7 +2239,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
             const discrepancies = stockInventoryList.filter(i=>i.checked && i.physicalQty !== i.systemQty).length;
             const scUpdates = {status:'Completed',disc:discrepancies,notes:`Completed by ${currentUser.name}. ${discrepancies} discrepancies found.`};
             setStockChecks(prev=>prev.map((s,idx)=>idx===0?{...s,...scUpdates}:s));
-            if(stockChecks[0]) api.updateStockCheck(stockChecks[0].id, scUpdates);
+            if(stockChecks[0]) dbSync(api.updateStockCheck(stockChecks[0].id, scUpdates), 'Stock check update not saved');
             setStockCheckMode(false);
             setStockInventoryList([]);
             notify('Stock Check Completed',`${discrepancies} discrepancies found`,'success');
@@ -2309,7 +2317,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
           {r.status==='Completed' && (
             <button className="bs" style={{padding:'4px 8px',fontSize:11}} onClick={()=>{notify('Report Downloaded',`${r.id} exported`,'success');}}><Download size={12}/></button>
           )}
-          {hasPermission('deleteStockChecks')&&<button onClick={()=>{if(window.confirm(`Delete stock check ${r.id}?`)){setStockChecks(prev=>prev.filter(x=>x.id!==r.id));api.deleteStockCheck(r.id);notify('Deleted',r.id,'success');}}} style={{background:'#DC2626',color:'#fff',border:'none',borderRadius:6,padding:'4px 8px',fontSize:10,cursor:'pointer'}}><Trash2 size={11}/></button>}
+          {hasPermission('deleteStockChecks')&&<button onClick={()=>{if(window.confirm(`Delete stock check ${r.id}?`)){setStockChecks(prev=>prev.filter(x=>x.id!==r.id));dbSync(api.deleteStockCheck(r.id),'Stock check delete not saved');notify('Deleted',r.id,'success');}}} style={{background:'#DC2626',color:'#fff',border:'none',borderRadius:6,padding:'4px 8px',fontSize:10,cursor:'pointer'}}><Trash2 size={11}/></button>}
           </div>
         </td>
       </tr>)}</tbody>
@@ -2384,7 +2392,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
                         <td className="td" style={{maxWidth:180,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{o.description}</td>
                         <td className="td" style={{textAlign:'center',fontWeight:600}}>{o.quantity}</td>
                         <td className="td" style={{textAlign:'center'}}>
-                          <input type="number" min="0" max={o.quantity} value={o.qtyReceived} disabled={o.approvalStatus!=='approved'} title={o.approvalStatus!=='approved'?'Order must be approved first':''} onChange={e=>{const val=parseInt(e.target.value)||0;const updates={qtyReceived:val,backOrder:val-o.quantity,status:val>=o.quantity?'Received':val>0?'Back Order':'Pending'};setOrders(prev=>prev.map(x=>x.id===o.id?{...x,...updates}:x));api.updateOrder(o.id,updates);}} style={{width:50,padding:'4px 6px',textAlign:'center',borderRadius:6,border:'1px solid #E2E8F0',fontSize:12,opacity:o.approvalStatus!=='approved'?0.5:1,cursor:o.approvalStatus!=='approved'?'not-allowed':'text'}}/>
+                          <input type="number" min="0" max={o.quantity} value={o.qtyReceived} disabled={o.approvalStatus!=='approved'} title={o.approvalStatus!=='approved'?'Order must be approved first':''} onChange={e=>{const val=parseInt(e.target.value)||0;const updates={qtyReceived:val,backOrder:val-o.quantity,status:val>=o.quantity?'Received':val>0?'Back Order':'Pending'};setOrders(prev=>prev.map(x=>x.id===o.id?{...x,...updates}:x));dbSync(api.updateOrder(o.id,updates),'Arrival update not saved');}} style={{width:50,padding:'4px 6px',textAlign:'center',borderRadius:6,border:'1px solid #E2E8F0',fontSize:12,opacity:o.approvalStatus!=='approved'?0.5:1,cursor:o.approvalStatus!=='approved'?'not-allowed':'text'}}/>
                         </td>
                         <td className="td" style={{textAlign:'center',fontWeight:600,color:o.quantity-o.qtyReceived>0?'#DC2626':'#059669'}}>{o.quantity-o.qtyReceived>0?`-${o.quantity-o.qtyReceived}`:'✓'}</td>
                         <td className="td"><Pill bg={o.qtyReceived>=o.quantity?'#D1FAE5':o.qtyReceived>0?'#DBEAFE':'#FEF3C7'} color={o.qtyReceived>=o.quantity?'#059669':o.qtyReceived>0?'#2563EB':'#D97706'}>{o.qtyReceived>=o.quantity?'Full':o.qtyReceived>0?'Partial':'Pending'}</Pill></td>
@@ -2430,7 +2438,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
                     const allReceived = bgOrders.every(o=>o.qtyReceived>=o.quantity);
                     if (allReceived) {
                       setBulkGroups(prev=>prev.map(g=>g.id===bg.id?{...g,status:'Completed'}:g));
-                      api.updateBulkGroup(bg.id, {status:'Completed'});
+                      dbSync(api.updateBulkGroup(bg.id, {status:'Completed'}), 'Bulk group completion not saved');
                       notify('Arrival Complete',`${bg.month} marked as fully received`,'success');
                       if (waConnected && waNotifyRules.partArrivalDone) {
                         try {
@@ -2472,7 +2480,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
                 <td className="td" style={{maxWidth:180,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{o.description}</td>
                 <td className="td" style={{textAlign:'center',fontWeight:600}}>{o.quantity}</td>
                 <td className="td" style={{textAlign:'center'}}>
-                  <input type="number" min="0" max={o.quantity} value={o.qtyReceived} onChange={e=>{const val=parseInt(e.target.value)||0;const updates={qtyReceived:val,backOrder:val-o.quantity,status:val>=o.quantity?'Received':val>0?'Back Order':'Pending'};setOrders(prev=>prev.map(x=>x.id===o.id?{...x,...updates}:x));api.updateOrder(o.id,updates);}} style={{width:50,padding:'4px 6px',textAlign:'center',borderRadius:6,border:'1px solid #E2E8F0',fontSize:12}}/>
+                  <input type="number" min="0" max={o.quantity} value={o.qtyReceived} onChange={e=>{const val=parseInt(e.target.value)||0;const updates={qtyReceived:val,backOrder:val-o.quantity,status:val>=o.quantity?'Received':val>0?'Back Order':'Pending'};setOrders(prev=>prev.map(x=>x.id===o.id?{...x,...updates}:x));dbSync(api.updateOrder(o.id,updates),'Arrival update not saved');}} style={{width:50,padding:'4px 6px',textAlign:'center',borderRadius:6,border:'1px solid #E2E8F0',fontSize:12}}/>
                 </td>
                 <td className="td" style={{textAlign:'center',fontWeight:600,color:o.quantity-(o.qtyReceived||0)>0?'#DC2626':'#059669'}}>{o.quantity-(o.qtyReceived||0)>0?`-${o.quantity-(o.qtyReceived||0)}`:'\u2713'}</td>
                 <td className="td"><Pill bg={o.qtyReceived>=o.quantity?'#D1FAE5':o.qtyReceived>0?'#DBEAFE':'#FEF3C7'} color={o.qtyReceived>=o.quantity?'#059669':o.qtyReceived>0?'#2563EB':'#D97706'}>{o.qtyReceived>=o.quantity?'Full':o.qtyReceived>0?'Partial':'Pending'}</Pill></td>
@@ -2878,7 +2886,7 @@ if(scheduledNotifs.emailEnabled){                    addNotifEntry({id:'N-'+Date
           <td className="td">
             <div style={{display:'flex',gap:4}}>
               <button onClick={()=>setSelectedUser({...u})} style={{background:'#2563EB',color:'#fff',border:'none',borderRadius:6,padding:'4px 10px',fontSize:11,cursor:'pointer',display:'flex',alignItems:'center',gap:4}}><Edit3 size={12}/> Edit</button>
-              <button onClick={()=>{if(window.confirm(`Delete user ${u.name}?`)){setUsers(prev=>prev.filter(x=>x.id!==u.id));api.deleteUser(u.id);notify('Deleted',u.name,'success');}}} style={{background:'#DC2626',color:'#fff',border:'none',borderRadius:6,padding:'4px 8px',fontSize:10,cursor:'pointer'}}><Trash2 size={11}/></button>
+              <button onClick={()=>{if(window.confirm(`Delete user ${u.name}?`)){setUsers(prev=>prev.filter(x=>x.id!==u.id));dbSync(api.deleteUser(u.id),'User delete not saved');notify('Deleted',u.name,'success');}}} style={{background:'#DC2626',color:'#fff',border:'none',borderRadius:6,padding:'4px 8px',fontSize:10,cursor:'pointer'}}><Trash2 size={11}/></button>
             </div>
           </td>
         </tr>))}</tbody>
@@ -3021,7 +3029,7 @@ if(scheduledNotifs.emailEnabled){                    addNotifEntry({id:'N-'+Date
       </div>
       <div style={{display:'flex',gap:10,marginTop:8}}>
         <button onClick={()=>setSelectedBulkGroup(null)} style={{flex:1,padding:'10px',borderRadius:8,border:'1.5px solid #E2E8F0',background:'#fff',color:'#64748B',fontWeight:600,fontSize:13,cursor:'pointer'}}>Cancel</button>
-        <button onClick={()=>{setBulkGroups(prev=>prev.map(g=>g.id===selectedBulkGroup.id?selectedBulkGroup:g));api.updateBulkGroup(selectedBulkGroup.id,selectedBulkGroup);setSelectedBulkGroup(null);notify('Bulk Order Updated','Changes saved to database','success');}} style={{flex:1,padding:'10px',borderRadius:8,border:'none',background:'linear-gradient(135deg,#4338CA,#6366F1)',color:'#fff',fontWeight:600,fontSize:13,cursor:'pointer'}}>Save Changes</button>
+        <button onClick={()=>{setBulkGroups(prev=>prev.map(g=>g.id===selectedBulkGroup.id?selectedBulkGroup:g));dbSync(api.updateBulkGroup(selectedBulkGroup.id,selectedBulkGroup),'Bulk group edit not saved');setSelectedBulkGroup(null);notify('Bulk Order Updated','Changes saved to database','success');}} style={{flex:1,padding:'10px',borderRadius:8,border:'none',background:'linear-gradient(135deg,#4338CA,#6366F1)',color:'#fff',fontWeight:600,fontSize:13,cursor:'pointer'}}>Save Changes</button>
         {(selectedBulkGroup.status==='Pending Approval'||selectedBulkGroup.status==='Pending')&&(
           <div style={{gridColumn:'span 2',marginTop:8,padding:12,background:'#FEF3C7',borderRadius:8,fontSize:11,color:'#92400E'}}>
             <strong>Tip:</strong> If you made changes to a pending order, consider resending the approval email to notify the approver of the updates.
@@ -3145,7 +3153,7 @@ if(scheduledNotifs.emailEnabled){                    addNotifEntry({id:'N-'+Date
         <button onClick={()=>setEditingOrder(null)} style={{flex:1,padding:'12px',borderRadius:8,border:'1.5px solid #E2E8F0',background:'#fff',color:'#64748B',fontWeight:600,fontSize:13,cursor:'pointer'}}>Cancel</button>
         <button onClick={()=>{
           setOrders(prev=>prev.map(o=>o.id===editingOrder.id?editingOrder:o));
-          api.updateOrder(editingOrder.id, editingOrder);
+          dbSync(api.updateOrder(editingOrder.id, editingOrder), 'Order edit not saved');
           notify('Order Updated',editingOrder.id+' has been updated','success');
           setEditingOrder(null);
         }} style={{flex:1,padding:'12px',borderRadius:8,border:'none',background:'linear-gradient(135deg,#2563EB,#3B82F6)',color:'#fff',fontWeight:600,fontSize:13,cursor:'pointer'}}>Save Changes</button>
@@ -3323,7 +3331,7 @@ if(scheduledNotifs.emailEnabled){                    addNotifEntry({id:'N-'+Date
           <p style={{fontSize:11,color:'#94A3B8',marginTop:6}}>Optional. Used for AI-powered responses to complex questions. Leave empty for rule-based only.</p>
         </div>
 
-        <button className="bp" onClick={()=>{api.setConfigKey('aiBotConfig',aiBotConfig);api.setConfigKey('waAutoReply',waAutoReply);notify('Settings Saved','Bot configuration saved to database','success');}} style={{width:'fit-content'}}><Check size={14}/> Save Configuration</button>
+        <button className="bp" onClick={()=>{dbSync(api.setConfigKey('aiBotConfig',aiBotConfig),'Bot config not saved');dbSync(api.setConfigKey('waAutoReply',waAutoReply),'Auto-reply config not saved');notify('Settings Saved','Bot configuration saved to database','success');}} style={{width:'fit-content'}}><Check size={14}/> Save Configuration</button>
       </div>
     </div>
   )}
@@ -3382,15 +3390,15 @@ if(scheduledNotifs.emailEnabled){                    addNotifEntry({id:'N-'+Date
                 const reader = new FileReader();
                 reader.onload = async (evt) => {
                   setCustomLogo(evt.target.result);
-                  await api.setConfigKey('customLogo', evt.target.result);
-                  notify('Logo Updated','New logo saved','success');
+                  const ok = await api.setConfigKey('customLogo', evt.target.result);
+                  if(ok){notify('Logo Updated','New logo saved','success');}else{notify('Upload Failed','Logo not saved to database','error');}
                 };
                 reader.readAsDataURL(file);
               }
             }} style={{display:'none'}}/>
             <Upload size={14}/> Upload Logo
           </label>
-          {customLogo && <button className="bs" onClick={async ()=>{setCustomLogo(null);await api.setConfigKey('customLogo',null);notify('Logo Reset','Default logo restored','info');}}><X size={14}/> Remove</button>}
+          {customLogo && <button className="bs" onClick={async ()=>{setCustomLogo(null);const ok=await api.setConfigKey('customLogo',null);if(ok){notify('Logo Reset','Default logo restored','info');}else{notify('Reset Failed','Logo not cleared from database','error');}}}><X size={14}/> Remove</button>}
         </div>
       </div>
     </div>
@@ -3524,7 +3532,7 @@ if(scheduledNotifs.emailEnabled){                    addNotifEntry({id:'N-'+Date
       })}
     </div>
     <div style={{marginTop:12,display:'flex',gap:8}}>
-      <button className="bp" style={{fontSize:12}} onClick={()=>{api.setConfigKey('emailTemplates',emailTemplates);notify('Templates Saved','Email templates saved to database','success');}}>Save Templates</button>
+      <button className="bp" style={{fontSize:12}} onClick={async ()=>{const ok=await api.setConfigKey('emailTemplates',emailTemplates);if(ok){notify('Templates Saved','Email templates saved to database','success');}else{notify('Save Failed','Email templates not saved to database','error');}}}>Save Templates</button>
       <button className="bs" style={{fontSize:12}} onClick={()=>{setEmailTemplates({
         orderApproval: { subject: '[APPROVAL] Order {orderId} - {description}', body: 'Order Approval Request\n\nOrder ID: {orderId}\nDescription: {description}\nMaterial No: {materialNo}\nQuantity: {quantity}\nTotal: S${totalCost}\nRequested By: {orderBy}\n\nReply APPROVE to approve or REJECT to decline.\n\n-Miltenyi Inventory Hub SG' },
         bulkApproval: { subject: '[APPROVAL] Bulk Order {batchId} - {month}', body: 'Bulk Order Approval Request\n\nBatch ID: {batchId}\nMonth: {month}\nItems: {itemCount}\nTotal Cost: S${totalCost}\nRequested By: {orderBy}\n\nReply APPROVE to approve or REJECT to decline.\n\n-Miltenyi Inventory Hub SG' },
@@ -3632,9 +3640,9 @@ if(scheduledNotifs.emailEnabled){                    addNotifEntry({id:'N-'+Date
           <div style={{color:'#64748B',fontSize:11}}>Last import will add to existing records</div>
         </div>
         <div style={{display:'flex',gap:8}}>
-          <button onClick={()=>{if(window.confirm('Clear ALL orders? This cannot be undone.')){setOrders([]);api.clearOrders();notify('Orders Cleared','All orders removed from system','info');}}} style={{padding:'6px 14px',background:'#DC2626',color:'#fff',border:'none',borderRadius:6,fontSize:11,fontWeight:600,cursor:'pointer',display:'flex',alignItems:'center',gap:4}}><Trash2 size={12}/> Clear All Orders</button>
-          <button onClick={()=>{if(window.confirm('Clear ALL bulk order batches? This cannot be undone.')){setBulkGroups([]);api.clearBulkGroups();notify('Bulk Orders Cleared','All bulk batches removed','info');}}} style={{padding:'6px 14px',background:'#7C3AED',color:'#fff',border:'none',borderRadius:6,fontSize:11,fontWeight:600,cursor:'pointer',display:'flex',alignItems:'center',gap:4}}><Trash2 size={12}/> Clear Bulk Batches</button>
-          <button onClick={()=>{if(window.confirm('Clear ALL data (orders + bulk batches + notifications)? This cannot be undone.')){setOrders([]);setBulkGroups([]);setNotifLog([]);setPendingApprovals([]);api.clearOrders();api.clearBulkGroups();api.clearNotifLog();api.clearApprovals();Object.values(LS_KEYS).forEach(k=>localStorage.removeItem(k));notify('All Data Cleared','System reset complete','info');}}} style={{padding:'6px 14px',background:'#374151',color:'#fff',border:'none',borderRadius:6,fontSize:11,fontWeight:600,cursor:'pointer',display:'flex',alignItems:'center',gap:4}}><RefreshCw size={12}/> Reset All Data</button>
+          <button onClick={async ()=>{if(window.confirm('Clear ALL orders? This cannot be undone.')){setOrders([]);const ok=await api.clearOrders();if(ok){notify('Orders Cleared','All orders removed from system','info');}else{notify('Clear Failed','Orders not cleared from database','error');}}}} style={{padding:'6px 14px',background:'#DC2626',color:'#fff',border:'none',borderRadius:6,fontSize:11,fontWeight:600,cursor:'pointer',display:'flex',alignItems:'center',gap:4}}><Trash2 size={12}/> Clear All Orders</button>
+          <button onClick={async ()=>{if(window.confirm('Clear ALL bulk order batches? This cannot be undone.')){setBulkGroups([]);const ok=await api.clearBulkGroups();if(ok){notify('Bulk Orders Cleared','All bulk batches removed','info');}else{notify('Clear Failed','Bulk batches not cleared from database','error');}}}} style={{padding:'6px 14px',background:'#7C3AED',color:'#fff',border:'none',borderRadius:6,fontSize:11,fontWeight:600,cursor:'pointer',display:'flex',alignItems:'center',gap:4}}><Trash2 size={12}/> Clear Bulk Batches</button>
+          <button onClick={async ()=>{if(window.confirm('Clear ALL data (orders + bulk batches + notifications)? This cannot be undone.')){setOrders([]);setBulkGroups([]);setNotifLog([]);setPendingApprovals([]);const results=await Promise.all([api.clearOrders(),api.clearBulkGroups(),api.clearNotifLog(),api.clearApprovals()]);Object.values(LS_KEYS).forEach(k=>localStorage.removeItem(k));const failed=results.filter(r=>!r).length;if(failed===0){notify('All Data Cleared','System reset complete','info');}else{notify('Partial Clear',`${results.length-failed}/${results.length} clears succeeded. Some data may not be cleared from database.`,'warning');}}}} style={{padding:'6px 14px',background:'#374151',color:'#fff',border:'none',borderRadius:6,fontSize:11,fontWeight:600,cursor:'pointer',display:'flex',alignItems:'center',gap:4}}><RefreshCw size={12}/> Reset All Data</button>
         </div>
       </div>
     )}
@@ -3805,7 +3813,7 @@ if(scheduledNotifs.emailEnabled){                    addNotifEntry({id:'N-'+Date
                 const updatedOrder = {...selectedOrder, qtyReceived: val, backOrder: newBackOrder, status: newStatus, arrivalDate: val > 0 ? (selectedOrder.arrivalDate || new Date().toISOString().slice(0,10)) : selectedOrder.arrivalDate};
                 setOrders(prev=>prev.map(o=>o.id===selectedOrder.id ? updatedOrder : o));
                 setSelectedOrder(updatedOrder);
-                api.updateOrder(selectedOrder.id, {qtyReceived:val, backOrder:newBackOrder, status:newStatus, arrivalDate:updatedOrder.arrivalDate});
+                dbSync(api.updateOrder(selectedOrder.id, {qtyReceived:val, backOrder:newBackOrder, status:newStatus, arrivalDate:updatedOrder.arrivalDate}), 'Arrival update not saved');
               }} style={{width:'100%',padding:'8px 12px',fontSize:16,fontWeight:600,borderRadius:8,border:'1.5px solid #BBF7D0',textAlign:'center'}}/>
             </div>
             <div>
@@ -3819,7 +3827,7 @@ if(scheduledNotifs.emailEnabled){                    addNotifEntry({id:'N-'+Date
 
         <div className="grid-2" style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginTop:14}}>{[{l:'Price',v:selectedOrder.listPrice>0?fmt(selectedOrder.listPrice):'—'},{l:'Total',v:selectedOrder.totalCost>0?fmt(selectedOrder.totalCost):'—'},{l:'Ordered',v:fmtDate(selectedOrder.orderDate)},{l:'By',v:selectedOrder.orderBy||'—'},{l:'Arrival',v:selectedOrder.arrivalDate?fmtDate(selectedOrder.arrivalDate):'—'},{l:'Engineer',v:selectedOrder.engineer||'—'},{l:'Month',v:selectedOrder.month?.replace('_',' ')||'—'},{l:'Remark',v:selectedOrder.remark||'—'}].map((f,i)=><div key={i} style={{padding:10,borderRadius:8,background:'#F8FAFB'}}><div style={{fontSize:10,color:'#94A3B8',fontWeight:600,textTransform:'uppercase',letterSpacing:.5,marginBottom:3}}>{f.l}</div><div style={{fontSize:13,fontWeight:600}}>{f.v}</div></div>)}</div>
         <div style={{display:'flex',gap:10,marginTop:18}}>
-          <button className="bp" onClick={()=>{setOrders(prev=>prev.map(o=>o.id===selectedOrder.id?selectedOrder:o));api.updateOrder(selectedOrder.id,selectedOrder);notify('Order Updated',`${selectedOrder.id} saved to database`,'success');setSelectedOrder(null);}}><Check size={14}/> Save & Close</button>
+          <button className="bp" onClick={async ()=>{setOrders(prev=>prev.map(o=>o.id===selectedOrder.id?selectedOrder:o));const ok=await api.updateOrder(selectedOrder.id,selectedOrder);if(ok){notify('Order Updated',`${selectedOrder.id} saved to database`,'success');}else{notify('Save Failed',`${selectedOrder.id} not saved to database`,'error');}setSelectedOrder(null);}}><Check size={14}/> Save & Close</button>
           <button className="be" onClick={()=>{notify('Email Sent','Update sent','success');setSelectedOrder(null);}}><Mail size={14}/> Email</button>
           {waConnected&&<button className="bw" onClick={()=>{notify('WhatsApp Sent','Alert sent','success');setSelectedOrder(null);}}><MessageSquare size={14}/> WhatsApp</button>}
           <button className="bs" onClick={()=>setSelectedOrder(null)}>Cancel</button>
