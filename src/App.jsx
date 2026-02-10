@@ -183,6 +183,35 @@ const [selectedUser, setSelectedUser] = useState(null);
 
   const isAdmin = currentUser?.role === 'admin';
 
+  // ── Feature Permissions ──
+  const FEATURE_PERMISSIONS = [
+    { key: 'dashboard', label: 'Dashboard', group: 'Pages' },
+    { key: 'catalog', label: 'Parts Catalog', group: 'Pages' },
+    { key: 'orders', label: 'Orders', group: 'Pages' },
+    { key: 'bulkOrders', label: 'Bulk Orders', group: 'Pages' },
+    { key: 'analytics', label: 'Analytics', group: 'Pages' },
+    { key: 'stockCheck', label: 'Stock Check', group: 'Pages' },
+    { key: 'delivery', label: 'Part Arrival', group: 'Pages' },
+    { key: 'whatsapp', label: 'WhatsApp', group: 'Pages' },
+    { key: 'notifications', label: 'Notifications', group: 'Pages' },
+    { key: 'editAllOrders', label: 'Edit All Orders', group: 'Actions' },
+    { key: 'deleteOrders', label: 'Delete Orders', group: 'Actions' },
+    { key: 'editAllBulkOrders', label: 'Edit All Bulk Orders', group: 'Actions' },
+    { key: 'deleteBulkOrders', label: 'Delete Bulk Orders', group: 'Actions' },
+    { key: 'deleteStockChecks', label: 'Delete Stock Checks', group: 'Actions' },
+    { key: 'deleteNotifications', label: 'Delete Notifications', group: 'Actions' },
+    { key: 'approvals', label: 'Manage Approvals', group: 'Admin' },
+    { key: 'users', label: 'User Management', group: 'Admin' },
+    { key: 'settings', label: 'Settings', group: 'Admin' },
+    { key: 'aiBot', label: 'AI Bot Admin', group: 'Admin' },
+  ];
+  const DEFAULT_USER_PERMS = { dashboard:true,catalog:true,orders:true,bulkOrders:true,analytics:true,stockCheck:true,delivery:true,whatsapp:true,notifications:true,editAllOrders:false,deleteOrders:false,editAllBulkOrders:false,deleteBulkOrders:false,deleteStockChecks:false,deleteNotifications:false,approvals:false,users:false,settings:false,aiBot:false };
+  const hasPermission = useCallback((key) => {
+    if (isAdmin) return true;
+    const perms = currentUser?.permissions || DEFAULT_USER_PERMS;
+    return perms[key] === true;
+  }, [currentUser, isAdmin]);
+
   // ── Catalog ──
   const catalogLookup = useMemo(() => { const m={}; partsCatalog.forEach(p=>{m[p.m]=p;}); return m; }, [partsCatalog]);
   const PAGE_SIZE = 25;
@@ -820,31 +849,33 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
     notify('Registration Submitted','Your account is pending admin approval','info');
   };
   const handleApproveUser = (pending) => {
-    setUsers(prev=>[...prev,{id:`U${String(prev.length+1).padStart(3,'0')}`,username:pending.username,password:'temp123',name:pending.name,email:pending.email,role:'user',status:'active',created:new Date().toISOString().slice(0,10),phone:pending.phone}]);
+    setUsers(prev=>[...prev,{id:`U${String(prev.length+1).padStart(3,'0')}`,username:pending.username,password:'temp123',name:pending.name,email:pending.email,role:'user',status:'active',created:new Date().toISOString().slice(0,10),phone:pending.phone,permissions:{...DEFAULT_USER_PERMS}}]);
     setPendingUsers(prev=>prev.filter(u=>u.id!==pending.id));
     notify('User Approved',`${pending.name} can now login (temp password: temp123)`,'success');
   };
   const handleRejectUser = (id) => { setPendingUsers(prev=>prev.filter(u=>u.id!==id)); notify('Registration Rejected','User has been denied access','warning'); };
   const handleCreateUser = (form) => {
-    setUsers(prev=>[...prev,{id:`U${String(prev.length+1).padStart(3,'0')}`,username:form.username,password:form.password,name:form.name,email:form.email,role:form.role||'user',status:'active',created:new Date().toISOString().slice(0,10),phone:form.phone||''}]);
+    const perms = form.role==='admin' ? Object.fromEntries(Object.keys(DEFAULT_USER_PERMS).map(k=>[k,true])) : {...DEFAULT_USER_PERMS};
+    setUsers(prev=>[...prev,{id:`U${String(prev.length+1).padStart(3,'0')}`,username:form.username,password:form.password,name:form.name,email:form.email,role:form.role||'user',status:'active',created:new Date().toISOString().slice(0,10),phone:form.phone||'',permissions:perms}]);
     notify('User Created',`${form.name} (${form.role}) added`,'success');
   };
 
   // ── Nav ──
-  const navItems = [
-    { id:'dashboard', label:'Dashboard', icon:Home },
-    { id:'catalog', label:'Parts Catalog', icon:Database },
-    { id:'orders', label:'Orders', icon:Package },
-    { id:'bulkorders', label:'Bulk Orders', icon:Layers },
-    { id:'analytics', label:'Analytics', icon:BarChart3 },
-    { id:'stockcheck', label:'Stock Check', icon:ClipboardList },
-    { id:'delivery', label:'Part Arrival', icon:Truck },
-    { id:'whatsapp', label:'WhatsApp', icon:MessageSquare },
-    { id:'notifications', label:'Notifications', icon:Bell },
-    ...(isAdmin ? [{ id:'aibot', label:'AI Bot Admin', icon:Bot }] : []),
-    ...(isAdmin ? [{ id:'users', label:'User Management', icon:Users }] : []),
-    { id:'settings', label:'Settings', icon:Settings },
+  const allNavItems = [
+    { id:'dashboard', label:'Dashboard', icon:Home, perm:'dashboard' },
+    { id:'catalog', label:'Parts Catalog', icon:Database, perm:'catalog' },
+    { id:'orders', label:'Orders', icon:Package, perm:'orders' },
+    { id:'bulkorders', label:'Bulk Orders', icon:Layers, perm:'bulkOrders' },
+    { id:'analytics', label:'Analytics', icon:BarChart3, perm:'analytics' },
+    { id:'stockcheck', label:'Stock Check', icon:ClipboardList, perm:'stockCheck' },
+    { id:'delivery', label:'Part Arrival', icon:Truck, perm:'delivery' },
+    { id:'whatsapp', label:'WhatsApp', icon:MessageSquare, perm:'whatsapp' },
+    { id:'notifications', label:'Notifications', icon:Bell, perm:'notifications' },
+    { id:'aibot', label:'AI Bot Admin', icon:Bot, perm:'aiBot' },
+    { id:'users', label:'User Management', icon:Users, perm:'users' },
+    { id:'settings', label:'Settings', icon:Settings, perm:'settings' },
   ];
+  const navItems = allNavItems.filter(n => hasPermission(n.perm));
 
   // ════════════════════════════ AI BOT PROCESSING ════════════════════════════
   const processAiMessage = (userMessage) => {
@@ -1469,18 +1500,18 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
     <div style={{display:'flex',gap:8}}>{['All','Received','Back Order','Processed','Pending'].map(s=><button key={s} onClick={()=>setStatusFilter(s)} style={{padding:'6px 14px',borderRadius:20,border:statusFilter===s?'none':'1px solid #E2E8F0',background:statusFilter===s?'#0B7A3E':'#fff',color:statusFilter===s?'#fff':'#64748B',fontSize:12,fontWeight:500,cursor:'pointer',fontFamily:'inherit'}}>{s} ({s==='All'?orders.length:orders.filter(o=>o.status===s).length})</button>)}</div>
     <div style={{display:'flex',gap:8}}><button className="bs" onClick={()=>setShowBulkOrder(true)}><Layers size={14}/> Bulk Order</button><button className="bp" onClick={()=>setShowNewOrder(true)}><Plus size={14}/> New Order</button></div>
   </div>
-  <BatchBar count={selOrders.size} onClear={()=>setSelOrders(new Set())}>
+  {hasPermission('deleteOrders') && <BatchBar count={selOrders.size} onClear={()=>setSelOrders(new Set())}>
     <BatchBtn onClick={()=>batchStatusOrders('Received')} bg="#059669" icon={CheckCircle}>Received</BatchBtn>
     <BatchBtn onClick={()=>batchStatusOrders('Processed')} bg="#2563EB" icon={RefreshCw}>Processed</BatchBtn>
     <BatchBtn onClick={()=>batchStatusOrders('Back Order')} bg="#D97706" icon={AlertTriangle}>Back Order</BatchBtn>
     <BatchBtn onClick={()=>batchStatusOrders('Pending')} bg="#6366F1" icon={Clock}>Pending</BatchBtn>
     <BatchBtn onClick={batchDeleteOrders} bg="#DC2626" icon={Trash2}>Delete</BatchBtn>
-  </BatchBar>
+  </BatchBar>}
   <div className="card" style={{overflow:'hidden'}}><div className="table-wrap" style={{overflowX:'auto'}}><table style={{width:'100%',borderCollapse:'collapse',fontSize:12.5}}>
-    <thead><tr style={{background:'#F8FAFB'}}><th className="th" style={{width:36}}><SelBox checked={selOrders.size===filteredOrders.length&&filteredOrders.length>0} onChange={()=>toggleAll(selOrders,setSelOrders,filteredOrders.map(o=>o.id))}/></th>{['Material No.','Description','Qty','Price','Total','Ordered','By','Recv','B/O','Status','Actions'].map(h=><th key={h} className="th">{h}</th>)}</tr></thead>
+    <thead><tr style={{background:'#F8FAFB'}}>{hasPermission('deleteOrders')&&<th className="th" style={{width:36}}><SelBox checked={selOrders.size===filteredOrders.length&&filteredOrders.length>0} onChange={()=>toggleAll(selOrders,setSelOrders,filteredOrders.map(o=>o.id))}/></th>}{['Material No.','Description','Qty','Price','Total','Ordered','By','Recv','B/O','Status','Actions'].map(h=><th key={h} className="th">{h}</th>)}</tr></thead>
     <tbody>{filteredOrders.map((o,i)=>(
       <tr key={o.id} className="tr" style={{borderBottom:'1px solid #F7FAFC',background:selOrders.has(o.id)?'#E6F4ED':i%2===0?'#fff':'#FCFCFD',cursor:'pointer'}} onClick={()=>openOrderInNewTab(o)}>
-        <td className="td" onClick={e=>e.stopPropagation()}><SelBox checked={selOrders.has(o.id)} onChange={()=>toggleSel(selOrders,setSelOrders,o.id)}/></td>
+        {hasPermission('deleteOrders')&&<td className="td" onClick={e=>e.stopPropagation()}><SelBox checked={selOrders.has(o.id)} onChange={()=>toggleSel(selOrders,setSelOrders,o.id)}/></td>}
         <td className="td mono" style={{fontSize:11,color:'#0B7A3E',fontWeight:500}}>{o.materialNo||'—'}</td>
         <td className="td" style={{maxWidth:200,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{o.description}</td>
         <td className="td" style={{fontWeight:600,textAlign:'center'}}>{o.quantity}</td>
@@ -1493,9 +1524,9 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
         <td className="td"><Badge status={o.status}/></td>
         <td className="td">
           <div style={{display:'flex',gap:4}}>
-            <button onClick={(e)=>{e.stopPropagation();setEditingOrder({...o});}} style={{background:'#2563EB',color:'#fff',border:'none',borderRadius:6,padding:'4px 8px',fontSize:10,cursor:'pointer',display:'flex',alignItems:'center',gap:3}}><Edit3 size={11}/> Edit</button>
+            {(hasPermission('editAllOrders')||o.orderBy===currentUser?.name)&&<button onClick={(e)=>{e.stopPropagation();setEditingOrder({...o});}} style={{background:'#2563EB',color:'#fff',border:'none',borderRadius:6,padding:'4px 8px',fontSize:10,cursor:'pointer',display:'flex',alignItems:'center',gap:3}}><Edit3 size={11}/> Edit</button>}
             <button onClick={(e)=>{e.stopPropagation();handleDuplicateOrder(o);}} style={{background:'#7C3AED',color:'#fff',border:'none',borderRadius:6,padding:'4px 8px',fontSize:10,cursor:'pointer',display:'flex',alignItems:'center',gap:3}}><Copy size={11}/></button>
-            <button onClick={(e)=>{e.stopPropagation();if(window.confirm(`Delete order ${o.id}?`)){setOrders(prev=>prev.filter(x=>x.id!==o.id));api.deleteOrder(o.id);notify('Deleted',o.id,'success');}}} style={{background:'#DC2626',color:'#fff',border:'none',borderRadius:6,padding:'4px 8px',fontSize:10,cursor:'pointer',display:'flex',alignItems:'center',gap:3}}><Trash2 size={11}/></button>
+            {hasPermission('deleteOrders')&&<button onClick={(e)=>{e.stopPropagation();if(window.confirm(`Delete order ${o.id}?`)){setOrders(prev=>prev.filter(x=>x.id!==o.id));api.deleteOrder(o.id);notify('Deleted',o.id,'success');}}} style={{background:'#DC2626',color:'#fff',border:'none',borderRadius:6,padding:'4px 8px',fontSize:10,cursor:'pointer',display:'flex',alignItems:'center',gap:3}}><Trash2 size={11}/></button>}
           </div>
         </td>
       </tr>))}</tbody>
@@ -1514,19 +1545,19 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
       <div key={i} className="card" style={{padding:'18px 22px'}}><div style={{display:'flex',justifyContent:'space-between'}}><div><div style={{fontSize:11,color:'#94A3B8',textTransform:'uppercase',letterSpacing:.5,marginBottom:4}}>{s.l}</div><div className="mono" style={{fontSize:28,fontWeight:700,color:s.c}}>{s.v}</div></div><div style={{padding:10,background:`${s.c}10`,borderRadius:10}}><s.i size={20} color={s.c}/></div></div></div>
     ))}
   </div>
-  <BatchBar count={selBulk.size} onClear={()=>setSelBulk(new Set())}>
+  {hasPermission('deleteBulkOrders') && <BatchBar count={selBulk.size} onClear={()=>setSelBulk(new Set())}>
     <BatchBtn onClick={()=>batchStatusBulk('Completed')} bg="#059669" icon={CheckCircle}>Completed</BatchBtn>
     <BatchBtn onClick={()=>batchStatusBulk('Pending')} bg="#D97706" icon={Clock}>Pending</BatchBtn>
     <BatchBtn onClick={()=>batchStatusBulk('Approved')} bg="#2563EB" icon={Shield}>Approved</BatchBtn>
     <BatchBtn onClick={batchDeleteBulk} bg="#DC2626" icon={Trash2}>Delete</BatchBtn>
-  </BatchBar>
+  </BatchBar>}
   <div className="card" style={{overflow:'hidden'}}>
     <div style={{padding:'16px 20px',borderBottom:'1px solid #E8ECF0',fontWeight:600,fontSize:14}}>Monthly Bulk Order Batches</div>
     <table style={{width:'100%',borderCollapse:'collapse',fontSize:12.5}}>
-      <thead><tr style={{background:'#F8FAFB'}}><th className="th" style={{width:36}}><SelBox checked={selBulk.size===bulkGroups.length&&bulkGroups.length>0} onChange={()=>toggleAll(selBulk,setSelBulk,bulkGroups.map(g=>g.id))}/></th>{['Batch ID','Month','Created By','Items','Total Cost','Status','Date','Actions'].map(h=><th key={h} className="th">{h}</th>)}</tr></thead>
+      <thead><tr style={{background:'#F8FAFB'}}>{hasPermission('deleteBulkOrders')&&<th className="th" style={{width:36}}><SelBox checked={selBulk.size===bulkGroups.length&&bulkGroups.length>0} onChange={()=>toggleAll(selBulk,setSelBulk,bulkGroups.map(g=>g.id))}/></th>}{['Batch ID','Month','Created By','Items','Total Cost','Status','Date','Actions'].map(h=><th key={h} className="th">{h}</th>)}</tr></thead>
       <tbody>{bulkGroups.map(g=>(
         <tr key={g.id} className="tr" style={{borderBottom:'1px solid #F7FAFC',background:selBulk.has(g.id)?'#EDE9FE':'#fff'}}>
-          <td className="td"><SelBox checked={selBulk.has(g.id)} onChange={()=>toggleSel(selBulk,setSelBulk,g.id)}/></td>
+          {hasPermission('deleteBulkOrders')&&<td className="td"><SelBox checked={selBulk.has(g.id)} onChange={()=>toggleSel(selBulk,setSelBulk,g.id)}/></td>}
           <td className="td mono" style={{fontSize:11,fontWeight:600,color:'#4338CA'}}>{g.id}</td>
           <td className="td" style={{fontWeight:600}}><Pill bg="#E6F4ED" color="#0B7A3E"><Calendar size={11}/> {g.month}</Pill></td>
           <td className="td">{g.createdBy}</td>
@@ -1536,9 +1567,9 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
           <td className="td" style={{color:'#94A3B8',fontSize:11}}>{fmtDate(g.date)}</td>
           <td className="td">
             <div style={{display:'flex',gap:6}}>
-              <button onClick={()=>setSelectedBulkGroup({...g})} style={{background:'#2563EB',color:'#fff',border:'none',borderRadius:6,padding:'4px 8px',fontSize:10,cursor:'pointer',display:'flex',alignItems:'center',gap:3}}><Edit3 size={11}/> Edit</button>
+              {(hasPermission('editAllBulkOrders')||g.createdBy===currentUser?.name)&&<button onClick={()=>setSelectedBulkGroup({...g})} style={{background:'#2563EB',color:'#fff',border:'none',borderRadius:6,padding:'4px 8px',fontSize:10,cursor:'pointer',display:'flex',alignItems:'center',gap:3}}><Edit3 size={11}/> Edit</button>}
               <button onClick={()=>setExpandedMonth(expandedMonth===g.month?null:g.month)} style={{background:expandedMonth===g.month?'#064E3B':'#0B7A3E',color:'#fff',border:'none',borderRadius:6,padding:'4px 8px',fontSize:10,cursor:'pointer',display:'flex',alignItems:'center',gap:3}}><Eye size={11}/> {expandedMonth===g.month?'Hide':'View'}</button>
-              <button onClick={()=>{if(window.confirm(`Delete bulk group ${g.id}?`)){setBulkGroups(prev=>prev.filter(x=>x.id!==g.id));api.deleteBulkGroup(g.id);notify('Deleted',g.id,'success');}}} style={{background:'#DC2626',color:'#fff',border:'none',borderRadius:6,padding:'4px 8px',fontSize:10,cursor:'pointer',display:'flex',alignItems:'center',gap:3}}><Trash2 size={11}/></button>
+              {hasPermission('deleteBulkOrders')&&<button onClick={()=>{if(window.confirm(`Delete bulk group ${g.id}?`)){setBulkGroups(prev=>prev.filter(x=>x.id!==g.id));api.deleteBulkGroup(g.id);notify('Deleted',g.id,'success');}}} style={{background:'#DC2626',color:'#fff',border:'none',borderRadius:6,padding:'4px 8px',fontSize:10,cursor:'pointer',display:'flex',alignItems:'center',gap:3}}><Trash2 size={11}/></button>}
             </div>
           </td>
         </tr>))}</tbody>
@@ -1571,16 +1602,16 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
         <h3 style={{fontSize:15,fontWeight:600,display:'flex',alignItems:'center',gap:8}}><Calendar size={16} color="#0B7A3E"/> Orders for: {expandedMonth}</h3>
         <button onClick={()=>setExpandedMonth(null)} style={{background:'none',border:'none',cursor:'pointer'}}><X size={18} color="#64748B"/></button>
       </div>
-      {(()=>{ const monthOrders = orders.filter(o=>o.month===expandedMonth||o.month===expandedMonth.replace(/ /g,'_')||o.month.replace(/_/g,' ')===expandedMonth); const monthIds = monthOrders.filter(o=>selOrders.has(o.id)); return monthIds.length>0 ? <BatchBar count={monthIds.length} onClear={()=>setSelOrders(prev=>{const n=new Set(prev);monthOrders.forEach(o=>n.delete(o.id));return n;})}>
+      {hasPermission('deleteOrders')&&(()=>{ const monthOrders = orders.filter(o=>o.month===expandedMonth||o.month===expandedMonth.replace(/ /g,'_')||o.month.replace(/_/g,' ')===expandedMonth); const monthIds = monthOrders.filter(o=>selOrders.has(o.id)); return monthIds.length>0 ? <BatchBar count={monthIds.length} onClear={()=>setSelOrders(prev=>{const n=new Set(prev);monthOrders.forEach(o=>n.delete(o.id));return n;})}>
         <BatchBtn onClick={()=>batchStatusOrders('Received')} bg="#059669" icon={CheckCircle}>Received</BatchBtn>
         <BatchBtn onClick={()=>batchStatusOrders('Back Order')} bg="#D97706" icon={AlertTriangle}>Back Order</BatchBtn>
         <BatchBtn onClick={batchDeleteOrders} bg="#DC2626" icon={Trash2}>Delete</BatchBtn>
       </BatchBar> : null; })()}
       <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
-        <thead><tr style={{background:'#F8FAFB'}}><th className="th" style={{width:36}}>{(()=>{const mo=orders.filter(o=>o.month===expandedMonth||o.month===expandedMonth.replace(/ /g,'_')||o.month.replace(/_/g,' ')===expandedMonth);return <SelBox checked={mo.length>0&&mo.every(o=>selOrders.has(o.id))} onChange={()=>{const mo2=orders.filter(o=>o.month===expandedMonth||o.month===expandedMonth.replace(/ /g,'_')||o.month.replace(/_/g,' ')===expandedMonth);const ids=mo2.map(o=>o.id);setSelOrders(prev=>{const n=new Set(prev);const allSel=ids.every(id=>prev.has(id));ids.forEach(id=>allSel?n.delete(id):n.add(id));return n;});}}/>;})()}</th>{['Order ID','Material No','Description','Qty','Ordered By','Order Date','Status','Total Cost','Actions'].map(h=><th key={h} className="th">{h}</th>)}</tr></thead>
+        <thead><tr style={{background:'#F8FAFB'}}>{hasPermission('deleteOrders')&&<th className="th" style={{width:36}}>{(()=>{const mo=orders.filter(o=>o.month===expandedMonth||o.month===expandedMonth.replace(/ /g,'_')||o.month.replace(/_/g,' ')===expandedMonth);return <SelBox checked={mo.length>0&&mo.every(o=>selOrders.has(o.id))} onChange={()=>{const mo2=orders.filter(o=>o.month===expandedMonth||o.month===expandedMonth.replace(/ /g,'_')||o.month.replace(/_/g,' ')===expandedMonth);const ids=mo2.map(o=>o.id);setSelOrders(prev=>{const n=new Set(prev);const allSel=ids.every(id=>prev.has(id));ids.forEach(id=>allSel?n.delete(id):n.add(id));return n;});}}/>;})()}</th>}{['Order ID','Material No','Description','Qty','Ordered By','Order Date','Status','Total Cost','Actions'].map(h=><th key={h} className="th">{h}</th>)}</tr></thead>
         <tbody>{orders.filter(o=>o.month===expandedMonth||o.month===expandedMonth.replace(/ /g,'_')||o.month.replace(/_/g,' ')===expandedMonth).map(o=>(
           <tr key={o.id} className="tr" onClick={()=>openOrderInNewTab(o)} style={{borderBottom:'1px solid #F7FAFC',cursor:'pointer',background:selOrders.has(o.id)?'#E6F4ED':'#fff'}}>
-            <td className="td" onClick={e=>e.stopPropagation()}><SelBox checked={selOrders.has(o.id)} onChange={()=>toggleSel(selOrders,setSelOrders,o.id)}/></td>
+            {hasPermission('deleteOrders')&&<td className="td" onClick={e=>e.stopPropagation()}><SelBox checked={selOrders.has(o.id)} onChange={()=>toggleSel(selOrders,setSelOrders,o.id)}/></td>}
             <td className="td mono" style={{fontSize:11,fontWeight:600,color:'#4338CA'}}>{o.id}</td>
             <td className="td mono" style={{fontSize:10}}>{o.materialNo||'—'}</td>
             <td className="td" style={{fontSize:11,maxWidth:200}}>{o.description}</td>
@@ -1591,9 +1622,9 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
             <td className="td mono" style={{fontWeight:600,fontSize:11}}>{fmt(o.totalCost)}</td>
             <td className="td">
               <div style={{display:'flex',gap:4}}>
-              <button onClick={(e)=>{e.stopPropagation();setEditingOrder({...o});}} style={{background:'#2563EB',color:'#fff',border:'none',borderRadius:6,padding:'4px 8px',fontSize:10,cursor:'pointer',display:'flex',alignItems:'center',gap:3}}><Edit3 size={11}/> Edit</button>
+              {(hasPermission('editAllOrders')||o.orderBy===currentUser?.name)&&<button onClick={(e)=>{e.stopPropagation();setEditingOrder({...o});}} style={{background:'#2563EB',color:'#fff',border:'none',borderRadius:6,padding:'4px 8px',fontSize:10,cursor:'pointer',display:'flex',alignItems:'center',gap:3}}><Edit3 size={11}/> Edit</button>}
               <button onClick={(e)=>{e.stopPropagation();handleDuplicateOrder(o);}} style={{background:'#7C3AED',color:'#fff',border:'none',borderRadius:6,padding:'4px 8px',fontSize:10,cursor:'pointer',display:'flex',alignItems:'center',gap:3}}><Copy size={11}/></button>
-              <button onClick={(e)=>{e.stopPropagation();if(window.confirm(`Delete ${o.id}?`)){setOrders(prev=>prev.filter(x=>x.id!==o.id));api.deleteOrder(o.id);notify('Deleted',o.id,'success');}}} style={{background:'#DC2626',color:'#fff',border:'none',borderRadius:6,padding:'4px 8px',fontSize:10,cursor:'pointer'}}><Trash2 size={11}/></button>
+              {hasPermission('deleteOrders')&&<button onClick={(e)=>{e.stopPropagation();if(window.confirm(`Delete ${o.id}?`)){setOrders(prev=>prev.filter(x=>x.id!==o.id));api.deleteOrder(o.id);notify('Deleted',o.id,'success');}}} style={{background:'#DC2626',color:'#fff',border:'none',borderRadius:6,padding:'4px 8px',fontSize:10,cursor:'pointer'}}><Trash2 size={11}/></button>}
               </div>
             </td>
           </tr>))}</tbody>
@@ -1783,15 +1814,15 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
   )}
 
   {/* Stock Check History */}
-  <BatchBar count={selStockChecks.size} onClear={()=>setSelStockChecks(new Set())}>
+  {hasPermission('deleteStockChecks')&&<BatchBar count={selStockChecks.size} onClear={()=>setSelStockChecks(new Set())}>
     <BatchBtn onClick={batchDeleteStockChecks} bg="#DC2626" icon={Trash2}>Delete Selected</BatchBtn>
-  </BatchBar>
+  </BatchBar>}
   <div className="card" style={{overflow:'hidden'}}>
     <div style={{padding:'16px 20px',borderBottom:'1px solid #E8ECF0',display:'flex',justifyContent:'space-between'}}><span style={{fontWeight:600,fontSize:14}}>Stock Check History</span>{selStockChecks.size>0&&<span style={{fontSize:11,color:'#DC2626',fontWeight:600}}>{selStockChecks.size} selected</span>}</div>
     <table style={{width:'100%',borderCollapse:'collapse',fontSize:12.5}}>
-      <thead><tr style={{background:'#F8FAFB'}}><th className="th" style={{width:36}}><SelBox checked={selStockChecks.size===stockChecks.length&&stockChecks.length>0} onChange={()=>toggleAll(selStockChecks,setSelStockChecks,stockChecks.map(r=>r.id))}/></th>{['ID','Date','Checked By','Items','Discrepancies','Status','Notes','Action'].map(h=><th key={h} className="th">{h}</th>)}</tr></thead>
+      <thead><tr style={{background:'#F8FAFB'}}>{hasPermission('deleteStockChecks')&&<th className="th" style={{width:36}}><SelBox checked={selStockChecks.size===stockChecks.length&&stockChecks.length>0} onChange={()=>toggleAll(selStockChecks,setSelStockChecks,stockChecks.map(r=>r.id))}/></th>}{['ID','Date','Checked By','Items','Discrepancies','Status','Notes','Action'].map(h=><th key={h} className="th">{h}</th>)}</tr></thead>
       <tbody>{stockChecks.map(r=><tr key={r.id} className="tr" style={{borderBottom:'1px solid #F7FAFC',background:selStockChecks.has(r.id)?'#FEF3C7':'#fff'}}>
-        <td className="td"><SelBox checked={selStockChecks.has(r.id)} onChange={()=>toggleSel(selStockChecks,setSelStockChecks,r.id)}/></td>
+        {hasPermission('deleteStockChecks')&&<td className="td"><SelBox checked={selStockChecks.has(r.id)} onChange={()=>toggleSel(selStockChecks,setSelStockChecks,r.id)}/></td>}
         <td className="td mono" style={{fontSize:11,fontWeight:600,color:'#0B7A3E'}}>{r.id}</td>
         <td className="td">{fmtDate(r.date)}</td>
         <td className="td">{r.checkedBy}</td>
@@ -1804,7 +1835,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
           {r.status==='Completed' && (
             <button className="bs" style={{padding:'4px 8px',fontSize:11}} onClick={()=>{notify('Report Downloaded',`${r.id} exported`,'success');}}><Download size={12}/></button>
           )}
-          <button onClick={()=>{if(window.confirm(`Delete stock check ${r.id}?`)){setStockChecks(prev=>prev.filter(x=>x.id!==r.id));notify('Deleted',r.id,'success');}}} style={{background:'#DC2626',color:'#fff',border:'none',borderRadius:6,padding:'4px 8px',fontSize:10,cursor:'pointer'}}><Trash2 size={11}/></button>
+          {hasPermission('deleteStockChecks')&&<button onClick={()=>{if(window.confirm(`Delete stock check ${r.id}?`)){setStockChecks(prev=>prev.filter(x=>x.id!==r.id));notify('Deleted',r.id,'success');}}} style={{background:'#DC2626',color:'#fff',border:'none',borderRadius:6,padding:'4px 8px',fontSize:10,cursor:'pointer'}}><Trash2 size={11}/></button>}
           </div>
         </td>
       </tr>)}</tbody>
@@ -2008,14 +2039,14 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
           </div>
         )}
 
-        {!(isAdmin||waAllowedSenders.includes(currentUser?.username)) && !waConnected && (
+        {!(hasPermission('whatsapp')||waAllowedSenders.includes(currentUser?.username)) && !waConnected && (
           <div style={{padding:12,borderRadius:8,background:'#FEF3C7',fontSize:12,color:'#92400E',marginBottom:16,display:'flex',gap:8}}><Shield size={14}/> Only authorized users can connect WhatsApp. Contact admin to be assigned as a sender.</div>
         )}
 
         <div style={{display:'flex',gap:8}}>
           {!waConnected ? (
-            <button className="bw" onClick={handleWaConnect} disabled={!(isAdmin||waAllowedSenders.includes(currentUser?.username))||waConnecting} style={{opacity:(isAdmin||waAllowedSenders.includes(currentUser?.username))?1:.5,flex:1}}>
-              {waConnecting?<><RefreshCw size={14} style={{animation:'spin 1s linear infinite'}}/> Connecting...</>:<><QrCode size={14}/> {isAdmin?'Scan QR Code':'Admin Only'}</>}
+            <button className="bw" onClick={handleWaConnect} disabled={!(hasPermission('whatsapp')||waAllowedSenders.includes(currentUser?.username))||waConnecting} style={{opacity:(hasPermission('whatsapp')||waAllowedSenders.includes(currentUser?.username))?1:.5,flex:1}}>
+              {waConnecting?<><RefreshCw size={14} style={{animation:'spin 1s linear infinite'}}/> Connecting...</>:<><QrCode size={14}/> {hasPermission('whatsapp')?'Scan QR Code':'Admin Only'}</>}
             </button>
           ) : (
             <button className="bd" onClick={handleWaDisconnect} style={{flex:1}}><WifiOff size={14}/> Disconnect Session</button>
@@ -2261,17 +2292,17 @@ if(scheduledNotifs.emailEnabled){                    setNotifLog(prev=>[{id:'N-'
       <div className="card" style={{padding:'18px 20px'}}><p style={{fontSize:12,color:'#64748B',lineHeight:1.6}}>WhatsApp messaging is handled through the <strong>Baileys WhiskeySockets</strong> integration. Go to the WhatsApp page to connect your session, manage templates, and send messages.<br/><br/>Admin must scan QR code to authorize the session.</p></div>
     </div>
   </div>
-  <BatchBar count={selNotifs.size} onClear={()=>setSelNotifs(new Set())}>
+  {hasPermission('deleteNotifications')&&<BatchBar count={selNotifs.size} onClear={()=>setSelNotifs(new Set())}>
     <BatchBtn onClick={batchDeleteNotifs} bg="#DC2626" icon={Trash2}>Delete Selected</BatchBtn>
-  </BatchBar>
+  </BatchBar>}
   <div className="card" style={{overflow:'hidden'}}>
     <div style={{padding:'16px 20px',borderBottom:'1px solid #E8ECF0',display:'flex',justifyContent:'space-between'}}><span style={{fontWeight:600,fontSize:14}}>All Notification History</span><span style={{fontSize:11,color:'#94A3B8'}}>{notifLog.length} records{selNotifs.size>0&&` • ${selNotifs.size} selected`}</span></div>
-    <table style={{width:'100%',borderCollapse:'collapse',fontSize:12.5}}><thead><tr style={{background:'#F8FAFB'}}><th className="th" style={{width:36}}><SelBox checked={selNotifs.size===notifLog.length&&notifLog.length>0} onChange={()=>toggleAll(selNotifs,setSelNotifs,notifLog.map(n=>n.id))}/></th>{['ID','Channel','To','Subject','Date','Status'].map(h=><th key={h} className="th">{h}</th>)}</tr></thead><tbody>{notifLog.map(n=><tr key={n.id} className="tr" style={{borderBottom:'1px solid #F7FAFC',background:selNotifs.has(n.id)?'#EDE9FE':'#fff'}}><td className="td"><SelBox checked={selNotifs.has(n.id)} onChange={()=>toggleSel(selNotifs,setSelNotifs,n.id)}/></td><td className="td mono" style={{fontSize:11,fontWeight:500}}>{n.id}</td><td className="td"><Pill bg={n.type==='email'?'#DBEAFE':'#D1FAE5'} color={n.type==='email'?'#2563EB':'#059669'}>{n.type==='email'?<Mail size={11}/>:<MessageSquare size={11}/>} {n.type==='email'?'Email':'WhatsApp'}</Pill></td><td className="td" style={{fontSize:12,color:'#64748B'}}>{n.to}</td><td className="td" style={{maxWidth:250,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{n.subject}</td><td className="td" style={{color:'#94A3B8',fontSize:11}}>{fmtDate(n.date)}</td><td className="td"><Pill bg="#E6F4ED" color="#0B7A3E"><Check size={11}/> {n.status}</Pill></td></tr>)}</tbody></table>
+    <table style={{width:'100%',borderCollapse:'collapse',fontSize:12.5}}><thead><tr style={{background:'#F8FAFB'}}>{hasPermission('deleteNotifications')&&<th className="th" style={{width:36}}><SelBox checked={selNotifs.size===notifLog.length&&notifLog.length>0} onChange={()=>toggleAll(selNotifs,setSelNotifs,notifLog.map(n=>n.id))}/></th>}{['ID','Channel','To','Subject','Date','Status'].map(h=><th key={h} className="th">{h}</th>)}</tr></thead><tbody>{notifLog.map(n=><tr key={n.id} className="tr" style={{borderBottom:'1px solid #F7FAFC',background:selNotifs.has(n.id)?'#EDE9FE':'#fff'}}>{hasPermission('deleteNotifications')&&<td className="td"><SelBox checked={selNotifs.has(n.id)} onChange={()=>toggleSel(selNotifs,setSelNotifs,n.id)}/></td>}<td className="td mono" style={{fontSize:11,fontWeight:500}}>{n.id}</td><td className="td"><Pill bg={n.type==='email'?'#DBEAFE':'#D1FAE5'} color={n.type==='email'?'#2563EB':'#059669'}>{n.type==='email'?<Mail size={11}/>:<MessageSquare size={11}/>} {n.type==='email'?'Email':'WhatsApp'}</Pill></td><td className="td" style={{fontSize:12,color:'#64748B'}}>{n.to}</td><td className="td" style={{maxWidth:250,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{n.subject}</td><td className="td" style={{color:'#94A3B8',fontSize:11}}>{fmtDate(n.date)}</td><td className="td"><Pill bg="#E6F4ED" color="#0B7A3E"><Check size={11}/> {n.status}</Pill></td></tr>)}</tbody></table>
   </div>
 </div>)}
 
 {/* ═══════════ USER MANAGEMENT (ADMIN ONLY) ═══════════ */}
-{page==='users'&&isAdmin&&(<div>
+{page==='users'&&hasPermission('users')&&(<div>
   {/* Pending Approvals */}
   {pendingUsers.length>0 && (
     <div className="card" style={{padding:'20px 24px',marginBottom:24,border:'2px solid #FDE68A',background:'#FFFBEB'}}>
@@ -2338,7 +2369,7 @@ if(scheduledNotifs.emailEnabled){                    setNotifLog(prev=>[{id:'N-'
 
 {/* Edit User Modal */}
 {selectedUser&&(<div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.5)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:9999}} onClick={()=>setSelectedUser(null)}>
-  <div className="modal-box" onClick={e=>e.stopPropagation()} style={{background:'#fff',borderRadius:16,padding:24,width:420,maxWidth:'94vw',maxHeight:'80vh',overflow:'auto',boxShadow:'0 25px 50px -12px rgba(0,0,0,0.25)'}}>
+  <div className="modal-box" onClick={e=>e.stopPropagation()} style={{background:'#fff',borderRadius:16,padding:24,width:540,maxWidth:'94vw',maxHeight:'85vh',overflow:'auto',boxShadow:'0 25px 50px -12px rgba(0,0,0,0.25)'}}>
     <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:20}}>
       <h3 style={{fontSize:16,fontWeight:700}}>Edit User Profile</h3>
       <button onClick={()=>setSelectedUser(null)} style={{background:'none',border:'none',cursor:'pointer'}}><X size={20} color="#64748B"/></button>
@@ -2376,6 +2407,33 @@ if(scheduledNotifs.emailEnabled){                    setNotifLog(prev=>[{id:'N-'
           </select>
         </div>
       </div>
+      {/* Feature Permissions */}
+      {selectedUser.role!=='admin'&&<div style={{border:'1.5px solid #E2E8F0',borderRadius:10,padding:16}}>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}>
+          <label style={{fontSize:13,fontWeight:700,color:'#1A202C'}}>Feature Permissions</label>
+          <div style={{display:'flex',gap:6}}>
+            <button onClick={()=>setSelectedUser(prev=>({...prev,permissions:Object.fromEntries(Object.keys(DEFAULT_USER_PERMS).map(k=>[k,true]))}))} style={{padding:'3px 10px',fontSize:10,fontWeight:600,border:'1px solid #059669',background:'#D1FAE5',color:'#059669',borderRadius:6,cursor:'pointer'}}>All</button>
+            <button onClick={()=>setSelectedUser(prev=>({...prev,permissions:{...DEFAULT_USER_PERMS}}))} style={{padding:'3px 10px',fontSize:10,fontWeight:600,border:'1px solid #D97706',background:'#FEF3C7',color:'#D97706',borderRadius:6,cursor:'pointer'}}>Default</button>
+            <button onClick={()=>setSelectedUser(prev=>({...prev,permissions:Object.fromEntries(Object.keys(DEFAULT_USER_PERMS).map(k=>[k,false]))}))} style={{padding:'3px 10px',fontSize:10,fontWeight:600,border:'1px solid #DC2626',background:'#FEE2E2',color:'#DC2626',borderRadius:6,cursor:'pointer'}}>None</button>
+          </div>
+        </div>
+        {['Pages','Actions','Admin'].map(group=>(
+          <div key={group} style={{marginBottom:10}}>
+            <div style={{fontSize:11,fontWeight:600,color:'#64748B',marginBottom:6,textTransform:'uppercase',letterSpacing:'0.5px'}}>{group}</div>
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:4}}>
+              {FEATURE_PERMISSIONS.filter(p=>p.group===group).map(p=>{
+                const perms=selectedUser.permissions||DEFAULT_USER_PERMS;
+                const enabled=perms[p.key]===true;
+                return <label key={p.key} style={{display:'flex',alignItems:'center',gap:8,padding:'6px 10px',borderRadius:6,cursor:'pointer',fontSize:12,background:enabled?'#F0FDF4':'#F8FAFB',border:enabled?'1px solid #BBF7D0':'1px solid #E8ECF0',transition:'all 0.15s'}}>
+                  <input type="checkbox" checked={enabled} onChange={()=>setSelectedUser(prev=>({...prev,permissions:{...(prev.permissions||DEFAULT_USER_PERMS),[p.key]:!enabled}}))} style={{accentColor:'#059669'}}/>
+                  <span style={{fontWeight:enabled?600:400,color:enabled?'#065F46':'#94A3B8'}}>{p.label}</span>
+                </label>;
+              })}
+            </div>
+          </div>
+        ))}
+      </div>}
+      {selectedUser.role==='admin'&&<div style={{padding:14,borderRadius:10,background:'#DBEAFE',border:'1px solid #93C5FD',fontSize:12,color:'#1E40AF',display:'flex',alignItems:'center',gap:8}}><Shield size={14}/> Admin role has full access to all features.</div>}
       <div style={{display:'flex',gap:10,marginTop:8}}>
         <button onClick={()=>setSelectedUser(null)} style={{flex:1,padding:'10px',borderRadius:8,border:'1.5px solid #E2E8F0',background:'#fff',color:'#64748B',fontWeight:600,fontSize:13,cursor:'pointer'}}>Cancel</button>
         <button onClick={()=>{setUsers(prev=>prev.map(u=>u.id===selectedUser.id?selectedUser:u));api.updateUser(selectedUser.id,selectedUser);setSelectedUser(null);notify('User Updated','Changes saved to database','success');}} style={{flex:1,padding:'10px',borderRadius:8,border:'none',background:'linear-gradient(135deg,#006837,#00A550)',color:'#fff',fontWeight:600,fontSize:13,cursor:'pointer'}}>Save Changes</button>
@@ -2633,7 +2691,7 @@ if(scheduledNotifs.emailEnabled){                    setNotifLog(prev=>[{id:'N-'
 {/* ═══════════ SETTINGS ═══════════ */}
 
 {/* ═══════════ AI BOT ADMIN (ADMIN ONLY) ═══════════ */}
-{page==='aibot'&&isAdmin&&(<div>
+{page==='aibot'&&hasPermission('aiBot')&&(<div>
   <div style={{display:'flex',alignItems:'center',gap:12,marginBottom:24}}>
     <div style={{padding:10,background:'linear-gradient(135deg,#006837,#00A550)',borderRadius:12}}><Bot size={22} color="#fff"/></div>
     <div><h2 style={{fontSize:18,fontWeight:700}}>AI Bot Administration</h2><p style={{fontSize:12,color:'#94A3B8'}}>Configure knowledge base, bot behavior, and view conversation logs</p></div>
@@ -2779,10 +2837,10 @@ if(scheduledNotifs.emailEnabled){                    setNotifLog(prev=>[{id:'N-'
   )}
 </div>)}
 
-{page==='settings'&&(<div style={{maxWidth:700}}>
+{page==='settings'&&hasPermission('settings')&&(<div style={{maxWidth:700}}>
 
   {/* Logo Settings - Admin Only */}
-  {isAdmin && <div className="card" style={{padding:'24px 28px',marginBottom:16}}>
+  {hasPermission('settings') && <div className="card" style={{padding:'24px 28px',marginBottom:16}}>
     <h3 style={{fontSize:15,fontWeight:600,marginBottom:20}}>App Logo & Branding</h3>
     <div style={{display:'flex',gap:24,alignItems:'flex-start'}}>
       <div style={{width:80,height:80,borderRadius:16,background:customLogo?'#fff':'linear-gradient(135deg,#006837,#00A550)',display:'flex',alignItems:'center',justifyContent:'center',border:'2px solid #E2E8F0',overflow:'hidden'}}>
@@ -2817,7 +2875,7 @@ if(scheduledNotifs.emailEnabled){                    setNotifLog(prev=>[{id:'N-'
   <div className="card" style={{padding:'24px 28px',marginBottom:16}}><h3 style={{fontSize:15,fontWeight:600,marginBottom:20}}>WhatsApp Baileys Config</h3><div style={{display:'flex',flexDirection:'column',gap:16}}><div style={{display:'flex',alignItems:'center',justifyContent:'space-between'}}><span style={{fontSize:13}}>Session Status</span><Pill bg={waConnected?'#D1FAE5':'#FEE2E2'} color={waConnected?'#059669':'#DC2626'}>{waConnected?'Connected':'Disconnected'}</Pill></div><div style={{fontSize:12,color:'#64748B',lineHeight:1.6}}>Baileys WhiskeySockets connects to WhatsApp via the Multi-Device protocol. The admin must scan a QR code to authorize the session. Go to <button onClick={()=>setPage('whatsapp')} style={{background:'none',border:'none',color:'#0B7A3E',cursor:'pointer',fontFamily:'inherit',fontSize:12,fontWeight:600}}>WhatsApp page</button> to manage.</div></div></div>
 
   {/* Email Configuration - Admin Only */}
-  {isAdmin && <div className="card" style={{padding:'24px 28px',marginBottom:16}}>
+  {hasPermission('settings') && <div className="card" style={{padding:'24px 28px',marginBottom:16}}>
     <h3 style={{fontSize:15,fontWeight:600,marginBottom:20}}>Email Sender Configuration</h3>
     <div style={{display:'flex',flexDirection:'column',gap:16}}>
       <div style={{display:'flex',alignItems:'center',justifyContent:'space-between'}}>
@@ -2849,7 +2907,7 @@ if(scheduledNotifs.emailEnabled){                    setNotifLog(prev=>[{id:'N-'
   </div>}
 
   {/* Order Approval Email Configuration - Admin Only */}
-  {isAdmin && <div className="card" style={{padding:'24px 28px',marginBottom:16}}>
+  {hasPermission('settings') && <div className="card" style={{padding:'24px 28px',marginBottom:16}}>
     <h3 style={{fontSize:15,fontWeight:600,marginBottom:20,display:'flex',alignItems:'center',gap:10}}><Shield size={18} color="#7C3AED"/> Order Approval Workflow</h3>
     <div style={{display:'flex',flexDirection:'column',gap:16}}>
       <div style={{display:'flex',alignItems:'center',justifyContent:'space-between'}}>
@@ -2903,7 +2961,7 @@ if(scheduledNotifs.emailEnabled){                    setNotifLog(prev=>[{id:'N-'
   </div>}
 
   {/* Email & Notification Templates - Admin Only */}
-  {isAdmin && <div className="card" style={{padding:'24px 28px',marginBottom:16}}>
+  {hasPermission('settings') && <div className="card" style={{padding:'24px 28px',marginBottom:16}}>
     <h3 style={{fontSize:15,fontWeight:600,marginBottom:20,display:'flex',alignItems:'center',gap:10}}><FileText size={18} color="#2563EB"/> Email & Notification Templates</h3>
     <p style={{fontSize:12,color:'#64748B',marginBottom:16}}>Customize email templates for approvals, notifications, and alerts. Use {'{placeholder}'} variables that get replaced with actual data.</p>
     <div style={{display:'flex',flexDirection:'column',gap:10}}>
@@ -2952,7 +3010,7 @@ if(scheduledNotifs.emailEnabled){                    setNotifLog(prev=>[{id:'N-'
   </div>}
 
   {/* WhatsApp Sender Assignment - Admin Only */}
-  {isAdmin && <div className="card" style={{padding:'24px 28px',marginBottom:16}}>
+  {hasPermission('settings') && <div className="card" style={{padding:'24px 28px',marginBottom:16}}>
     <h3 style={{fontSize:15,fontWeight:600,marginBottom:20}}>WhatsApp Sender Assignment</h3>
     <p style={{fontSize:12,color:'#64748B',marginBottom:16}}>Assign users who can connect their WhatsApp to send notifications on behalf of the system.</p>
 
@@ -2995,7 +3053,7 @@ if(scheduledNotifs.emailEnabled){                    setNotifLog(prev=>[{id:'N-'
   </div>}
 
   {/* History Data Import - Admin Only */}
-  {isAdmin && <div className="card" style={{padding:'24px 28px',marginBottom:16}}>
+  {hasPermission('settings') && <div className="card" style={{padding:'24px 28px',marginBottom:16}}>
     <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:20}}>
       <div style={{padding:8,background:'linear-gradient(135deg,#4338CA,#6366F1)',borderRadius:10}}><Database size={18} color="#fff"/></div>
       <div>
@@ -3057,7 +3115,7 @@ if(scheduledNotifs.emailEnabled){                    setNotifLog(prev=>[{id:'N-'
   </div>}
 
   {/* ── Admin Parts Catalog Management ── */}
-  {isAdmin && <div style={{background:'#fff',borderRadius:12,padding:20,boxShadow:'0 1px 3px rgba(0,0,0,.06)',marginBottom:20}}>
+  {hasPermission('settings') && <div style={{background:'#fff',borderRadius:12,padding:20,boxShadow:'0 1px 3px rgba(0,0,0,.06)',marginBottom:20}}>
     <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:16}}>
       <div><h3 style={{fontSize:15,fontWeight:700,color:'#1E293B',margin:0}}>Parts Catalog Management</h3><div style={{fontSize:12,color:'#64748B',marginTop:4}}>Current catalog: {partsCatalog.length} parts</div></div>
     </div>

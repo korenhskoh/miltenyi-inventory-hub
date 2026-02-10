@@ -7,6 +7,7 @@ CREATE TABLE IF NOT EXISTS users (
   phone VARCHAR(30),
   role VARCHAR(20) DEFAULT 'user',
   status VARCHAR(20) DEFAULT 'active',
+  permissions JSONB DEFAULT '{}',
   created DATE DEFAULT CURRENT_DATE
 );
 
@@ -97,3 +98,6 @@ CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status);
 CREATE INDEX IF NOT EXISTS idx_orders_month ON orders(month);
 CREATE INDEX IF NOT EXISTS idx_orders_order_by ON orders(order_by);
 CREATE INDEX IF NOT EXISTS idx_pending_approvals_status ON pending_approvals(status);
+
+-- Migrations for existing databases
+ALTER TABLE users ADD COLUMN IF NOT EXISTS permissions JSONB DEFAULT '{}';

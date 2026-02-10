@@ -7,14 +7,14 @@ import { pickAllowed, requireFields } from '../validation.js';
 const router = Router();
 
 // Allowed fields for user create/update
-const USER_FIELDS = ['username', 'password_hash', 'name', 'email', 'phone', 'role', 'status'];
+const USER_FIELDS = ['username', 'password_hash', 'name', 'email', 'phone', 'role', 'status', 'permissions'];
 const USER_REQUIRED = ['username'];
 
 // GET / - list all users (EXCLUDE password_hash)
 router.get('/', async (req, res) => {
   try {
     const result = await query(
-      'SELECT id, username, name, email, phone, role, status, created FROM users ORDER BY id'
+      'SELECT id, username, name, email, phone, role, status, permissions, created FROM users ORDER BY id'
     );
     const rows = result.rows.map(snakeToCamel);
     res.json(rows);
@@ -33,6 +33,7 @@ router.post('/', async (req, res) => {
     }
 
     const snakeBody = pickAllowed(camelToSnake(body), USER_FIELDS);
+    if (snakeBody.permissions && typeof snakeBody.permissions === 'object') snakeBody.permissions = JSON.stringify(snakeBody.permissions);
     const err = requireFields(snakeBody, USER_REQUIRED);
     if (err) return res.status(400).json({ error: err });
 
@@ -40,7 +41,7 @@ router.post('/', async (req, res) => {
     const values = Object.values(snakeBody);
     const placeholders = keys.map((_, i) => `$${i + 1}`);
 
-    const sql = `INSERT INTO users (${keys.join(', ')}) VALUES (${placeholders.join(', ')}) RETURNING id, username, name, email, phone, role, status, created`;
+    const sql = `INSERT INTO users (${keys.join(', ')}) VALUES (${placeholders.join(', ')}) RETURNING id, username, name, email, phone, role, status, permissions, created`;
     const result = await query(sql, values);
     res.status(201).json(snakeToCamel(result.rows[0]));
   } catch (e) {
@@ -60,6 +61,7 @@ router.put('/:id', async (req, res) => {
     }
 
     const snakeBody = pickAllowed(camelToSnake(body), USER_FIELDS);
+    if (snakeBody.permissions && typeof snakeBody.permissions === 'object') snakeBody.permissions = JSON.stringify(snakeBody.permissions);
     const keys = Object.keys(snakeBody);
     const values = Object.values(snakeBody);
 
@@ -68,7 +70,7 @@ router.put('/:id', async (req, res) => {
     }
 
     const setClauses = keys.map((key, i) => `${key} = $${i + 1}`);
-    const sql = `UPDATE users SET ${setClauses.join(', ')} WHERE id = $${keys.length + 1} RETURNING id, username, name, email, phone, role, status, created`;
+    const sql = `UPDATE users SET ${setClauses.join(', ')} WHERE id = $${keys.length + 1} RETURNING id, username, name, email, phone, role, status, permissions, created`;
     const result = await query(sql, [...values, id]);
 
     if (result.rows.length === 0) {
