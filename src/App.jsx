@@ -711,8 +711,16 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
   const batchStatusBulk = (status) => {
     if (!selBulk.size) return;
     const ids = [...selBulk];
+    const idSet = new Set(ids);
     setBulkGroups(prev => prev.map(g => selBulk.has(g.id) ? { ...g, status } : g));
     ids.forEach(id => dbSync(api.updateBulkGroup(id, { status }), 'Bulk group status not saved'));
+    // Cascade approval status to all linked orders
+    if (status === 'Approved' || status === 'Rejected') {
+      const approvalStatus = status === 'Approved' ? 'approved' : 'rejected';
+      const linkedOrders = orders.filter(o => o.bulkGroupId && idSet.has(o.bulkGroupId));
+      setOrders(prev => prev.map(o => o.bulkGroupId && idSet.has(o.bulkGroupId) ? { ...o, status, approvalStatus } : o));
+      linkedOrders.forEach(o => dbSync(api.updateOrder(o.id, { status, approvalStatus }), 'Order approval cascade failed'));
+    }
     notify('Batch Update', `${ids.length} bulk groups → ${status}`, 'success');
     setSelBulk(new Set());
   };
@@ -2124,8 +2132,8 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
   <div className="card" style={{padding:'20px 24px',marginTop:16}}>
     <h3 style={{fontSize:15,fontWeight:600,marginBottom:16}}>Orders by Month Batch <span style={{fontWeight:400,fontSize:12,color:'#64748B'}}>(Click to view orders)</span></h3>
     <div className="grid-4" style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:12}}>
-      {[...new Set(orders.map(o=>o.month))].slice(0,16).map(month=>{
-        const mo = orders.filter(o=>o.month===month);
+      {[...new Set(orders.filter(o=>o.bulkGroupId).map(o=>o.month))].slice(0,16).map(month=>{
+        const mo = orders.filter(o=>o.bulkGroupId&&o.month===month);
         const createdByUsers = [...new Set(mo.map(o=>o.orderBy).filter(Boolean))];
         return <div key={month} onClick={()=>setExpandedMonth(expandedMonth===month?null:month)} style={{padding:14,borderRadius:10,background:expandedMonth===month?'#E6F4ED':'#F8FAFB',border:expandedMonth===month?'2px solid #0B7A3E':'1px solid #E8ECF0',cursor:'pointer',transition:'all 0.2s'}}>
           <div style={{fontWeight:600,fontSize:12,marginBottom:8,color:'#0B7A3E',display:'flex',alignItems:'center',gap:6}}><Calendar size={12}/> {month}</div>
@@ -2147,14 +2155,14 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
         <h3 style={{fontSize:15,fontWeight:600,display:'flex',alignItems:'center',gap:8}}><Calendar size={16} color="#0B7A3E"/> Orders for: {expandedMonth}</h3>
         <button onClick={()=>setExpandedMonth(null)} style={{background:'none',border:'none',cursor:'pointer'}}><X size={18} color="#64748B"/></button>
       </div>
-      {hasPermission('deleteOrders')&&(()=>{ const monthOrders = orders.filter(o=>o.month===expandedMonth||o.month===expandedMonth.replace(/ /g,'_')||o.month.replace(/_/g,' ')===expandedMonth); const monthIds = monthOrders.filter(o=>selOrders.has(o.id)); return monthIds.length>0 ? <BatchBar count={monthIds.length} onClear={()=>setSelOrders(prev=>{const n=new Set(prev);monthOrders.forEach(o=>n.delete(o.id));return n;})}>
+      {hasPermission('deleteOrders')&&(()=>{ const monthOrders = orders.filter(o=>o.bulkGroupId&&(o.month===expandedMonth||o.month===expandedMonth.replace(/ /g,'_')||o.month.replace(/_/g,' ')===expandedMonth)); const monthIds = monthOrders.filter(o=>selOrders.has(o.id)); return monthIds.length>0 ? <BatchBar count={monthIds.length} onClear={()=>setSelOrders(prev=>{const n=new Set(prev);monthOrders.forEach(o=>n.delete(o.id));return n;})}>
         <BatchBtn onClick={()=>batchStatusOrders('Received')} bg="#059669" icon={CheckCircle}>Received</BatchBtn>
         <BatchBtn onClick={()=>batchStatusOrders('Back Order')} bg="#D97706" icon={AlertTriangle}>Back Order</BatchBtn>
         <BatchBtn onClick={batchDeleteOrders} bg="#DC2626" icon={Trash2}>Delete</BatchBtn>
       </BatchBar> : null; })()}
       <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
-        <thead><tr style={{background:'#F8FAFB'}}>{hasPermission('deleteOrders')&&<th className="th" style={{width:36}}>{(()=>{const mo=orders.filter(o=>o.month===expandedMonth||o.month===expandedMonth.replace(/ /g,'_')||o.month.replace(/_/g,' ')===expandedMonth);return <SelBox checked={mo.length>0&&mo.every(o=>selOrders.has(o.id))} onChange={()=>{const mo2=orders.filter(o=>o.month===expandedMonth||o.month===expandedMonth.replace(/ /g,'_')||o.month.replace(/_/g,' ')===expandedMonth);const ids=mo2.map(o=>o.id);setSelOrders(prev=>{const n=new Set(prev);const allSel=ids.every(id=>prev.has(id));ids.forEach(id=>allSel?n.delete(id):n.add(id));return n;});}}/>;})()}</th>}{['Order ID','Material No','Description','Qty','Ordered By','Order Date','Status','Total Cost','Actions'].map(h=><th key={h} className="th">{h}</th>)}</tr></thead>
-        <tbody>{orders.filter(o=>o.month===expandedMonth||o.month===expandedMonth.replace(/ /g,'_')||o.month.replace(/_/g,' ')===expandedMonth).map(o=>(
+        <thead><tr style={{background:'#F8FAFB'}}>{hasPermission('deleteOrders')&&<th className="th" style={{width:36}}>{(()=>{const mo=orders.filter(o=>o.bulkGroupId&&(o.month===expandedMonth||o.month===expandedMonth.replace(/ /g,'_')||o.month.replace(/_/g,' ')===expandedMonth));return <SelBox checked={mo.length>0&&mo.every(o=>selOrders.has(o.id))} onChange={()=>{const mo2=orders.filter(o=>o.bulkGroupId&&(o.month===expandedMonth||o.month===expandedMonth.replace(/ /g,'_')||o.month.replace(/_/g,' ')===expandedMonth));const ids=mo2.map(o=>o.id);setSelOrders(prev=>{const n=new Set(prev);const allSel=ids.every(id=>prev.has(id));ids.forEach(id=>allSel?n.delete(id):n.add(id));return n;});}}/>;})()}</th>}{['Order ID','Material No','Description','Qty','Ordered By','Order Date','Status','Total Cost','Actions'].map(h=><th key={h} className="th">{h}</th>)}</tr></thead>
+        <tbody>{orders.filter(o=>o.bulkGroupId&&(o.month===expandedMonth||o.month===expandedMonth.replace(/ /g,'_')||o.month.replace(/_/g,' ')===expandedMonth)).map(o=>(
           <tr key={o.id} className="tr" onClick={()=>openOrderInNewTab(o)} style={{borderBottom:'1px solid #F7FAFC',cursor:'pointer',background:selOrders.has(o.id)?'#E6F4ED':'#fff'}}>
             {hasPermission('deleteOrders')&&<td className="td" onClick={e=>e.stopPropagation()}><SelBox checked={selOrders.has(o.id)} onChange={()=>toggleSel(selOrders,setSelOrders,o.id)}/></td>}
             <td className="td mono" style={{fontSize:11,fontWeight:600,color:'#4338CA'}}>{o.id}</td>
@@ -2175,9 +2183,9 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
           </tr>))}</tbody>
       </table>
       <div style={{marginTop:12,padding:12,background:'#F8FAFB',borderRadius:8,fontSize:12}}>
-        <strong>Summary:</strong> {orders.filter(o=>o.month===expandedMonth||o.month===expandedMonth.replace(/ /g,'_')||o.month.replace(/_/g,' ')===expandedMonth).length} orders |
-        Total Qty: {orders.filter(o=>o.month===expandedMonth||o.month===expandedMonth.replace(/ /g,'_')||o.month.replace(/_/g,' ')===expandedMonth).reduce((s,o)=>s+o.quantity,0)} |
-        Total Cost: <strong className="mono">{fmt(orders.filter(o=>o.month===expandedMonth||o.month===expandedMonth.replace(/ /g,'_')||o.month.replace(/_/g,' ')===expandedMonth).reduce((s,o)=>s+o.totalCost,0))}</strong>
+        <strong>Summary:</strong> {orders.filter(o=>o.bulkGroupId&&(o.month===expandedMonth||o.month===expandedMonth.replace(/ /g,'_')||o.month.replace(/_/g,' ')===expandedMonth)).length} orders |
+        Total Qty: {orders.filter(o=>o.bulkGroupId&&(o.month===expandedMonth||o.month===expandedMonth.replace(/ /g,'_')||o.month.replace(/_/g,' ')===expandedMonth)).reduce((s,o)=>s+o.quantity,0)} |
+        Total Cost: <strong className="mono">{fmt(orders.filter(o=>o.bulkGroupId&&(o.month===expandedMonth||o.month===expandedMonth.replace(/ /g,'_')||o.month.replace(/_/g,' ')===expandedMonth)).reduce((s,o)=>s+o.totalCost,0))}</strong>
       </div>
     </div>
   )}
@@ -2408,7 +2416,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
 
   {/* Bulk Orders to Check */}
   <div className="card" style={{padding:'20px 24px',marginBottom:20}}>
-    <h3 style={{fontSize:15,fontWeight:700,marginBottom:16}}>Bulk Orders - Arrival Verification</h3>
+    <h3 style={{fontSize:15,fontWeight:700,marginBottom:16}}>Single / Bulk Orders - Arrival Verification</h3>
     <div style={{display:'grid',gap:12}}>
       {bulkGroups.map(bg=>{
         const bgOrders = orders.filter(o=>o.bulkGroupId===bg.id);
@@ -3113,6 +3121,8 @@ if(scheduledNotifs.emailEnabled){                    addNotifEntry({id:'N-'+Date
           const origGroup = bulkGroups.find(g=>g.id===selectedBulkGroup.id);
           const oldMonth = origGroup?.month||'';
           const newMonth = selectedBulkGroup.month;
+          const oldStatus = origGroup?.status||'';
+          const newStatus = selectedBulkGroup.status;
           setBulkGroups(prev=>prev.map(g=>g.id===selectedBulkGroup.id?selectedBulkGroup:g));
           dbSync(api.updateBulkGroup(selectedBulkGroup.id,selectedBulkGroup),'Bulk group edit not saved');
           // If month changed, update orders linked to this bulk group
@@ -3121,6 +3131,13 @@ if(scheduledNotifs.emailEnabled){                    addNotifEntry({id:'N-'+Date
             orders.filter(o=>o.bulkGroupId===selectedBulkGroup.id).forEach(o=>{
               dbSync(api.updateOrder(o.id,{month:newMonth}),'Order month sync failed');
             });
+          }
+          // If status changed to Approved/Rejected, cascade to all linked orders
+          if(oldStatus!==newStatus&&(newStatus==='Approved'||newStatus==='Rejected')){
+            const approvalStatus=newStatus==='Approved'?'approved':'rejected';
+            const linkedOrders=orders.filter(o=>o.bulkGroupId===selectedBulkGroup.id);
+            setOrders(prev=>prev.map(o=>o.bulkGroupId===selectedBulkGroup.id?{...o,status:newStatus,approvalStatus}:o));
+            linkedOrders.forEach(o=>dbSync(api.updateOrder(o.id,{status:newStatus,approvalStatus}),'Order approval cascade failed'));
           }
           setSelectedBulkGroup(null);notify('Bulk Order Updated','Changes saved to database','success');
         }} style={{flex:1,padding:'10px',borderRadius:8,border:'none',background:'linear-gradient(135deg,#4338CA,#6366F1)',color:'#fff',fontWeight:600,fontSize:13,cursor:'pointer'}}>Save Changes</button>
@@ -3200,7 +3217,7 @@ if(scheduledNotifs.emailEnabled){                    addNotifEntry({id:'N-'+Date
         </div>
         <div>
           <label style={{display:'block',fontSize:12,fontWeight:600,color:'#4A5568',marginBottom:6}}>Status</label>
-          <select value={editingOrder.status||'Pending'} onChange={e=>setEditingOrder(prev=>({...prev,status:e.target.value}))} style={{width:'100%',padding:'10px 12px',borderRadius:8,border:'1.5px solid #E2E8F0',fontSize:13}}>
+          <select value={editingOrder.status||'Pending'} onChange={e=>{const s=e.target.value;const approvalSync=s==='Approved'?'approved':s==='Rejected'?'rejected':undefined;setEditingOrder(prev=>({...prev,status:s,...(approvalSync?{approvalStatus:approvalSync}:{})}));}} style={{width:'100%',padding:'10px 12px',borderRadius:8,border:'1.5px solid #E2E8F0',fontSize:13}}>
             <option value="Pending Approval">Pending Approval</option>
             <option value="Pending">Pending</option>
             <option value="Processed">Processed</option>

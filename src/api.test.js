@@ -55,16 +55,16 @@ describe('api.getOrders', () => {
     expect(mockFetch).toHaveBeenCalledWith('/api/orders?status=Pending', expect.any(Object));
   });
 
-  it('returns empty array on HTTP error', async () => {
+  it('returns null on HTTP error', async () => {
     mockFetch.mockResolvedValueOnce({ ok: false, status: 500 });
     const result = await api.getOrders();
-    expect(result).toEqual([]);
+    expect(result).toBeNull();
   });
 
-  it('returns empty array on network failure', async () => {
+  it('returns null on network failure', async () => {
     mockFetch.mockRejectedValueOnce(new Error('Network error'));
     const result = await api.getOrders();
-    expect(result).toEqual([]);
+    expect(result).toBeNull();
   });
 });
 
@@ -244,10 +244,10 @@ describe('api.getCatalog', () => {
     expect(result).toEqual(parts);
   });
 
-  it('returns empty array on failure', async () => {
+  it('returns null on failure', async () => {
     mockFetch.mockResolvedValueOnce({ ok: false, status: 500 });
     const result = await api.getCatalog();
-    expect(result).toEqual([]);
+    expect(result).toBeNull();
   });
 });
 
