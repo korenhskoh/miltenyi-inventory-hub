@@ -112,7 +112,9 @@ export default function App() {
 
   // ── Auth State ──
   const [users, setUsers] = useState(DEFAULT_USERS);
-  const [currentUser, setCurrentUser] = useState(null);
+  const [currentUser, setCurrentUser] = useState(() => {
+    try { const u = localStorage.getItem('mih_currentUser'); const t = localStorage.getItem('mih_token'); if (u && t) return JSON.parse(u); return null; } catch { return null; }
+  });
   const [authView, setAuthView] = useState('login'); // login | register
   const [loginForm, setLoginForm] = useState({ username: '', password: '' });
   const [regForm, setRegForm] = useState({ username: '', password: '', name: '', email: '', phone: '' });
@@ -259,7 +261,9 @@ const [selectedUser, setSelectedUser] = useState(null);
   const [aiInput, setAiInput] = useState('');
   const [aiKnowledgeBase, setAiKnowledgeBase] = useState([]);
   const [aiBotConfig, setAiBotConfig] = useState({ template: 'sales', customInstructions: '', greeting: "Hi! I'm your Miltenyi inventory assistant. I can help with pricing, orders, and stock checks.", apiKey: '' });
-const [customLogo, setCustomLogo] = useState(null);
+const [customLogo, setCustomLogo] = useState(() => {
+    try { const v = localStorage.getItem('mih_customLogo'); return v ? JSON.parse(v) : null; } catch { return null; }
+  });
   const [waAutoReply, setWaAutoReply] = useState(false);
   const [waNotifyRules, setWaNotifyRules] = useState({ orderCreated: true, bulkOrderCreated: true, partArrivalDone: true, deliveryArrival: true, backOrderUpdate: true, lowStockAlert: false, monthlySummary: false, urgentRequest: true });
   const [scheduledNotifs, setScheduledNotifs] = useState({ enabled: true, frequency: 'weekly', dayOfWeek: 1, dayOfMonth: 1, time: '09:00', lastRun: null, recipients: [], emailEnabled: true, whatsappEnabled: true, reports: { monthlySummary: true, backOrderReport: true, lowStockAlert: true, pendingApprovals: true, orderStats: true } });
@@ -289,6 +293,14 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
   // ── Loading State ──
   const [isLoading, setIsLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // ── Persist currentUser to localStorage ──
+  useEffect(() => {
+    try {
+      if (currentUser) { localStorage.setItem('mih_currentUser', JSON.stringify(currentUser)); }
+      else { localStorage.removeItem('mih_currentUser'); }
+    } catch(e){}
+  }, [currentUser]);
 
   // ── Auto-logout on token expiry ──
   useEffect(() => {
@@ -1315,7 +1327,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
         <style>{`@import url('https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,600;9..40,700&family=JetBrains+Mono:wght@400;500&display=swap'); @keyframes fadeUp { from { opacity:0;transform:translateY(20px); } to { opacity:1;transform:translateY(0); } } input{font-family:inherit;font-size:13px;padding:11px 14px;border:1.5px solid #E2E8F0;border-radius:10px;outline:none;transition:border-color 0.2s;color:#1A202C;background:#fff;width:100%;box-sizing:border-box;} input:focus{border-color:#0B7A3E;box-shadow:0 0 0 3px rgba(11,122,62,0.15);}`}</style>
         <div className="login-box" style={{ animation:'fadeUp 0.5s ease', width:420, maxWidth:'92vw', background:'#fff', borderRadius:20, padding:'40px 36px', boxShadow:'0 24px 80px rgba(0,0,0,0.3)' }}>
           <div style={{ textAlign:'center', marginBottom:32 }}>
-            <div style={{ width:56,height:56,borderRadius:16,background:'linear-gradient(135deg,#006837,#00A550)',display:'inline-flex',alignItems:'center',justifyContent:'center',marginBottom:16 }}><Package size={28} color="#fff"/></div>
+            <div style={{ width:56,height:56,borderRadius:16,background:customLogo?'#fff':'linear-gradient(135deg,#006837,#00A550)',display:'inline-flex',alignItems:'center',justifyContent:'center',marginBottom:16,overflow:'hidden',border:customLogo?'2px solid #E2E8F0':'none' }}>{customLogo?<img src={customLogo} alt="Logo" style={{width:'100%',height:'100%',objectFit:'contain'}}/>:<Package size={28} color="#fff"/>}</div>
             <h1 style={{ fontSize:22,fontWeight:700,color:'#0F172A',letterSpacing:-0.5 }}>Miltenyi Inventory Hub</h1>
             <p style={{ fontSize:13,color:'#94A3B8',marginTop:4 }}>Service Spare Parts Management — Singapore</p>
           </div>
