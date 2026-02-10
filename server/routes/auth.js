@@ -38,7 +38,8 @@ router.post('/login', async (req, res) => {
     const token = generateToken(userData);
     res.json({ user: userData, token });
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    console.error('Login error:', e.message);
+    res.status(500).json({ error: 'Server error — database may not be connected' });
   }
 });
 
