@@ -208,6 +208,8 @@ const [selectedUser, setSelectedUser] = useState(null);
   const [selectedBulkForArrival, setSelectedBulkForArrival] = useState(null);
   const [arrivalItems, setArrivalItems] = useState([]);
   const [arrivalStatusFilter, setArrivalStatusFilter] = useState('All');
+  const [pendingArrival, setPendingArrival] = useState({}); // {orderId: {qtyReceived, backOrder}} - keyed-in but not confirmed
+  const [arrivalSelected, setArrivalSelected] = useState(new Set()); // selected order IDs for batch confirm
 
   // ── Enhanced Stock Check State ──
   const [stockCheckMode, setStockCheckMode] = useState(false);
@@ -287,6 +289,56 @@ const [selectedUser, setSelectedUser] = useState(null);
       return bg;
     }));
   }, [dbSync]);
+
+  // Helper: confirm arrival for a single order — applies status based on qtyReceived
+  const confirmArrival = useCallback((orderId) => {
+    const pending = pendingArrival[orderId];
+    if (!pending) return;
+    const order = orders.find(o => o.id === orderId);
+    if (!order) return;
+    const val = pending.qtyReceived;
+    const status = val >= order.quantity ? 'Received' : 'Back Order';
+    const updates = { qtyReceived: val, backOrder: val - order.quantity, status, arrivalDate: val > 0 ? new Date().toISOString().slice(0, 10) : order.arrivalDate };
+    const updatedOrders = orders.map(x => x.id === orderId ? { ...x, ...updates } : x);
+    setOrders(updatedOrders);
+    dbSync(api.updateOrder(orderId, updates), 'Arrival update not saved');
+    if (order.bulkGroupId) checkBulkGroupCompletion(order.bulkGroupId, updatedOrders);
+    setPendingArrival(prev => { const next = { ...prev }; delete next[orderId]; return next; });
+    setArrivalSelected(prev => { const next = new Set(prev); next.delete(orderId); return next; });
+    logAction('Confirm Arrival', 'order', orderId, { qtyReceived: val, status });
+  }, [orders, pendingArrival, checkBulkGroupCompletion, dbSync, logAction]);
+
+  // Helper: batch confirm all orders that have pending arrival values
+  const batchConfirmArrival = useCallback((orderIds) => {
+    const toConfirm = orderIds ? orderIds.filter(id => pendingArrival[id]) : Object.keys(pendingArrival);
+    if (toConfirm.length === 0) return;
+    let updatedOrders = [...orders];
+    const updates = [];
+    toConfirm.forEach(orderId => {
+      const pending = pendingArrival[orderId];
+      if (!pending) return;
+      const order = updatedOrders.find(o => o.id === orderId);
+      if (!order) return;
+      const val = pending.qtyReceived;
+      const status = val >= order.quantity ? 'Received' : 'Back Order';
+      const upd = { qtyReceived: val, backOrder: val - order.quantity, status, arrivalDate: val > 0 ? new Date().toISOString().slice(0, 10) : order.arrivalDate };
+      updatedOrders = updatedOrders.map(x => x.id === orderId ? { ...x, ...upd } : x);
+      updates.push({ orderId, upd, bulkGroupId: order.bulkGroupId });
+    });
+    setOrders(updatedOrders);
+    updates.forEach(({ orderId, upd, bulkGroupId }) => {
+      dbSync(api.updateOrder(orderId, upd), 'Arrival update not saved');
+      if (bulkGroupId) checkBulkGroupCompletion(bulkGroupId, updatedOrders);
+    });
+    setPendingArrival(prev => {
+      const next = { ...prev };
+      toConfirm.forEach(id => delete next[id]);
+      return next;
+    });
+    setArrivalSelected(new Set());
+    logAction('Batch Confirm Arrival', 'order', toConfirm.join(','), { count: toConfirm.length });
+    notify('Arrival Confirmed', `${toConfirm.length} order(s) status updated`, 'success');
+  }, [orders, pendingArrival, checkBulkGroupCompletion, dbSync, logAction, notify]);
 
   const isAdmin = currentUser?.role === 'admin';
 
@@ -3047,28 +3099,35 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
                   </div>
                 )}
                 <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
-                  <thead><tr style={{background:'#F8FAFB'}}><th className="th">Material No.</th><th className="th">Description</th><th className="th" style={{width:70}}>Ordered</th><th className="th" style={{width:80}}>Received</th><th className="th" style={{width:70}}>B/O</th><th className="th" style={{width:100}}>Status</th><th className="th" style={{width:100}}>Action</th></tr></thead>
+                  <thead><tr style={{background:'#F8FAFB'}}><th className="th" style={{width:30}}><input type="checkbox" checked={bgOrders.filter(o=>o.approvalStatus==='approved'&&o.status!=='Received').every(o=>arrivalSelected.has(o.id))&&bgOrders.some(o=>o.approvalStatus==='approved'&&o.status!=='Received')} onChange={e=>{const ids=bgOrders.filter(o=>o.approvalStatus==='approved'&&o.status!=='Received').map(o=>o.id);setArrivalSelected(prev=>{const next=new Set(prev);if(e.target.checked)ids.forEach(id=>next.add(id));else ids.forEach(id=>next.delete(id));return next;});}}/></th><th className="th">Material No.</th><th className="th">Description</th><th className="th" style={{width:70}}>Ordered</th><th className="th" style={{width:80}}>Received</th><th className="th" style={{width:70}}>B/O</th><th className="th" style={{width:100}}>Status</th><th className="th" style={{width:120}}>Action</th></tr></thead>
                   <tbody>
-                    {bgOrders.map((o,idx)=>(
-                      <tr key={o.id} style={{borderBottom:'1px solid #F0F2F5'}}>
+                    {bgOrders.map((o,idx)=>{
+                      const pv = pendingArrival[o.id];
+                      const dispQty = pv ? pv.qtyReceived : (o.qtyReceived||0);
+                      const dispBO = pv ? pv.qtyReceived - o.quantity : (o.qtyReceived||0) - o.quantity;
+                      const hasPending = !!pv;
+                      return (
+                      <tr key={o.id} style={{borderBottom:'1px solid #F0F2F5',background:hasPending?'#FFFBEB':'transparent'}}>
+                        <td className="td"><input type="checkbox" disabled={o.approvalStatus!=='approved'||o.status==='Received'} checked={arrivalSelected.has(o.id)} onChange={e=>{setArrivalSelected(prev=>{const next=new Set(prev);if(e.target.checked)next.add(o.id);else next.delete(o.id);return next;})}}/></td>
                         <td className="td mono" style={{fontSize:11,color:'#0B7A3E',fontWeight:600}}>{o.materialNo||'—'}</td>
                         <td className="td" style={{maxWidth:180,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{o.description}</td>
                         <td className="td" style={{textAlign:'center',fontWeight:600}}>{o.quantity}</td>
                         <td className="td" style={{textAlign:'center'}}>
-                          <input type="number" min="0" max={o.quantity} value={o.qtyReceived} disabled={o.approvalStatus!=='approved'} title={o.approvalStatus!=='approved'?'Order must be approved first':''} onChange={e=>{const val=parseInt(e.target.value)||0;const updates={qtyReceived:val,backOrder:val-o.quantity,status:val>=o.quantity?'Received':val>0?'Back Order':'Approved'};const updatedOrders=orders.map(x=>x.id===o.id?{...x,...updates}:x);setOrders(updatedOrders);dbSync(api.updateOrder(o.id,updates),'Arrival update not saved');if(o.bulkGroupId)checkBulkGroupCompletion(o.bulkGroupId,updatedOrders);}} style={{width:50,padding:'4px 6px',textAlign:'center',borderRadius:6,border:'1px solid #E2E8F0',fontSize:12,opacity:o.approvalStatus!=='approved'?0.5:1,cursor:o.approvalStatus!=='approved'?'not-allowed':'text'}}/>
+                          <input type="number" min="0" max={o.quantity} value={dispQty} disabled={o.approvalStatus!=='approved'||o.status==='Received'} title={o.approvalStatus!=='approved'?'Order must be approved first':o.status==='Received'?'Already received':''} onChange={e=>{const val=Math.max(0,Math.min(o.quantity,parseInt(e.target.value)||0));setPendingArrival(prev=>({...prev,[o.id]:{qtyReceived:val,backOrder:val-o.quantity}}));}} style={{width:50,padding:'4px 6px',textAlign:'center',borderRadius:6,border:hasPending?'2px solid #F59E0B':'1px solid #E2E8F0',fontSize:12,opacity:o.approvalStatus!=='approved'||o.status==='Received'?0.5:1,cursor:o.approvalStatus!=='approved'||o.status==='Received'?'not-allowed':'text'}}/>
                         </td>
-                        <td className="td" style={{textAlign:'center',fontWeight:600,color:o.quantity-o.qtyReceived>0?'#DC2626':'#059669'}}>{o.quantity-o.qtyReceived>0?`-${o.quantity-o.qtyReceived}`:'✓'}</td>
-                        <td className="td"><Pill bg={o.qtyReceived>=o.quantity?'#D1FAE5':o.qtyReceived>0?'#DBEAFE':'#FEF3C7'} color={o.qtyReceived>=o.quantity?'#059669':o.qtyReceived>0?'#2563EB':'#D97706'}>{o.qtyReceived>=o.quantity?'Full':o.qtyReceived>0?'Partial':'Awaiting'}</Pill></td>
+                        <td className="td" style={{textAlign:'center',fontWeight:600,color:dispBO<0?'#DC2626':'#059669'}}>{dispBO<0?dispBO:'✓'}</td>
+                        <td className="td"><Pill bg={o.status==='Received'?'#D1FAE5':o.status==='Back Order'?'#FEE2E2':'#FEF3C7'} color={o.status==='Received'?'#059669':o.status==='Back Order'?'#DC2626':'#D97706'}>{o.status==='Received'?'Received':o.status==='Back Order'?'Back Order':'Approved'}</Pill></td>
                         <td className="td">
-                          {o.qtyReceived>=o.quantity && <Check size={14} color="#059669"/>}
+                          {o.status==='Received'?<span style={{display:'flex',alignItems:'center',gap:4,color:'#059669',fontSize:11,fontWeight:600}}><Check size={14}/>Done</span>:hasPending?<button className="bp" onClick={()=>confirmArrival(o.id)} style={{padding:'4px 10px',fontSize:11,borderRadius:6}}>Confirm</button>:<span style={{color:'#94A3B8',fontSize:11}}>Key in qty</span>}
                         </td>
-                      </tr>
-                    ))}
+                      </tr>);
+                    })}
                   </tbody>
                 </table>
 
-                {/* Notify Actions */}
+                {/* Batch Confirm + Notify Actions */}
                 <div style={{display:'flex',gap:10,marginTop:16,paddingTop:16,borderTop:'1px solid #E8ECF0',flexWrap:'wrap'}}>
+                  {Object.keys(pendingArrival).filter(id=>bgOrders.some(o=>o.id===id)).length>0 && <button className="bp" onClick={()=>{const ids=Object.keys(pendingArrival).filter(id=>bgOrders.some(o=>o.id===id));batchConfirmArrival(ids);}} style={{padding:'8px 16px',display:'flex',alignItems:'center',gap:6}}><CheckCircle size={14}/> Batch Confirm ({Object.keys(pendingArrival).filter(id=>bgOrders.some(o=>o.id===id)).length})</button>}
                   <button className="be" onClick={()=>{
                     const summary = bgOrders.map(o=>`• ${o.materialNo}: ${o.qtyReceived}/${o.quantity} ${o.qtyReceived>=o.quantity?'✓':'(B/O: '+(o.quantity-o.qtyReceived)+')'}`).join('\n');
                     notify('Email Sent',`Arrival report for ${bg.month} sent`,'success');
@@ -3134,24 +3193,33 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
         <h3 style={{fontSize:15,fontWeight:700,marginBottom:16}}>Single Orders - Arrival Verification</h3>
         <div style={{fontSize:12,color:'#64748B',marginBottom:12}}>{indivOrders.length} approved individual order(s) not part of any bulk group</div>
         <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
-          <thead><tr style={{background:'#F8FAFB'}}><th className="th">Material No.</th><th className="th">Description</th><th className="th" style={{width:70}}>Ordered</th><th className="th" style={{width:80}}>Received</th><th className="th" style={{width:70}}>B/O</th><th className="th" style={{width:100}}>Status</th><th className="th" style={{width:100}}>Action</th></tr></thead>
+          <thead><tr style={{background:'#F8FAFB'}}><th className="th" style={{width:30}}><input type="checkbox" checked={indivOrders.filter(o=>o.status!=='Received').every(o=>arrivalSelected.has(o.id))&&indivOrders.some(o=>o.status!=='Received')} onChange={e=>{const ids=indivOrders.filter(o=>o.status!=='Received').map(o=>o.id);setArrivalSelected(prev=>{const next=new Set(prev);if(e.target.checked)ids.forEach(id=>next.add(id));else ids.forEach(id=>next.delete(id));return next;});}}/></th><th className="th">Material No.</th><th className="th">Description</th><th className="th" style={{width:70}}>Ordered</th><th className="th" style={{width:80}}>Received</th><th className="th" style={{width:70}}>B/O</th><th className="th" style={{width:100}}>Status</th><th className="th" style={{width:120}}>Action</th></tr></thead>
           <tbody>
-            {indivOrders.map(o=>(
-              <tr key={o.id} style={{borderBottom:'1px solid #F0F2F5'}}>
+            {indivOrders.map(o=>{
+              const pv = pendingArrival[o.id];
+              const dispQty = pv ? pv.qtyReceived : (o.qtyReceived||0);
+              const dispBO = pv ? pv.qtyReceived - o.quantity : (o.qtyReceived||0) - o.quantity;
+              const hasPending = !!pv;
+              return (
+              <tr key={o.id} style={{borderBottom:'1px solid #F0F2F5',background:hasPending?'#FFFBEB':'transparent'}}>
+                <td className="td"><input type="checkbox" disabled={o.status==='Received'} checked={arrivalSelected.has(o.id)} onChange={e=>{setArrivalSelected(prev=>{const next=new Set(prev);if(e.target.checked)next.add(o.id);else next.delete(o.id);return next;});}}/></td>
                 <td className="td mono" style={{fontSize:11,color:'#0B7A3E',fontWeight:600}}>{o.materialNo||'\u2014'}</td>
                 <td className="td" style={{maxWidth:180,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{o.description}</td>
                 <td className="td" style={{textAlign:'center',fontWeight:600}}>{o.quantity}</td>
                 <td className="td" style={{textAlign:'center'}}>
-                  <input type="number" min="0" max={o.quantity} value={o.qtyReceived} onChange={e=>{const val=parseInt(e.target.value)||0;const updates={qtyReceived:val,backOrder:val-o.quantity,status:val>=o.quantity?'Received':val>0?'Back Order':'Approved'};setOrders(prev=>prev.map(x=>x.id===o.id?{...x,...updates}:x));dbSync(api.updateOrder(o.id,updates),'Arrival update not saved');}} style={{width:50,padding:'4px 6px',textAlign:'center',borderRadius:6,border:'1px solid #E2E8F0',fontSize:12}}/>
+                  <input type="number" min="0" max={o.quantity} value={dispQty} disabled={o.status==='Received'} onChange={e=>{const val=Math.max(0,Math.min(o.quantity,parseInt(e.target.value)||0));setPendingArrival(prev=>({...prev,[o.id]:{qtyReceived:val,backOrder:val-o.quantity}}));}} style={{width:50,padding:'4px 6px',textAlign:'center',borderRadius:6,border:hasPending?'2px solid #F59E0B':'1px solid #E2E8F0',fontSize:12,opacity:o.status==='Received'?0.5:1,cursor:o.status==='Received'?'not-allowed':'text'}}/>
                 </td>
-                <td className="td" style={{textAlign:'center',fontWeight:600,color:o.quantity-(o.qtyReceived||0)>0?'#DC2626':'#059669'}}>{o.quantity-(o.qtyReceived||0)>0?`-${o.quantity-(o.qtyReceived||0)}`:'\u2713'}</td>
-                <td className="td"><Pill bg={o.qtyReceived>=o.quantity?'#D1FAE5':o.qtyReceived>0?'#DBEAFE':'#FEF3C7'} color={o.qtyReceived>=o.quantity?'#059669':o.qtyReceived>0?'#2563EB':'#D97706'}>{o.qtyReceived>=o.quantity?'Full':o.qtyReceived>0?'Partial':'Awaiting'}</Pill></td>
-                <td className="td">{o.qtyReceived>=o.quantity && <Check size={14} color="#059669"/>}</td>
-              </tr>
-            ))}
+                <td className="td" style={{textAlign:'center',fontWeight:600,color:dispBO<0?'#DC2626':'#059669'}}>{dispBO<0?dispBO:'\u2713'}</td>
+                <td className="td"><Pill bg={o.status==='Received'?'#D1FAE5':o.status==='Back Order'?'#FEE2E2':'#FEF3C7'} color={o.status==='Received'?'#059669':o.status==='Back Order'?'#DC2626':'#D97706'}>{o.status==='Received'?'Received':o.status==='Back Order'?'Back Order':'Approved'}</Pill></td>
+                <td className="td">
+                  {o.status==='Received'?<span style={{display:'flex',alignItems:'center',gap:4,color:'#059669',fontSize:11,fontWeight:600}}><Check size={14}/>Done</span>:hasPending?<button className="bp" onClick={()=>confirmArrival(o.id)} style={{padding:'4px 10px',fontSize:11,borderRadius:6}}>Confirm</button>:<span style={{color:'#94A3B8',fontSize:11}}>Key in qty</span>}
+                </td>
+              </tr>);
+            })}
           </tbody>
         </table>
-        <div style={{display:'flex',gap:10,marginTop:16,paddingTop:16,borderTop:'1px solid #E8ECF0'}}>
+        <div style={{display:'flex',gap:10,marginTop:16,paddingTop:16,borderTop:'1px solid #E8ECF0',flexWrap:'wrap'}}>
+          {(()=>{const ids=Object.keys(pendingArrival).filter(id=>indivOrders.some(o=>o.id===id));return ids.length>0?<button className="bp" onClick={()=>batchConfirmArrival(ids)} style={{padding:'8px 16px',display:'flex',alignItems:'center',gap:6}}><CheckCircle size={14}/> Batch Confirm ({ids.length})</button>:null;})()}
           <button className="be" onClick={()=>{
             notify('Email Sent','Individual orders arrival report sent','success');
             addNotifEntry({id:`N-${Date.now()}-${Math.random().toString(36).slice(2,6)}`,type:'email',to:'service-sg@miltenyibiotec.com',subject:'Arrival Check: Individual Orders',date:new Date().toISOString().slice(0,10),status:'Sent'});
