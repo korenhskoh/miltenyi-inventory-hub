@@ -2495,7 +2495,11 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
   </div>
   {hasPermission('deleteBulkOrders') && <BatchBar count={selBulk.size} onClear={()=>setSelBulk(new Set())}>
     <BatchBtn onClick={batchApprovalNotifyBulk} bg="#7C3AED" icon={Send}>Order Approval & Notify</BatchBtn>
-    <BatchBtn onClick={()=>batchStatusBulk('Approved')} bg="#2563EB" icon={Shield}>Approved</BatchBtn>
+    <BatchBtn onClick={()=>batchStatusBulk('Pending Approval')} bg="#D97706" icon={Clock}>Pending Approval</BatchBtn>
+    <BatchBtn onClick={()=>batchStatusBulk('Approved')} bg="#2563EB" icon={Check}>Approved</BatchBtn>
+    <BatchBtn onClick={()=>batchStatusBulk('Received')} bg="#059669" icon={CheckCircle}>Received</BatchBtn>
+    <BatchBtn onClick={()=>batchStatusBulk('Back Order')} bg="#D97706" icon={AlertTriangle}>Back Order</BatchBtn>
+    <BatchBtn onClick={()=>batchStatusBulk('Rejected')} bg="#991B1B" icon={X}>Rejected</BatchBtn>
     <BatchBtn onClick={batchDeleteBulk} bg="#DC2626" icon={Trash2}>Delete</BatchBtn>
   </BatchBar>}
   <div className="card" style={{overflow:'hidden'}}>
