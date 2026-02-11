@@ -593,38 +593,13 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
     const now = new Date();
     const monthStr = `${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][now.getMonth()]} ${now.getFullYear()}`;
     const linkedBg = newOrder.bulkGroupId ? bulkGroups.find(bg => bg.id === newOrder.bulkGroupId) : null;
-    const o = { id:`ORD-${2000+orders.length}`,...newOrder, bulkGroupId:linkedBg ? linkedBg.id : null, quantity:parseInt(newOrder.quantity), listPrice:parseFloat(newOrder.listPrice)||0, totalCost:(parseFloat(newOrder.listPrice)||0)*parseInt(newOrder.quantity), orderDate:now.toISOString().slice(0,10), arrivalDate:null, qtyReceived:0, backOrder:-parseInt(newOrder.quantity), engineer:'', emailFull:'', emailBack:'', status:'Pending Approval', approvalStatus:'pending', approvalSentDate:now.toISOString().slice(0,10), month:linkedBg ? linkedBg.month : monthStr, year:String(now.getFullYear()) };
+    const o = { id:`ORD-${2000+orders.length}`,...newOrder, bulkGroupId:linkedBg ? linkedBg.id : null, quantity:parseInt(newOrder.quantity), listPrice:parseFloat(newOrder.listPrice)||0, totalCost:(parseFloat(newOrder.listPrice)||0)*parseInt(newOrder.quantity), orderDate:now.toISOString().slice(0,10), arrivalDate:null, qtyReceived:0, backOrder:-parseInt(newOrder.quantity), engineer:'', emailFull:'', emailBack:'', status:'Pending Approval', approvalStatus:'pending', approvalSentDate:null, month:linkedBg ? linkedBg.month : monthStr, year:String(now.getFullYear()) };
     setOrders(prev=>[o,...prev]); setShowNewOrder(false); setNewOrder({materialNo:'',description:'',quantity:1,listPrice:0,orderBy:'',remark:'',bulkGroupId:''}); setNewBulkMonth('');
     if (linkedBg) recalcBulkGroupForMonths([linkedBg.id], [o, ...orders]);
     const created = await api.createOrder(o);
     setIsSubmitting(false);
     if (!created) { notify('Save Failed','Order not saved to database. Please retry.','error'); return; }
-    notify('Order Created',`${o.description} — ${o.quantity} units`,'success');
-
-    // Auto-notify if rules enabled
-    if (emailConfig.enabled && waNotifyRules.orderCreated) {
-      addNotifEntry({id:`N-${Date.now()}-${Math.random().toString(36).slice(2,6)}`,type:'email',to:'service-sg@miltenyibiotec.com',subject:`New Order: ${o.id} - ${o.description}`,date:new Date().toISOString().slice(0,10),status:'Sent'});
-    }
-    // Send approval email to approver (Hotmail/Outlook)
-    if (emailConfig.enabled && emailConfig.approvalEnabled && emailConfig.approverEmail) {
-      const approvalId = `APR-${Date.now()}`;
-      addApproval({id:approvalId, orderId:o.id, orderType:'single', description:o.description, requestedBy:o.orderBy, quantity:o.quantity, totalCost:o.totalCost, sentDate:new Date().toISOString().slice(0,10), status:'pending'});
-      addNotifEntry({id:`N-${Date.now()}-${Math.random().toString(36).slice(2,6)}`,type:'approval',to:emailConfig.approverEmail,subject:`[APPROVAL] Order ${o.id}`,date:new Date().toISOString().slice(0,10),status:'Pending'});
-      const tpl = emailTemplates.orderApproval;
-      const fillTpl = (str) => str.replace(/\{orderId\}/g,o.id).replace(/\{description\}/g,o.description).replace(/\{materialNo\}/g,o.materialNo||'N/A').replace(/\{quantity\}/g,o.quantity).replace(/\{totalCost\}/g,o.totalCost.toFixed(2)).replace(/\{orderBy\}/g,o.orderBy).replace(/\{date\}/g,o.orderDate);
-      window.open(`mailto:${emailConfig.approverEmail}?subject=${encodeURIComponent(fillTpl(tpl.subject))}&body=${encodeURIComponent(fillTpl(tpl.body))}`, '_blank');
-      notify('Approval Email','Approval request opened for '+emailConfig.approverEmail,'info');
-    }
-    if (waConnected && waNotifyRules.orderCreated) {
-      try {
-        await fetch(`${WA_API_URL}/send`, {
-          method: 'POST', headers: {'Content-Type':'application/json'},
-          body: JSON.stringify({ phone: users.find(u=>u.name===o.orderBy)?.phone || '+65 9111 2222', template: 'orderCreated', data: { orderId: o.id, description: o.description, materialNo: o.materialNo, quantity: o.quantity, total: `S$${o.totalCost.toFixed(2)}`, orderBy: o.orderBy, date: o.orderDate }})
-        });
-        addNotifEntry({id:`N-${Date.now()}-${Math.random().toString(36).slice(2,6)}`,type:'whatsapp',to:o.orderBy,subject:`Order Created: ${o.id}`,date:new Date().toISOString().slice(0,10),status:'Delivered'});
-        notify('WhatsApp Sent',`Order notification sent to ${o.orderBy}`,'success');
-      } catch(e) { console.log('WA send error:', e); }
-    }
+    notify('Order Created',`${o.description} — ${o.quantity} units. Select and use "Order Approval & Notify" to send for approval.`,'success');
   };
 
   // ── Duplicate Order ──
@@ -674,6 +649,9 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
         setBulkGroups(prev=>prev.map(g=>g.id===approval.orderId?{...g,status:'Approved'}:g));
         dbSync(api.bulkUpdateOrderStatus(approval.orderIds, 'Approved'), 'Bulk order status not saved');
         dbSync(api.updateBulkGroup(approval.orderId, {status:'Approved'}), 'Bulk group approval not saved');
+      } else if (approval.orderType === 'batch' && approval.orderIds) {
+        setOrders(prev=>prev.map(o=>approval.orderIds.includes(o.id)?{...o,status:'Approved',approvalStatus:'approved'}:o));
+        dbSync(api.bulkUpdateOrderStatus(approval.orderIds, 'Approved'), 'Batch order approval not saved');
       }
       addNotifEntry({id:`N-${Date.now()}-${Math.random().toString(36).slice(2,6)}`,type:'approval',to:approval.requestedBy,subject:`Order ${approval.orderId} Approved`,date:new Date().toISOString().slice(0,10),status:'Approved'});
       notify('Order Approved',`${approval.orderId} has been approved`,'success');
@@ -687,6 +665,9 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
         setBulkGroups(prev=>prev.map(g=>g.id===approval.orderId?{...g,status:'Rejected'}:g));
         dbSync(api.bulkUpdateOrderStatus(approval.orderIds, 'Rejected'), 'Bulk order rejection not saved');
         dbSync(api.updateBulkGroup(approval.orderId, {status:'Rejected'}), 'Bulk group rejection not saved');
+      } else if (approval.orderType === 'batch' && approval.orderIds) {
+        setOrders(prev=>prev.map(o=>approval.orderIds.includes(o.id)?{...o,status:'Rejected',approvalStatus:'rejected'}:o));
+        dbSync(api.bulkUpdateOrderStatus(approval.orderIds, 'Rejected'), 'Batch order rejection not saved');
       }
       addNotifEntry({id:`N-${Date.now()}-${Math.random().toString(36).slice(2,6)}`,type:'approval',to:approval.requestedBy,subject:`Order ${approval.orderId} Rejected`,date:new Date().toISOString().slice(0,10),status:'Rejected'});
       notify('Order Rejected',`${approval.orderId} has been rejected`,'warning');
@@ -749,6 +730,143 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
       linkedOrders.forEach(o => dbSync(api.updateOrder(o.id, { status, approvalStatus }), 'Order approval cascade failed'));
     }
     notify('Batch Update', `${ids.length} bulk groups → ${status}`, 'success');
+    setSelBulk(new Set());
+  };
+
+  // ── Batch Approval & Notify — Single Orders ──
+  const batchApprovalNotifyOrders = async () => {
+    if (!selOrders.size) return;
+    if (!emailConfig.enabled || !emailConfig.approvalEnabled || !emailConfig.approverEmail) {
+      notify('Config Required', 'Enable approval emails and set approver email in Settings', 'warning');
+      return;
+    }
+    const selected = orders.filter(o => selOrders.has(o.id));
+    if (!selected.length) return;
+    const now = new Date().toISOString().slice(0, 10);
+    const approvalId = `APR-${Date.now()}`;
+    const orderIds = selected.map(o => o.id);
+    const totalCost = selected.reduce((s, o) => s + (Number(o.totalCost) || 0), 0);
+    const totalQty = selected.reduce((s, o) => s + (Number(o.quantity) || 0), 0);
+
+    // Create batch approval record
+    addApproval({ id: approvalId, orderId: orderIds.join(', '), orderType: 'batch', description: `Batch Approval - ${selected.length} orders`, requestedBy: currentUser?.name || 'System', quantity: totalQty, totalCost, sentDate: now, status: 'pending', orderIds });
+
+    // Update approvalSentDate
+    setOrders(prev => prev.map(o => selOrders.has(o.id) ? { ...o, approvalSentDate: now } : o));
+    orderIds.forEach(id => dbSync(api.updateOrder(id, { approvalSentDate: now }), 'Approval date not saved'));
+
+    // Build plain-text table
+    const hdr = 'No. | Order ID     | Material No.     | Description                        | Qty  | Total (SGD)';
+    const sep = '----|--------------|------------------|------------------------------------|------|------------';
+    const rows = selected.map((o, i) =>
+      `${String(i + 1).padEnd(3)} | ${(o.id || '').padEnd(12)} | ${(o.materialNo || 'N/A').padEnd(16)} | ${(o.description || '').substring(0, 34).padEnd(34)} | ${String(o.quantity || 0).padEnd(4)} | S$${(Number(o.totalCost) || 0).toFixed(2)}`
+    );
+    const table = [hdr, sep, ...rows, sep, `TOTAL: ${selected.length} orders | ${totalQty} units | S$${totalCost.toFixed(2)}`].join('\n');
+
+    // Compose mailto
+    const subject = `[APPROVAL] Batch Order Request - ${selected.length} Orders (S$${totalCost.toFixed(2)})`;
+    const body = `Order Approval Request\n\nRequested By: ${currentUser?.name || 'System'}\nDate: ${now}\nTotal Orders: ${selected.length}\nTotal Quantity: ${totalQty}\nTotal Cost: S$${totalCost.toFixed(2)}\n\n${table}\n\nReply APPROVE to approve all orders or REJECT to decline.\n\n-Miltenyi Inventory Hub SG`;
+    const mailtoUrl = `mailto:${emailConfig.approverEmail}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+    if (mailtoUrl.length > 2000) {
+      const short = body.substring(0, 1400) + '\n\n[... see full details in Inventory Hub or WhatsApp]';
+      window.open(`mailto:${emailConfig.approverEmail}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(short)}`, '_blank');
+    } else {
+      window.open(mailtoUrl, '_blank');
+    }
+
+    // Notification log
+    addNotifEntry({ id: `N-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, type: 'approval', to: emailConfig.approverEmail, subject, date: now, status: 'Pending' });
+
+    // WhatsApp
+    if (waConnected) {
+      try {
+        const waMsg = `*Order Approval Request*\n\nRequested By: ${currentUser?.name || 'System'}\nDate: ${now}\nOrders: ${selected.length}\nTotal: S$${totalCost.toFixed(2)}\n\n` +
+          selected.map((o, i) => `${i + 1}. ${o.id} | ${o.materialNo || 'N/A'} | ${(o.description || '').slice(0, 30)} | Qty: ${o.quantity} | S$${(Number(o.totalCost) || 0).toFixed(2)}`).join('\n') +
+          `\n\n_Reply APPROVE or REJECT_\n_Miltenyi Inventory Hub SG_`;
+        const approverUser = users.find(u => u.email === emailConfig.approverEmail);
+        if (approverUser?.phone) {
+          await fetch(`${WA_API_URL}/send`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ phone: approverUser.phone, template: 'custom', data: { message: waMsg } }) });
+          notify('WhatsApp Sent', 'Batch approval sent to approver', 'success');
+        }
+      } catch (e) { console.log('WA batch approval error:', e); }
+    }
+
+    notify('Approval Sent', `${selected.length} orders sent for approval to ${emailConfig.approverEmail}`, 'success');
+    setSelOrders(new Set());
+  };
+
+  // ── Batch Approval & Notify — Bulk Orders ──
+  const batchApprovalNotifyBulk = async () => {
+    if (!selBulk.size) return;
+    if (!emailConfig.enabled || !emailConfig.approvalEnabled || !emailConfig.approverEmail) {
+      notify('Config Required', 'Enable approval emails and set approver email in Settings', 'warning');
+      return;
+    }
+    const selectedGroups = bulkGroups.filter(g => selBulk.has(g.id));
+    if (!selectedGroups.length) return;
+    const now = new Date().toISOString().slice(0, 10);
+    const linkedOrders = orders.filter(o => o.bulkGroupId && selBulk.has(o.bulkGroupId));
+    const totalCost = linkedOrders.reduce((s, o) => s + (Number(o.totalCost) || 0), 0);
+    const totalQty = linkedOrders.reduce((s, o) => s + (Number(o.quantity) || 0), 0);
+
+    // Create approval per bulk group
+    selectedGroups.forEach(bg => {
+      const bgOrders = orders.filter(o => o.bulkGroupId === bg.id);
+      const bgCost = bgOrders.reduce((s, o) => s + (Number(o.totalCost) || 0), 0);
+      addApproval({ id: `APR-${Date.now()}-${bg.id}`, orderId: bg.id, orderType: 'bulk', description: `Bulk Order - ${bg.month}`, requestedBy: bg.createdBy || currentUser?.name || 'System', quantity: bgOrders.length, totalCost: bgCost, sentDate: now, status: 'pending', orderIds: bgOrders.map(o => o.id) });
+    });
+
+    // Update approvalSentDate on all linked orders
+    const linkedIds = new Set(linkedOrders.map(o => o.id));
+    setOrders(prev => prev.map(o => linkedIds.has(o.id) ? { ...o, approvalSentDate: now } : o));
+    linkedOrders.forEach(o => dbSync(api.updateOrder(o.id, { approvalSentDate: now }), 'Approval date not saved'));
+
+    // Build grouped plain-text table
+    let lines = [];
+    selectedGroups.forEach(bg => {
+      const bgOrders = orders.filter(o => o.bulkGroupId === bg.id);
+      const bgCost = bgOrders.reduce((s, o) => s + (Number(o.totalCost) || 0), 0);
+      lines.push(`\n=== ${bg.id} | ${bg.month} | By: ${bg.createdBy || 'N/A'} ===`);
+      lines.push('No. | Material No.     | Description                        | Qty  | Total (SGD)');
+      lines.push('----|------------------|------------------------------------|------|------------');
+      bgOrders.forEach((o, i) => {
+        lines.push(`${String(i + 1).padEnd(3)} | ${(o.materialNo || 'N/A').padEnd(16)} | ${(o.description || '').substring(0, 34).padEnd(34)} | ${String(o.quantity || 0).padEnd(4)} | S$${(Number(o.totalCost) || 0).toFixed(2)}`);
+      });
+      lines.push(`Batch Subtotal: ${bgOrders.length} items | S$${bgCost.toFixed(2)}`);
+    });
+    lines.push(`\nGRAND TOTAL: ${selectedGroups.length} batches | ${linkedOrders.length} items | S$${totalCost.toFixed(2)}`);
+    const table = lines.join('\n');
+
+    const subject = `[APPROVAL] Bulk Order Batch - ${selectedGroups.length} Batches (S$${totalCost.toFixed(2)})`;
+    const body = `Bulk Order Approval Request\n\nRequested By: ${currentUser?.name || 'System'}\nDate: ${now}\nBatches: ${selectedGroups.length}\nTotal Items: ${linkedOrders.length}\nTotal Cost: S$${totalCost.toFixed(2)}\n\n${table}\n\nReply APPROVE to approve or REJECT to decline.\n\n-Miltenyi Inventory Hub SG`;
+    const mailtoUrl = `mailto:${emailConfig.approverEmail}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+    if (mailtoUrl.length > 2000) {
+      const short = body.substring(0, 1400) + '\n\n[... see full details in Inventory Hub or WhatsApp]';
+      window.open(`mailto:${emailConfig.approverEmail}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(short)}`, '_blank');
+    } else {
+      window.open(mailtoUrl, '_blank');
+    }
+
+    addNotifEntry({ id: `N-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, type: 'approval', to: emailConfig.approverEmail, subject, date: now, status: 'Pending' });
+
+    // WhatsApp
+    if (waConnected) {
+      try {
+        const waMsg = `*Bulk Order Approval Request*\n\nRequested By: ${currentUser?.name || 'System'}\nDate: ${now}\nBatches: ${selectedGroups.length}\nItems: ${linkedOrders.length}\nTotal: S$${totalCost.toFixed(2)}\n\n` +
+          selectedGroups.map(bg => {
+            const bgOrders = orders.filter(o => o.bulkGroupId === bg.id);
+            return `*${bg.id} - ${bg.month}*\n` + bgOrders.map((o, i) => `  ${i + 1}. ${o.materialNo || 'N/A'} | ${(o.description || '').slice(0, 30)} | Qty: ${o.quantity} | S$${(Number(o.totalCost) || 0).toFixed(2)}`).join('\n');
+          }).join('\n\n') +
+          `\n\n_Reply APPROVE or REJECT_\n_Miltenyi Inventory Hub SG_`;
+        const approverUser = users.find(u => u.email === emailConfig.approverEmail);
+        if (approverUser?.phone) {
+          await fetch(`${WA_API_URL}/send`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ phone: approverUser.phone, template: 'custom', data: { message: waMsg } }) });
+          notify('WhatsApp Sent', 'Bulk batch approval sent to approver', 'success');
+        }
+      } catch (e) { console.log('WA bulk batch approval error:', e); }
+    }
+
+    notify('Approval Sent', `${selectedGroups.length} bulk batches sent for approval to ${emailConfig.approverEmail}`, 'success');
     setSelBulk(new Set());
   };
 
@@ -1033,35 +1151,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
     dbSync(api.createBulkGroup(bg), 'Bulk group not saved to database');
     setShowBulkOrder(false); setBulkItems([{materialNo:'',description:'',quantity:1,listPrice:0}]); setBulkRemark('');
     setIsSubmitting(false);
-    notify('Bulk Order Created',`${newOrders.length} items for ${bulkMonth}`,'success');
-
-    // Auto-notify if rules enabled
-    if (emailConfig.enabled && waNotifyRules.bulkOrderCreated) {
-      addNotifEntry({id:`N-${Date.now()}-${Math.random().toString(36).slice(2,6)}`,type:'email',to:'service-sg@miltenyibiotec.com',subject:`Bulk Order: ${bgId} - ${bulkMonth} (${newOrders.length} items)`,date:new Date().toISOString().slice(0,10),status:'Sent'});
-    }
-    // Send approval email for bulk order to approver (Hotmail/Outlook)
-    if (emailConfig.enabled && emailConfig.approvalEnabled && emailConfig.approverEmail) {
-      const approvalId = `APR-${Date.now()}`;
-      addApproval({id:approvalId, orderId:bgId, orderType:'bulk', description:`Bulk Order - ${bulkMonth}`, requestedBy:bulkOrderBy, quantity:newOrders.length, totalCost, sentDate:new Date().toISOString().slice(0,10), status:'pending', orderIds:newOrders.map(x=>x.id)});
-      addNotifEntry({id:`N-${Date.now()}-${Math.random().toString(36).slice(2,6)}`,type:'approval',to:emailConfig.approverEmail,subject:`[APPROVAL] Bulk Order ${bgId}`,date:new Date().toISOString().slice(0,10),status:'Pending'});
-      const tpl = emailTemplates.bulkApproval;
-      const fillTpl = (str) => str.replace(/\{batchId\}/g,bgId).replace(/\{month\}/g,bulkMonth).replace(/\{itemCount\}/g,newOrders.length).replace(/\{totalCost\}/g,totalCost.toFixed(2)).replace(/\{orderBy\}/g,bulkOrderBy);
-      window.open(`mailto:${emailConfig.approverEmail}?subject=${encodeURIComponent(fillTpl(tpl.subject))}&body=${encodeURIComponent(fillTpl(tpl.body))}`, '_blank');
-      notify('Approval Email','Bulk order approval request opened','info');
-    }
-    if (waConnected && waNotifyRules.bulkOrderCreated) {
-      try {
-        // Notify all engineers
-        for (const user of users.filter(u=>u.role!=='admin'&&u.status==='active'&&u.phone)) {
-          await fetch(`${WA_API_URL}/send`, {
-            method: 'POST', headers: {'Content-Type':'application/json'},
-            body: JSON.stringify({ phone: user.phone, template: 'custom', data: { message: `📦 *Bulk Order Created*\n\nBatch: ${bgId}\nMonth: ${bulkMonth}\nItems: ${newOrders.length}\nTotal: S$${totalCost.toFixed(2)}\nCreated By: ${bulkOrderBy}\n\n_Miltenyi Inventory Hub SG_` }})
-          });
-        }
-        addNotifEntry({id:`N-${Date.now()}-${Math.random().toString(36).slice(2,6)}`,type:'whatsapp',to:'All Engineers',subject:`Bulk Order: ${bgId} - ${bulkMonth}`,date:new Date().toISOString().slice(0,10),status:'Delivered'});
-        notify('WhatsApp Sent',`Bulk order notification sent to team`,'success');
-      } catch(e) { console.log('WA send error:', e); }
-    }
+    notify('Bulk Order Created',`${newOrders.length} items for ${bulkMonth}. Select and use "Order Approval & Notify" to send for approval.`,'success');
   };
 
   // ── Auth Handlers ──
@@ -2176,6 +2266,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
     <div style={{display:'flex',gap:8}}><button className="bp" onClick={()=>setShowNewOrder(true)}><Plus size={14}/> New Order</button></div>
   </div>
   {hasPermission('deleteOrders') && <BatchBar count={selOrders.size} onClear={()=>setSelOrders(new Set())}>
+    <BatchBtn onClick={batchApprovalNotifyOrders} bg="#7C3AED" icon={Send}>Order Approval & Notify</BatchBtn>
     <BatchBtn onClick={()=>batchStatusOrders('Received')} bg="#059669" icon={CheckCircle}>Received</BatchBtn>
     <BatchBtn onClick={()=>batchStatusOrders('Back Order')} bg="#D97706" icon={AlertTriangle}>Back Order</BatchBtn>
     <BatchBtn onClick={batchDeleteOrders} bg="#DC2626" icon={Trash2}>Delete</BatchBtn>
@@ -2217,6 +2308,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
     ))}
   </div>
   {hasPermission('deleteBulkOrders') && <BatchBar count={selBulk.size} onClear={()=>setSelBulk(new Set())}>
+    <BatchBtn onClick={batchApprovalNotifyBulk} bg="#7C3AED" icon={Send}>Order Approval & Notify</BatchBtn>
     <BatchBtn onClick={()=>batchStatusBulk('Approved')} bg="#2563EB" icon={Shield}>Approved</BatchBtn>
     <BatchBtn onClick={batchDeleteBulk} bg="#DC2626" icon={Trash2}>Delete</BatchBtn>
   </BatchBar>}
@@ -2272,6 +2364,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
         <button onClick={()=>setExpandedMonth(null)} style={{background:'none',border:'none',cursor:'pointer'}}><X size={18} color="#64748B"/></button>
       </div>
       {hasPermission('deleteOrders')&&(()=>{ const monthOrders = orders.filter(o=>o.bulkGroupId&&(o.month===expandedMonth||o.month===expandedMonth.replace(/ /g,'_')||o.month.replace(/_/g,' ')===expandedMonth)); const monthIds = monthOrders.filter(o=>selOrders.has(o.id)); return monthIds.length>0 ? <BatchBar count={monthIds.length} onClear={()=>setSelOrders(prev=>{const n=new Set(prev);monthOrders.forEach(o=>n.delete(o.id));return n;})}>
+        <BatchBtn onClick={batchApprovalNotifyOrders} bg="#7C3AED" icon={Send}>Order Approval & Notify</BatchBtn>
         <BatchBtn onClick={()=>batchStatusOrders('Received')} bg="#059669" icon={CheckCircle}>Received</BatchBtn>
         <BatchBtn onClick={()=>batchStatusOrders('Back Order')} bg="#D97706" icon={AlertTriangle}>Back Order</BatchBtn>
         <BatchBtn onClick={batchDeleteOrders} bg="#DC2626" icon={Trash2}>Delete</BatchBtn>
@@ -3969,23 +4062,11 @@ if(scheduledNotifs.emailEnabled){                    addNotifEntry({id:'N-'+Date
           </div>
           <div><label style={{display:'block',fontSize:12,fontWeight:600,color:'#4A5568',marginBottom:6}}>Remark</label><textarea value={newOrder.remark} onChange={e=>setNewOrder(p=>({...p,remark:e.target.value}))} rows={2} style={{width:'100%',resize:'vertical'}}/></div>
 
-          {/* Auto-Notify Status */}
-          <div style={{padding:12,borderRadius:8,background:'#F8FAFB',border:'1px solid #E2E8F0'}}>
-            <div style={{fontSize:11,fontWeight:600,color:'#64748B',marginBottom:8}}>Auto-Notifications on Submit:</div>
-            <div style={{display:'flex',gap:12,flexWrap:'wrap'}}>
-              <div style={{display:'flex',alignItems:'center',gap:6,fontSize:11}}>
-                <Mail size={12} color={emailConfig.enabled&&waNotifyRules.orderCreated?'#059669':'#9CA3AF'}/>
-                <span style={{color:emailConfig.enabled&&waNotifyRules.orderCreated?'#059669':'#9CA3AF'}}>Email {emailConfig.enabled&&waNotifyRules.orderCreated?'✓':'Off'}</span>
-              </div>
-              <div style={{display:'flex',alignItems:'center',gap:6,fontSize:11}}>
-                <MessageSquare size={12} color={waConnected&&waNotifyRules.orderCreated?'#25D366':'#9CA3AF'}/>
-                <span style={{color:waConnected&&waNotifyRules.orderCreated?'#25D366':'#9CA3AF'}}>WhatsApp {waConnected?waNotifyRules.orderCreated?'✓':'Off':'Not Connected'}</span>
-                {!waConnected&&<button onClick={()=>{setShowNewOrder(false);setPage('whatsapp');}} style={{background:'none',border:'none',color:'#2563EB',fontSize:10,cursor:'pointer',textDecoration:'underline'}}>Connect</button>}
-              </div>
-            </div>
+          <div style={{padding:10,borderRadius:8,background:'#EDE9FE',border:'1px solid #DDD6FE',fontSize:11,color:'#5B21B6',display:'flex',alignItems:'center',gap:6}}>
+            <AlertCircle size={13}/> After creating, select orders and use <strong>"Order Approval & Notify"</strong> to send for approval.
           </div>
 
-          <div style={{display:'flex',gap:10}}><button className="bp" onClick={handleSubmitOrder} disabled={isSubmitting} style={{flex:1,opacity:isSubmitting?.6:1}}><Send size={14}/> {isSubmitting?'Submitting...':'Submit & Notify'}</button><button className="bs" onClick={()=>setShowNewOrder(false)}>Cancel</button></div>
+          <div style={{display:'flex',gap:10}}><button className="bp" onClick={handleSubmitOrder} disabled={isSubmitting} style={{flex:1,opacity:isSubmitting?.6:1}}><Plus size={14}/> {isSubmitting?'Creating...':'Create Order'}</button><button className="bs" onClick={()=>setShowNewOrder(false)}>Cancel</button></div>
         </div>
       </div></div>}
 
@@ -4041,7 +4122,10 @@ if(scheduledNotifs.emailEnabled){                    addNotifEntry({id:'N-'+Date
           </div>
         </div>
 
-        <div style={{display:'flex',gap:10}}><button className="bp" onClick={handleBulkSubmit} disabled={isSubmitting} style={{flex:1,opacity:isSubmitting?.6:1}}><Layers size={14}/> {isSubmitting?'Creating...':'Create Bulk Order & Notify'} ({bulkItems.filter(i=>i.materialNo&&i.description).length} items)</button><button className="bs" onClick={()=>setShowBulkOrder(false)}>Cancel</button></div>
+        <div style={{padding:10,borderRadius:8,background:'#EDE9FE',border:'1px solid #DDD6FE',fontSize:11,color:'#5B21B6',display:'flex',alignItems:'center',gap:6,marginBottom:10}}>
+          <AlertCircle size={13}/> After creating, select the bulk batch and use <strong>"Order Approval & Notify"</strong> to send for approval.
+        </div>
+        <div style={{display:'flex',gap:10}}><button className="bp" onClick={handleBulkSubmit} disabled={isSubmitting} style={{flex:1,opacity:isSubmitting?.6:1}}><Layers size={14}/> {isSubmitting?'Creating...':'Create Bulk Order'} ({bulkItems.filter(i=>i.materialNo&&i.description).length} items)</button><button className="bs" onClick={()=>setShowBulkOrder(false)}>Cancel</button></div>
       </div></div>}
 
       {/* ═══ ORDER DETAIL MODAL ═══ */}
