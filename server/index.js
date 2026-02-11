@@ -423,7 +423,10 @@ app.use('/api/auth', authLimiter, authRouter);
 // Public config (logo — no auth so login page can show it)
 app.get('/api/public/logo', async (req, res) => {
   try {
-    const result = await (await import('./db.js')).query("SELECT value FROM app_config WHERE key = 'customLogo' AND user_id = '__global__'");
+    const result = await Promise.race([
+      (await import('./db.js')).query("SELECT value FROM app_config WHERE key = 'customLogo' AND user_id = '__global__'"),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 5000))
+    ]);
     res.json({ logo: result.rows.length ? result.rows[0].value : null });
   } catch { res.json({ logo: null }); }
 });
@@ -445,12 +448,17 @@ app.use('/api/migrate', verifyToken, requireAdmin, migrateRouter);
 
 // Health check
 app.get('/api/health', async (req, res) => {
+  const pool = (await import('./db.js')).default;
+  const poolInfo = { total: pool.totalCount, idle: pool.idleCount, waiting: pool.waitingCount };
   let dbOk = false;
   try {
-    const r = await dbQuery('SELECT 1');
+    const r = await Promise.race([
+      dbQuery('SELECT 1'),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 3000))
+    ]);
     dbOk = r.rows.length > 0;
   } catch {}
-  res.json({ status: 'ok', whatsapp: connectionStatus, database: dbOk ? 'connected' : 'error', poolTotal: (await import('./db.js')).default.totalCount, poolIdle: (await import('./db.js')).default.idleCount, poolWaiting: (await import('./db.js')).default.waitingCount });
+  res.json({ status: 'ok', whatsapp: connectionStatus, database: dbOk ? 'connected' : 'error', pool: poolInfo });
 });
 
 // ============ STATIC FILE SERVING ============

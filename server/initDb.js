@@ -13,7 +13,10 @@ export async function initDatabase() {
     // --- 1. Execute schema.sql to create tables ---
     const schemaPath = path.join(__dirname, 'schema.sql');
     const schemaSql = fs.readFileSync(schemaPath, 'utf-8');
-    await query(schemaSql);
+    await Promise.race([
+      query(schemaSql),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('Schema execution timed out after 15s')), 15000))
+    ]);
 
     // --- 2. Seed default users (only if users table is empty) ---
     const usersResult = await query('SELECT COUNT(*) AS count FROM users');
