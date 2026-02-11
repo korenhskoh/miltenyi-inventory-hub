@@ -58,6 +58,42 @@ const BatchBar = ({ count, onClear, children }) => count > 0 ? (
 const BatchBtn = ({ onClick, bg, icon: I, children }) => (
   <button onClick={onClick} style={{display:'flex',alignItems:'center',gap:4,padding:'5px 12px',background:bg||'rgba(255,255,255,0.15)',border:'none',color:'#fff',borderRadius:6,fontSize:11,fontWeight:600,cursor:'pointer',whiteSpace:'nowrap'}}>{I&&<I size={12}/>}{children}</button>
 );
+
+// ════════════════════════════ EXPORT HELPERS ══════════════════════════
+const exportToFile = (data, columns, filename, format) => {
+  const rows = data.map(row => {
+    const obj = {};
+    columns.forEach(col => { obj[col.label] = col.fmt ? col.fmt(row[col.key], row) : (row[col.key] ?? ''); });
+    return obj;
+  });
+  const ws = XLSX.utils.json_to_sheet(rows);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Export');
+  XLSX.writeFile(wb, `${filename}.${format === 'csv' ? 'csv' : 'xlsx'}`, format === 'csv' ? { bookType: 'csv' } : {});
+};
+const exportToPDF = (data, columns, title) => {
+  const w = window.open('', '_blank');
+  if (!w) return;
+  const hdr = columns.map(c => `<th style="padding:8px 12px;text-align:left;border-bottom:2px solid #0B7A3E;font-size:11px;color:#4A5568;text-transform:uppercase;letter-spacing:.5px">${c.label}</th>`).join('');
+  const body = data.map((row, i) => `<tr style="background:${i % 2 === 0 ? '#fff' : '#F8FAFB'}">${columns.map(c => `<td style="padding:6px 12px;border-bottom:1px solid #E2E8F0;font-size:12px">${c.fmt ? c.fmt(row[c.key], row) : (row[c.key] ?? '—')}</td>`).join('')}</tr>`).join('');
+  w.document.write(`<!DOCTYPE html><html><head><title>${title}</title><style>body{font-family:system-ui,-apple-system,sans-serif;margin:24px;color:#1A202C}@media print{.no-print{display:none}}</style></head><body><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px"><div><h1 style="font-size:18px;font-weight:700;margin:0;color:#0B7A3E">Miltenyi Inventory Hub</h1><h2 style="font-size:14px;font-weight:500;margin:4px 0 0;color:#64748B">${title}</h2></div><div style="text-align:right;font-size:11px;color:#94A3B8">Exported: ${new Date().toLocaleString('en-SG')}<br/>${data.length} records</div></div><table style="width:100%;border-collapse:collapse"><thead><tr>${hdr}</tr></thead><tbody>${body}</tbody></table><div class="no-print" style="margin-top:20px;text-align:center"><button onclick="window.print()" style="padding:8px 24px;background:#0B7A3E;color:#fff;border:none;border-radius:8px;font-size:13px;cursor:pointer">Print / Save as PDF</button></div></body></html>`);
+  w.document.close();
+};
+const ExportDropdown = ({ data, columns, filename, title }) => {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  useEffect(() => { const h = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); }; document.addEventListener('mousedown', h); return () => document.removeEventListener('mousedown', h); }, []);
+  return (
+    <div ref={ref} style={{position:'relative',display:'inline-block'}}>
+      <button onClick={()=>setOpen(!open)} className="bs" style={{padding:'6px 12px',display:'flex',alignItems:'center',gap:5,fontSize:12,fontWeight:600}}><Download size={13}/> Export</button>
+      {open && <div style={{position:'absolute',right:0,top:'100%',marginTop:4,background:'#fff',border:'1px solid #E2E8F0',borderRadius:10,boxShadow:'0 8px 24px rgba(0,0,0,0.12)',zIndex:100,minWidth:150,overflow:'hidden'}}>
+        {[{label:'CSV (.csv)',fmt:'csv'},{label:'Excel (.xlsx)',fmt:'xlsx'},{label:'PDF (Print)',fmt:'pdf'}].map(opt=>(
+          <button key={opt.fmt} onClick={()=>{setOpen(false);if(opt.fmt==='pdf')exportToPDF(data,columns,title);else exportToFile(data,columns,filename,opt.fmt);}} style={{display:'block',width:'100%',padding:'10px 16px',border:'none',background:'#fff',textAlign:'left',fontSize:12,cursor:'pointer',fontFamily:'inherit',color:'#1A202C',borderBottom:'1px solid #F0F2F5'}} onMouseOver={e=>e.target.style.background='#F0FDF4'} onMouseOut={e=>e.target.style.background='#fff'}>{opt.label}</button>
+        ))}
+      </div>}
+    </div>
+  );
+};
 const SelBox = ({ checked, onChange }) => (
   <input type="checkbox" checked={checked} onChange={onChange} style={{width:16,height:16,cursor:'pointer',accentColor:'#0B7A3E'}}/>
 );
@@ -179,6 +215,9 @@ const [selectedUser, setSelectedUser] = useState(null);
   const [selectedStockCheck, setSelectedStockCheck] = useState(null);
 
   const [notifLog, setNotifLog] = useState([]);
+  const [auditLog, setAuditLog] = useState([]);
+  const [auditFilter, setAuditFilter] = useState({ action: 'All', user: 'All', entityType: 'All' });
+  const [machines, setMachines] = useState([]);
 
   const notify = useCallback((title, message, type = 'info') => {
     setNotifs(prev => [...prev, { title, message, type }]);
@@ -201,6 +240,11 @@ const [selectedUser, setSelectedUser] = useState(null);
     setPendingApprovals(prev=>[entry,...prev]);
     dbSync(api.createApproval(entry), 'Approval not saved');
   }, [dbSync]);
+  const logAction = useCallback((action, entityType, entityId, details) => {
+    const entry = { userId: currentUser?.id, userName: currentUser?.name, action, entityType, entityId, details };
+    setAuditLog(prev => [{ ...entry, createdAt: new Date().toISOString(), id: Date.now() }, ...prev]);
+    api.createAuditEntry(entry).catch(() => {});
+  }, [currentUser]);
   const addStockCheck = useCallback((entry) => {
     setStockChecks(prev=>[entry,...prev]);
     dbSync(api.createStockCheck(entry), 'Stock check not saved');
@@ -257,6 +301,7 @@ const [selectedUser, setSelectedUser] = useState(null);
     { key: 'delivery', label: 'Part Arrival', group: 'Pages' },
     { key: 'whatsapp', label: 'WhatsApp', group: 'Pages' },
     { key: 'notifications', label: 'Notifications', group: 'Pages' },
+    { key: 'auditTrail', label: 'Audit Trail', group: 'Pages' },
     { key: 'editAllOrders', label: 'Edit All Orders', group: 'Actions' },
     { key: 'deleteOrders', label: 'Delete Orders', group: 'Actions' },
     { key: 'editAllBulkOrders', label: 'Edit All Bulk Orders', group: 'Actions' },
@@ -268,7 +313,7 @@ const [selectedUser, setSelectedUser] = useState(null);
     { key: 'settings', label: 'Settings', group: 'Admin' },
     { key: 'aiBot', label: 'AI Bot Admin', group: 'Admin' },
   ];
-  const DEFAULT_USER_PERMS = { dashboard:true,catalog:true,orders:true,bulkOrders:true,analytics:true,stockCheck:true,delivery:true,whatsapp:true,notifications:true,editAllOrders:false,deleteOrders:false,editAllBulkOrders:false,deleteBulkOrders:false,deleteStockChecks:false,deleteNotifications:false,approvals:false,users:false,settings:false,aiBot:false };
+  const DEFAULT_USER_PERMS = { dashboard:true,catalog:true,orders:true,bulkOrders:true,analytics:true,stockCheck:true,delivery:true,whatsapp:true,notifications:true,auditTrail:false,editAllOrders:false,deleteOrders:false,editAllBulkOrders:false,deleteBulkOrders:false,deleteStockChecks:false,deleteNotifications:false,approvals:false,users:false,settings:false,aiBot:false };
   const hasPermission = useCallback((key) => {
     if (isAdmin) return true;
     const perms = currentUser?.permissions || DEFAULT_USER_PERMS;
@@ -338,6 +383,70 @@ const [selectedUser, setSelectedUser] = useState(null);
   const catPriceData = useMemo(() => Object.entries(CATEGORIES).map(([k,c])=>{const i=partsCatalog.filter(p=>p.c===k);if(!i.length)return null;return{name:c.short,sg:Math.round(i.reduce((s,p)=>s+p.sg,0)/i.length),dist:Math.round(i.reduce((s,p)=>s+p.dist,0)/i.length),count:i.length,color:c.color};}).filter(Boolean),[partsCatalog]);
   const catalogStats = useMemo(()=>{const t=partsCatalog.length;const cc={};partsCatalog.forEach(p=>{cc[p.c]=(cc[p.c]||0)+1;});return{total:t,avgSg:partsCatalog.reduce((s,p)=>s+p.sg,0)/t,avgDist:partsCatalog.reduce((s,p)=>s+p.dist,0)/t,catCounts:cc};},[partsCatalog]);
 
+  // ── Advanced Analytics Memos ──
+  const leadTimeData = useMemo(() => {
+    const monthMap = {};
+    orders.forEach(o => {
+      if (!o.orderDate || !o.arrivalDate || o.status !== 'Received') return;
+      const diff = Math.round((new Date(o.arrivalDate) - new Date(o.orderDate)) / 86400000);
+      if (diff < 0 || diff > 365) return;
+      const norm = o.month?.replace(/^\d+_/,'').replace(/_/g,' ') || 'Unknown';
+      const parts = norm.split(' ');
+      const shortLabel = parts.length >= 2 ? `${parts[0].slice(0,3)} '${parts[1].slice(2)}` : norm;
+      if (!monthMap[shortLabel]) monthMap[shortLabel] = { name: shortLabel, totalDays: 0, count: 0, _sortKey: norm };
+      monthMap[shortLabel].totalDays += diff;
+      monthMap[shortLabel].count++;
+    });
+    return Object.values(monthMap).map(m => ({ ...m, avgDays: Math.round(m.totalDays / m.count) })).sort((a, b) => {
+      const mo = {jan:0,feb:1,mar:2,apr:3,may:4,jun:5,jul:6,aug:7,sep:8,oct:9,nov:10,dec:11};
+      const [am,ay] = a._sortKey.toLowerCase().split(' ');
+      const [bm,by] = b._sortKey.toLowerCase().split(' ');
+      return (parseInt(ay)||0) - (parseInt(by)||0) || (mo[am?.slice(0,3)]||0) - (mo[bm?.slice(0,3)]||0);
+    });
+  }, [orders]);
+
+  const statusTrendData = useMemo(() => {
+    const monthMap = {};
+    orders.forEach(o => {
+      if (!o.month) return;
+      const norm = o.month.replace(/^\d+_/,'').replace(/_/g,' ');
+      const parts = norm.split(' ');
+      const shortLabel = parts.length >= 2 ? `${parts[0].slice(0,3)} '${parts[1].slice(2)}` : norm;
+      if (!monthMap[shortLabel]) monthMap[shortLabel] = { name: shortLabel, 'Pending Approval': 0, Approved: 0, Received: 0, 'Back Order': 0, Rejected: 0, _sortKey: norm };
+      if (monthMap[shortLabel][o.status] !== undefined) monthMap[shortLabel][o.status]++;
+    });
+    const mo = {jan:0,feb:1,mar:2,apr:3,may:4,jun:5,jul:6,aug:7,sep:8,oct:9,nov:10,dec:11};
+    return Object.values(monthMap).sort((a,b) => {
+      const [am,ay] = a._sortKey.toLowerCase().split(' ');
+      const [bm,by] = b._sortKey.toLowerCase().split(' ');
+      return (parseInt(ay)||0) - (parseInt(by)||0) || (mo[am?.slice(0,3)]||0) - (mo[bm?.slice(0,3)]||0);
+    });
+  }, [orders]);
+
+  const materialFrequency = useMemo(() => {
+    const m = {};
+    orders.forEach(o => {
+      const key = o.materialNo || o.description;
+      if (!m[key]) m[key] = { name: (o.description||key).length > 25 ? (o.description||key).slice(0,25)+'...' : (o.description||key), materialNo: o.materialNo, qty: 0, cost: 0, orderCount: 0 };
+      m[key].qty += (Number(o.quantity)||0);
+      m[key].cost += (Number(o.totalCost)||0);
+      m[key].orderCount++;
+    });
+    return Object.values(m).sort((a,b) => b.orderCount - a.orderCount).slice(0, 10);
+  }, [orders]);
+
+  const categorySpendData = useMemo(() => {
+    const catMap = {};
+    orders.forEach(o => {
+      const cat = partsCatalog.find(p => p.m === o.materialNo);
+      const catName = cat ? (CATEGORIES[cat.c]?.short || cat.c || 'Unknown') : 'Unknown';
+      if (!catMap[catName]) catMap[catName] = { name: catName, value: 0, count: 0, color: cat ? (CATEGORIES[cat.c]?.color || '#94A3B8') : '#94A3B8' };
+      catMap[catName].value += (Number(o.totalCost)||0);
+      catMap[catName].count++;
+    });
+    return Object.values(catMap).sort((a,b) => b.value - a.value);
+  }, [orders, partsCatalog]);
+
   // ── New Order ──
   
   // ── AI Bot State ──
@@ -367,6 +476,10 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
   const [waAllowedSenders, setWaAllowedSenders] = useState(['admin']); // usernames allowed to connect WhatsApp
   const [aiConversationLogs, setAiConversationLogs] = useState([]);
   const [aiAdminTab, setAiAdminTab] = useState('knowledge');
+  const [forecastTab, setForecastTab] = useState('forecast');
+  const [forecastMaterial, setForecastMaterial] = useState('');
+  const [showAddMachine, setShowAddMachine] = useState(false);
+  const [newMachine, setNewMachine] = useState({ name: '', modality: '', location: '', installDate: '', status: 'Active', notes: '' });
 
   // ── Batch Selection State ──
   const [selOrders, setSelOrders] = useState(new Set());
@@ -400,15 +513,18 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
   // Uses !== null checks: null = API failed (skip), [] = DB empty (set empty state)
   const loadAppData = useCallback(async () => {
     try {
-      const [apiOrders, apiBulk, apiUsers, apiChecks, apiNotifs, apiApprovals, apiConfig, apiCatalog] = await Promise.all([
+      const [apiOrders, apiBulk, apiUsers, apiChecks, apiNotifs, apiApprovals, apiConfig, apiCatalog, apiAudit, apiMachines] = await Promise.all([
         api.getOrders(), api.getBulkGroups(), api.getUsers(), api.getStockChecks(),
-        api.getNotifLog(), api.getApprovals(), api.getConfig(), api.getCatalog()
+        api.getNotifLog(), api.getApprovals(), api.getConfig(), api.getCatalog(),
+        api.getAuditLog(), api.getMachines()
       ]);
       if (apiOrders !== null) setOrders(numOrders(apiOrders));
       if (apiBulk !== null) setBulkGroups(numBulk(apiBulk));
       if (apiUsers !== null) setUsers(apiUsers);
       if (apiChecks !== null) setStockChecks(numStockChecks(apiChecks));
       if (apiNotifs !== null) setNotifLog(apiNotifs);
+      if (apiAudit !== null) setAuditLog(apiAudit);
+      if (apiMachines !== null) setMachines(apiMachines);
       if (apiApprovals !== null) setPendingApprovals(numApprovals(apiApprovals));
       if (apiConfig && Object.keys(apiConfig).length) {
         if (apiConfig.emailConfig && typeof apiConfig.emailConfig === 'object') setEmailConfig(prev => ({...prev, ...apiConfig.emailConfig}));
@@ -600,6 +716,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
     setIsSubmitting(false);
     if (!created) { notify('Save Failed','Order not saved to database. Please retry.','error'); return; }
     notify('Order Created',`${o.description} — ${o.quantity} units. Select and use "Order Approval & Notify" to send for approval.`,'success');
+    logAction('create', 'order', o.id, { description: o.description, quantity: o.quantity, totalCost: o.totalCost });
   };
 
   // ── Duplicate Order ──
@@ -1152,6 +1269,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
     setShowBulkOrder(false); setBulkItems([{materialNo:'',description:'',quantity:1,listPrice:0}]); setBulkRemark('');
     setIsSubmitting(false);
     notify('Bulk Order Created',`${newOrders.length} items for ${bulkMonth}. Select and use "Order Approval & Notify" to send for approval.`,'success');
+    logAction('create', 'bulk_group', bg.id, { month: bulkMonth, items: newOrders.length, totalCost: bg.totalCost });
   };
 
   // ── Auth Handlers ──
@@ -1241,10 +1359,12 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
     { id:'orders', label:'Single Orders', icon:Package, perm:'orders' },
     { id:'bulkorders', label:'Bulk Orders', icon:Layers, perm:'bulkOrders' },
     { id:'analytics', label:'Analytics', icon:BarChart3, perm:'analytics' },
+    { id:'forecasting', label:'Forecasting', icon:TrendingUp, perm:'analytics' },
     { id:'stockcheck', label:'Stock Check', icon:ClipboardList, perm:'stockCheck' },
     { id:'delivery', label:'Part Arrival', icon:Truck, perm:'delivery' },
     { id:'whatsapp', label:'WhatsApp', icon:MessageSquare, perm:'whatsapp' },
     { id:'notifications', label:'Notifications', icon:Bell, perm:'notifications' },
+    { id:'audit', label:'Audit Trail', icon:Shield, perm:'auditTrail' },
     { id:'aibot', label:'AI Bot Admin', icon:Bot, perm:'aiBot' },
     { id:'users', label:'User Management', icon:Users, perm:'users' },
     { id:'settings', label:'Settings', icon:Settings, perm:'settings' },
@@ -2169,6 +2289,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
 {page==='allorders'&&(<div>
   <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:20}}>
     <p style={{fontSize:13,color:'#64748B',margin:0}}>Unified view of all single and bulk orders</p>
+    <ExportDropdown data={allOrdersCombined} columns={[{key:'id',label:'Order ID'},{key:'materialNo',label:'Material No'},{key:'description',label:'Description'},{key:'quantity',label:'Qty'},{key:'listPrice',label:'List Price',fmt:v=>v>0?fmt(v):''},{key:'totalCost',label:'Total Cost',fmt:v=>v>0?fmt(v):''},{key:'orderDate',label:'Order Date',fmt:v=>fmtDate(v)},{key:'orderBy',label:'Ordered By'},{key:'status',label:'Status'},{key:'orderType',label:'Type'},{key:'month',label:'Month'}]} filename="all-orders" title="All Orders Export"/>
   </div>
 
   {/* Summary Cards */}
@@ -2263,7 +2384,10 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
 {page==='orders'&&(<div>
   <div style={{display:'flex',justifyContent:'space-between',marginBottom:20}}>
     <div style={{display:'flex',gap:8}}>{['All','Pending Approval','Approved','Received','Back Order','Rejected'].map(s=><button key={s} onClick={()=>setStatusFilter(s)} style={{padding:'6px 14px',borderRadius:20,border:statusFilter===s?'none':'1px solid #E2E8F0',background:statusFilter===s?'#0B7A3E':'#fff',color:statusFilter===s?'#fff':'#64748B',fontSize:12,fontWeight:500,cursor:'pointer',fontFamily:'inherit'}}>{s} ({s==='All'?orders.filter(o=>!o.bulkGroupId).length:orders.filter(o=>!o.bulkGroupId&&o.status===s).length})</button>)}</div>
-    <div style={{display:'flex',gap:8}}><button className="bp" onClick={()=>setShowNewOrder(true)}><Plus size={14}/> New Order</button></div>
+    <div style={{display:'flex',gap:8}}>
+      <ExportDropdown data={filteredOrders} columns={[{key:'id',label:'Order ID'},{key:'materialNo',label:'Material No'},{key:'description',label:'Description'},{key:'quantity',label:'Qty'},{key:'listPrice',label:'List Price',fmt:v=>v>0?fmt(v):''},{key:'totalCost',label:'Total Cost',fmt:v=>v>0?fmt(v):''},{key:'orderDate',label:'Order Date',fmt:v=>fmtDate(v)},{key:'orderBy',label:'Ordered By'},{key:'engineer',label:'Engineer'},{key:'status',label:'Status'}]} filename="single-orders" title="Single Orders Export"/>
+      <button className="bp" onClick={()=>setShowNewOrder(true)}><Plus size={14}/> New Order</button>
+    </div>
   </div>
   {hasPermission('deleteOrders') && <BatchBar count={selOrders.size} onClear={()=>setSelOrders(new Set())}>
     <BatchBtn onClick={batchApprovalNotifyOrders} bg="#7C3AED" icon={Send}>Order Approval & Notify</BatchBtn>
@@ -2300,7 +2424,10 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
 {page==='bulkorders'&&(<div>
   <div style={{display:'flex',justifyContent:'space-between',marginBottom:20}}>
     <p style={{fontSize:13,color:'#64748B'}}>Create and manage monthly grouped bulk orders for easier tracking</p>
-    <button className="bp" onClick={()=>setShowBulkOrder(true)}><FolderPlus size={14}/> Create Bulk Order</button>
+    <div style={{display:'flex',gap:8}}>
+      <ExportDropdown data={bulkGroups} columns={[{key:'id',label:'Batch ID'},{key:'month',label:'Month'},{key:'createdBy',label:'Created By'},{key:'items',label:'Items'},{key:'totalCost',label:'Total Cost',fmt:v=>v>0?fmt(v):''},{key:'status',label:'Status'},{key:'date',label:'Date',fmt:v=>fmtDate(v)}]} filename="bulk-orders" title="Bulk Orders Export"/>
+      <button className="bp" onClick={()=>setShowBulkOrder(true)}><FolderPlus size={14}/> Create Bulk Order</button>
+    </div>
   </div>
   <div className="grid-3" style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:14,marginBottom:24}}>
     {[{l:'Total Batches',v:bulkGroups.length,i:Layers,c:'#4338CA'},{l:'Total Items',v:bulkGroups.reduce((s,g)=>s+g.items,0),i:Package,c:'#0B7A3E'},{l:'Total Value',v:fmt(bulkGroups.reduce((s,g)=>s+g.totalCost,0)),i:DollarSign,c:'#2563EB'}].map((s,i)=>(
@@ -2402,12 +2529,266 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
 
 {/* ═══════════ ANALYTICS ═══════════ */}
 {page==='analytics'&&(<div>
-  <div className="grid-2" style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16,marginBottom:24}}>
+  {/* Summary Cards */}
+  <div className="grid-4" style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:14,marginBottom:24}}>
+    {[
+      {l:'Total Orders',v:fmtNum(stats.total),c:'#0B7A3E',bg:'linear-gradient(135deg,#006837,#0B9A4E)',i:Package},
+      {l:'Total Spend',v:fmt(stats.totalCost),c:'#2563EB',bg:'linear-gradient(135deg,#1E40AF,#3B82F6)',i:DollarSign},
+      {l:'Avg Lead Time',v:leadTimeData.length>0?`${Math.round(leadTimeData.reduce((s,d)=>s+d.avgDays,0)/leadTimeData.length)}d`:'—',c:'#D97706',bg:'linear-gradient(135deg,#92400E,#D97706)',i:Clock},
+      {l:'Fulfillment Rate',v:`${stats.fulfillmentRate}%`,c:'#7C3AED',bg:'linear-gradient(135deg,#5B21B6,#7C3AED)',i:TrendingUp}
+    ].map((s,i)=>(
+      <div key={i} style={{background:s.bg,borderRadius:12,padding:'20px 22px',color:'#fff'}}>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start'}}>
+          <div><div style={{fontSize:11,opacity:.8,textTransform:'uppercase',letterSpacing:.5,marginBottom:6}}>{s.l}</div><div className="mono" style={{fontSize:24,fontWeight:700}}>{s.v}</div></div>
+          <div style={{padding:8,background:'rgba(255,255,255,0.15)',borderRadius:8}}><s.i size={18}/></div>
+        </div>
+      </div>
+    ))}
+  </div>
+
+  {/* Row 1: Monthly Spend + Order Volume */}
+  <div className="grid-2" style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16,marginBottom:16}}>
     <div className="card" style={{padding:'20px 24px'}}><h3 style={{fontSize:15,fontWeight:600,marginBottom:16}}>Monthly Spend</h3><ResponsiveContainer width="100%" height={270}><BarChart data={monthlyData}><CartesianGrid strokeDasharray="3 3" stroke="#F0F2F5"/><XAxis dataKey="name" tick={{fontSize:11,fill:'#94A3B8'}} axisLine={false} tickLine={false}/><YAxis tick={{fontSize:11,fill:'#94A3B8'}} axisLine={false} tickLine={false} tickFormatter={v=>`$${(v/1000).toFixed(0)}k`}/><Tooltip formatter={v=>fmt(v)} contentStyle={{borderRadius:10,border:'none',fontSize:12}}/><Bar dataKey="cost" radius={[6,6,0,0]} barSize={22}>{monthlyData.map((_,i)=><Cell key={i} fill={i===monthlyData.length-1?'#00A550':'#0B7A3E'}/>)}</Bar></BarChart></ResponsiveContainer></div>
     <div className="card" style={{padding:'20px 24px'}}><h3 style={{fontSize:15,fontWeight:600,marginBottom:16}}>Order Volume vs Received</h3><ResponsiveContainer width="100%" height={270}><LineChart data={monthlyData}><CartesianGrid strokeDasharray="3 3" stroke="#F0F2F5"/><XAxis dataKey="name" tick={{fontSize:11,fill:'#94A3B8'}} axisLine={false} tickLine={false}/><YAxis tick={{fontSize:11,fill:'#94A3B8'}} axisLine={false} tickLine={false}/><Tooltip/><Line type="monotone" dataKey="orders" stroke="#0B7A3E" strokeWidth={2.5} dot={{r:4}} name="Orders"/><Line type="monotone" dataKey="received" stroke="#2563EB" strokeWidth={2} strokeDasharray="5 5" dot={{r:3}} name="Received"/></LineChart></ResponsiveContainer></div>
   </div>
+
+  {/* Row 2: Status Distribution + Top 10 Materials */}
+  <div className="grid-2" style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16,marginBottom:16}}>
+    <div className="card" style={{padding:'20px 24px'}}><h3 style={{fontSize:15,fontWeight:600,marginBottom:16}}>Status Distribution by Month</h3>
+      {statusTrendData.length>0?<ResponsiveContainer width="100%" height={270}><BarChart data={statusTrendData}><CartesianGrid strokeDasharray="3 3" stroke="#F0F2F5"/><XAxis dataKey="name" tick={{fontSize:11,fill:'#94A3B8'}} axisLine={false} tickLine={false}/><YAxis tick={{fontSize:11,fill:'#94A3B8'}} axisLine={false} tickLine={false}/><Tooltip/><Bar dataKey="Received" stackId="a" fill="#0B7A3E" radius={[0,0,0,0]}/><Bar dataKey="Approved" stackId="a" fill="#059669"/><Bar dataKey="Pending Approval" stackId="a" fill="#7C3AED"/><Bar dataKey="Back Order" stackId="a" fill="#DC2626"/><Bar dataKey="Rejected" stackId="a" fill="#F87171" radius={[4,4,0,0]}/></BarChart></ResponsiveContainer>:<div style={{height:270,display:'flex',alignItems:'center',justifyContent:'center',color:'#94A3B8',fontSize:13}}>No data available</div>}
+    </div>
+    <div className="card" style={{padding:'20px 24px'}}><h3 style={{fontSize:15,fontWeight:600,marginBottom:16}}>Top 10 Ordered Materials</h3>
+      {materialFrequency.length>0?<ResponsiveContainer width="100%" height={270}><BarChart data={materialFrequency} layout="vertical"><CartesianGrid strokeDasharray="3 3" stroke="#F0F2F5"/><XAxis type="number" tick={{fontSize:11,fill:'#94A3B8'}} axisLine={false} tickLine={false}/><YAxis dataKey="name" type="category" width={120} tick={{fontSize:10,fill:'#64748B'}} axisLine={false} tickLine={false}/><Tooltip formatter={(v,n)=>n==='cost'?fmt(v):v}/><Bar dataKey="orderCount" fill="#2563EB" radius={[0,4,4,0]} barSize={16} name="Orders"/></BarChart></ResponsiveContainer>:<div style={{height:270,display:'flex',alignItems:'center',justifyContent:'center',color:'#94A3B8',fontSize:13}}>No data available</div>}
+    </div>
+  </div>
+
+  {/* Row 3: Lead Time Trend + Category Spend */}
+  <div className="grid-2" style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16,marginBottom:16}}>
+    <div className="card" style={{padding:'20px 24px'}}><h3 style={{fontSize:15,fontWeight:600,marginBottom:16}}>Average Lead Time (Days)</h3>
+      {leadTimeData.length>0?<ResponsiveContainer width="100%" height={270}><AreaChart data={leadTimeData}><CartesianGrid strokeDasharray="3 3" stroke="#F0F2F5"/><XAxis dataKey="name" tick={{fontSize:11,fill:'#94A3B8'}} axisLine={false} tickLine={false}/><YAxis tick={{fontSize:11,fill:'#94A3B8'}} axisLine={false} tickLine={false} unit="d"/><Tooltip formatter={v=>`${v} days`}/><Area type="monotone" dataKey="avgDays" stroke="#D97706" fill="#FEF3C7" strokeWidth={2.5} name="Avg Days"/></AreaChart></ResponsiveContainer>:<div style={{height:270,display:'flex',alignItems:'center',justifyContent:'center',color:'#94A3B8',fontSize:13}}>No lead time data — requires orders with both order date and arrival date</div>}
+    </div>
+    <div className="card" style={{padding:'20px 24px'}}><h3 style={{fontSize:15,fontWeight:600,marginBottom:16}}>Spend by Category</h3>
+      {categorySpendData.length>0?<ResponsiveContainer width="100%" height={270}><PieChart><Pie data={categorySpendData} cx="50%" cy="50%" innerRadius={55} outerRadius={85} paddingAngle={3} dataKey="value" strokeWidth={0}>{categorySpendData.map((e,i)=><Cell key={i} fill={e.color}/>)}</Pie><Tooltip formatter={v=>fmt(v)}/></PieChart></ResponsiveContainer>:<div style={{height:270,display:'flex',alignItems:'center',justifyContent:'center',color:'#94A3B8',fontSize:13}}>No category data available</div>}
+      {categorySpendData.length>0&&<div style={{display:'flex',justifyContent:'center',gap:10,marginTop:4,flexWrap:'wrap'}}>{categorySpendData.slice(0,6).map((s,i)=><div key={i} style={{display:'flex',alignItems:'center',gap:4,fontSize:10,color:'#64748B'}}><div style={{width:8,height:8,borderRadius:'50%',background:s.color}}/>{s.name}</div>)}</div>}
+    </div>
+  </div>
+
+  {/* Row 4: Engineer Activity */}
   <div className="card" style={{padding:'20px 24px'}}><h3 style={{fontSize:15,fontWeight:600,marginBottom:16}}>Engineer Activity</h3><div className="grid-2" style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16}}>{[...new Set(orders.flatMap(o=>[o.orderBy,o.engineer]).filter(Boolean))].map(eng=>{const eo=orders.filter(o=>o.orderBy===eng||o.engineer===eng);return(<div key={eng} style={{padding:16,borderRadius:12,background:'#F8FAFB'}}><div style={{display:'flex',alignItems:'center',gap:10,marginBottom:12}}><div style={{width:36,height:36,borderRadius:'50%',background:'linear-gradient(135deg,#006837,#00A550)',display:'flex',alignItems:'center',justifyContent:'center',color:'#fff',fontSize:13,fontWeight:700}}>{eng.split(' ').map(w=>w[0]).join('')}</div><div><div style={{fontWeight:600,fontSize:14}}>{eng}</div><div style={{fontSize:11,color:'#94A3B8'}}>User</div></div></div><div className="grid-3" style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:8}}><div><div style={{fontSize:10,color:'#94A3B8',textTransform:'uppercase'}}>Orders</div><div className="mono" style={{fontSize:18,fontWeight:700}}>{eo.length}</div></div><div><div style={{fontSize:10,color:'#94A3B8',textTransform:'uppercase'}}>Checked</div><div className="mono" style={{fontSize:18,fontWeight:700,color:'#0B7A3E'}}>{eo.filter(o=>o.engineer===eng).length}</div></div><div><div style={{fontSize:10,color:'#94A3B8',textTransform:'uppercase'}}>Value</div><div className="mono" style={{fontSize:14,fontWeight:700}}>{fmt(eo.reduce((s,o)=>s+o.totalCost,0))}</div></div></div></div>);})}</div></div>
 </div>)}
+
+{/* ═══════════ FORECASTING ═══════════ */}
+{page==='forecasting'&&hasPermission('analytics')&&(()=>{
+  // Build material history: { materialNo → { months: [{name, qty}], totalQty, description } }
+  const materialHistory = {};
+  const monthOrder = {jan:0,feb:1,mar:2,apr:3,may:4,jun:5,jul:6,aug:7,sep:8,oct:9,nov:10,dec:11};
+  orders.forEach(o => {
+    if (!o.materialNo) return;
+    if (!materialHistory[o.materialNo]) materialHistory[o.materialNo] = { materialNo: o.materialNo, description: o.description, monthMap: {}, totalQty: 0, totalCost: 0, orderCount: 0 };
+    const h = materialHistory[o.materialNo];
+    h.totalQty += (Number(o.quantity)||0);
+    h.totalCost += (Number(o.totalCost)||0);
+    h.orderCount++;
+    if (o.month) {
+      const norm = o.month.replace(/^\d+_/,'').replace(/_/g,' ');
+      const parts = norm.split(' ');
+      const shortLabel = parts.length >= 2 ? `${parts[0].slice(0,3)} '${parts[1].slice(2)}` : norm;
+      if (!h.monthMap[shortLabel]) h.monthMap[shortLabel] = { name: shortLabel, qty: 0, _sortKey: norm };
+      h.monthMap[shortLabel].qty += (Number(o.quantity)||0);
+    }
+  });
+  const allMaterials = Object.values(materialHistory).sort((a,b) => b.orderCount - a.orderCount);
+  const selectedMat = forecastMaterial || (allMaterials[0]?.materialNo || '');
+  const matData = materialHistory[selectedMat];
+  const matMonthly = matData ? Object.values(matData.monthMap).sort((a,b) => {
+    const [am,ay] = a._sortKey.toLowerCase().split(' ');
+    const [bm,by] = b._sortKey.toLowerCase().split(' ');
+    return (parseInt(ay)||0) - (parseInt(by)||0) || (monthOrder[am?.slice(0,3)]||0) - (monthOrder[bm?.slice(0,3)]||0);
+  }) : [];
+
+  // Weighted moving average forecast
+  const forecastMonths = [];
+  if (matMonthly.length >= 2) {
+    const vals = matMonthly.map(m => m.qty);
+    const machineGrowth = machines.length > 0 ? 1 + (machines.filter(m=>m.status==='Active').length * 0.02) : 1;
+    const futureMonths = ['Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec','Jan','Feb'];
+    for (let i = 0; i < 6; i++) {
+      const n = vals.length + i;
+      const recent = [...vals, ...forecastMonths.map(f=>f.qty)];
+      const w1 = recent[recent.length - 1] || 0;
+      const w2 = recent[recent.length - 2] || w1;
+      const w3 = recent[recent.length - 3] || w2;
+      const predicted = Math.round((0.5 * w1 + 0.3 * w2 + 0.2 * w3) * machineGrowth);
+      const monthIdx = (new Date().getMonth() + i + 1) % 12;
+      forecastMonths.push({ name: `${futureMonths[monthIdx]} '26`, qty: predicted, forecast: true });
+    }
+  }
+  const chartData = [...matMonthly.map(m=>({...m, forecast: false})), ...forecastMonths];
+
+  // Summary forecast for all materials
+  const forecastSummary = allMaterials.slice(0, 20).map(mat => {
+    const vals = Object.values(mat.monthMap).sort((a,b) => {
+      const [am,ay] = a._sortKey.toLowerCase().split(' ');
+      const [bm,by] = b._sortKey.toLowerCase().split(' ');
+      return (parseInt(ay)||0) - (parseInt(by)||0) || (monthOrder[am?.slice(0,3)]||0) - (monthOrder[bm?.slice(0,3)]||0);
+    }).map(m => m.qty);
+    const avg = vals.length > 0 ? Math.round(vals.reduce((s,v)=>s+v,0)/vals.length) : 0;
+    const lastVal = vals[vals.length - 1] || 0;
+    const prevVal = vals[vals.length - 2] || lastVal;
+    const trend = lastVal > prevVal ? 'up' : lastVal < prevVal ? 'down' : 'stable';
+    const w1 = vals[vals.length-1]||0, w2 = vals[vals.length-2]||w1, w3 = vals[vals.length-3]||w2;
+    const predicted = Math.round(0.5*w1 + 0.3*w2 + 0.2*w3);
+    const variance = vals.length >= 3 ? Math.sqrt(vals.slice(-3).reduce((s,v)=>s+Math.pow(v-avg,2),0)/3) : 999;
+    const confidence = variance < avg * 0.3 ? 'High' : variance < avg * 0.7 ? 'Medium' : 'Low';
+    return { ...mat, avgMonthly: avg, trend, predicted, confidence, monthCount: vals.length };
+  });
+
+  // Modality stats
+  const modalityCounts = {};
+  machines.forEach(m => { if (m.status === 'Active') modalityCounts[m.modality] = (modalityCounts[m.modality]||0)+1; });
+
+  return (<div>
+    <div style={{display:'flex',alignItems:'center',gap:12,marginBottom:24}}>
+      <div style={{padding:10,background:'linear-gradient(135deg,#D97706,#F59E0B)',borderRadius:12}}><TrendingUp size={22} color="#fff"/></div>
+      <div><h2 style={{fontSize:18,fontWeight:700,margin:0}}>Material Forecasting</h2><p style={{fontSize:12,color:'#94A3B8',margin:0}}>Predict future material needs based on historical data and machine fleet</p></div>
+    </div>
+
+    {/* Tabs */}
+    <div style={{display:'flex',gap:4,marginBottom:20,borderBottom:'2px solid #E8ECF0',paddingBottom:2}}>
+      {[{id:'forecast',label:'Forecast Dashboard',icon:TrendingUp},{id:'machines',label:'Machine Fleet',icon:Settings},{id:'summary',label:'All Materials Forecast',icon:ClipboardList}].map(tab=>(
+        <button key={tab.id} onClick={()=>setForecastTab(tab.id)} style={{display:'flex',alignItems:'center',gap:6,padding:'10px 16px',border:'none',background:forecastTab===tab.id?'#FEF3C7':'transparent',color:forecastTab===tab.id?'#92400E':'#64748B',fontWeight:600,fontSize:13,borderRadius:'8px 8px 0 0',cursor:'pointer',fontFamily:'inherit',borderBottom:forecastTab===tab.id?'2px solid #D97706':'2px solid transparent',marginBottom:-2}}><tab.icon size={15}/> {tab.label}</button>
+      ))}
+    </div>
+
+    {/* Forecast Dashboard */}
+    {forecastTab==='forecast'&&(<div>
+      <div className="grid-4" style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:14,marginBottom:20}}>
+        {[
+          {l:'Unique Materials',v:allMaterials.length,c:'#D97706'},
+          {l:'Active Machines',v:machines.filter(m=>m.status==='Active').length,c:'#0B7A3E'},
+          {l:'Modalities',v:Object.keys(modalityCounts).length,c:'#2563EB'},
+          {l:'Data Months',v:matMonthly.length,c:'#7C3AED'}
+        ].map((s,i)=><div key={i} className="card" style={{padding:'18px 22px',borderLeft:`3px solid ${s.c}`}}><div style={{fontSize:11,color:'#94A3B8',textTransform:'uppercase',letterSpacing:.5,marginBottom:4}}>{s.l}</div><div className="mono" style={{fontSize:28,fontWeight:700,color:s.c}}>{s.v}</div></div>)}
+      </div>
+
+      <div className="card" style={{padding:'20px 24px',marginBottom:16}}>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:16}}>
+          <h3 style={{fontSize:15,fontWeight:600,margin:0}}>Material Forecast</h3>
+          <select value={selectedMat} onChange={e=>{setForecastMaterial(e.target.value);}} style={{padding:'8px 14px',borderRadius:8,border:'1.5px solid #E2E8F0',fontSize:12,fontFamily:'inherit',minWidth:250}}>
+            {allMaterials.map(m=><option key={m.materialNo} value={m.materialNo}>{m.materialNo} — {(m.description||'').slice(0,40)}</option>)}
+          </select>
+        </div>
+        {matData && <div style={{marginBottom:12,padding:'12px 16px',background:'#FEF3C7',borderRadius:10,fontSize:12}}>
+          <strong>{matData.description}</strong> — Total ordered: {matData.totalQty} units across {matData.orderCount} orders ({fmt(matData.totalCost)} total)
+          {forecastMonths.length>0&&<span style={{marginLeft:8,color:'#92400E'}}> | Next month forecast: <strong>{forecastMonths[0]?.qty} units</strong></span>}
+        </div>}
+        {chartData.length>0?<ResponsiveContainer width="100%" height={300}><LineChart data={chartData}><CartesianGrid strokeDasharray="3 3" stroke="#F0F2F5"/><XAxis dataKey="name" tick={{fontSize:11,fill:'#94A3B8'}} axisLine={false} tickLine={false}/><YAxis tick={{fontSize:11,fill:'#94A3B8'}} axisLine={false} tickLine={false}/><Tooltip/><Line type="monotone" dataKey="qty" stroke="#D97706" strokeWidth={2.5} dot={(props)=>{const{cx,cy,payload}=props;return payload.forecast?<circle cx={cx} cy={cy} r={5} fill="#fff" stroke="#DC2626" strokeWidth={2} strokeDasharray="3 3"/>:<circle cx={cx} cy={cy} r={4} fill="#D97706"/>;}} name="Quantity"/></LineChart></ResponsiveContainer>:<div style={{height:300,display:'flex',alignItems:'center',justifyContent:'center',color:'#94A3B8'}}>Select a material to view forecast</div>}
+        <div style={{display:'flex',gap:16,justifyContent:'center',marginTop:8,fontSize:11,color:'#64748B'}}>
+          <span style={{display:'flex',alignItems:'center',gap:4}}><div style={{width:10,height:10,borderRadius:'50%',background:'#D97706'}}/> Historical</span>
+          <span style={{display:'flex',alignItems:'center',gap:4}}><div style={{width:10,height:10,borderRadius:'50%',border:'2px dashed #DC2626',background:'#fff'}}/> Forecast</span>
+        </div>
+      </div>
+
+      {/* Machine Modality Correlation */}
+      {machines.length>0&&Object.keys(modalityCounts).length>0&&(
+        <div className="card" style={{padding:'20px 24px'}}>
+          <h3 style={{fontSize:15,fontWeight:600,marginBottom:16}}>Machine Fleet Overview</h3>
+          <div style={{display:'flex',gap:12,flexWrap:'wrap'}}>
+            {Object.entries(modalityCounts).map(([mod,cnt])=>(
+              <div key={mod} style={{padding:'12px 18px',background:'#F0FDF4',border:'1px solid #BBF7D0',borderRadius:10,minWidth:120}}>
+                <div style={{fontSize:11,color:'#64748B',textTransform:'uppercase',letterSpacing:.5,marginBottom:2}}>{mod}</div>
+                <div className="mono" style={{fontSize:22,fontWeight:700,color:'#0B7A3E'}}>{cnt}</div>
+                <div style={{fontSize:10,color:'#94A3B8'}}>active machines</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>)}
+
+    {/* Machine Fleet Management */}
+    {forecastTab==='machines'&&(<div>
+      <div style={{display:'flex',justifyContent:'space-between',marginBottom:16}}>
+        <p style={{fontSize:13,color:'#64748B',margin:0}}>Manage your local machine fleet. Machine count affects forecast predictions.</p>
+        <button className="bp" onClick={()=>setShowAddMachine(true)}><Plus size={14}/> Add Machine</button>
+      </div>
+
+      <div className="grid-3" style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:14,marginBottom:20}}>
+        {[{l:'Total Machines',v:machines.length,c:'#0B7A3E'},{l:'Active',v:machines.filter(m=>m.status==='Active').length,c:'#2563EB'},{l:'Modalities',v:Object.keys(modalityCounts).length,c:'#7C3AED'}].map((s,i)=>(
+          <div key={i} className="card" style={{padding:'18px 22px',borderLeft:`3px solid ${s.c}`}}><div style={{fontSize:11,color:'#94A3B8',textTransform:'uppercase',letterSpacing:.5,marginBottom:4}}>{s.l}</div><div className="mono" style={{fontSize:28,fontWeight:700,color:s.c}}>{s.v}</div></div>
+        ))}
+      </div>
+
+      {showAddMachine&&(
+        <div className="card" style={{padding:'20px 24px',marginBottom:16,border:'2px solid #D97706'}}>
+          <h4 style={{fontSize:14,fontWeight:600,marginBottom:12}}>Add New Machine</h4>
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:12}}>
+            <div><label style={{display:'block',fontSize:11,fontWeight:600,color:'#4A5568',marginBottom:4}}>Machine Name *</label><input value={newMachine.name} onChange={e=>setNewMachine(p=>({...p,name:e.target.value}))} placeholder="e.g. MACSQuant Analyzer 16" style={{width:'100%',padding:'8px 12px',borderRadius:8,border:'1.5px solid #E2E8F0',fontSize:12}}/></div>
+            <div><label style={{display:'block',fontSize:11,fontWeight:600,color:'#4A5568',marginBottom:4}}>Modality *</label><input value={newMachine.modality} onChange={e=>setNewMachine(p=>({...p,modality:e.target.value}))} placeholder="e.g. Cell Analysis, Cell Sorting" style={{width:'100%',padding:'8px 12px',borderRadius:8,border:'1.5px solid #E2E8F0',fontSize:12}}/></div>
+            <div><label style={{display:'block',fontSize:11,fontWeight:600,color:'#4A5568',marginBottom:4}}>Location</label><input value={newMachine.location} onChange={e=>setNewMachine(p=>({...p,location:e.target.value}))} placeholder="e.g. Lab A, Singapore" style={{width:'100%',padding:'8px 12px',borderRadius:8,border:'1.5px solid #E2E8F0',fontSize:12}}/></div>
+            <div><label style={{display:'block',fontSize:11,fontWeight:600,color:'#4A5568',marginBottom:4}}>Install Date</label><input type="date" value={newMachine.installDate} onChange={e=>setNewMachine(p=>({...p,installDate:e.target.value}))} style={{width:'100%',padding:'8px 12px',borderRadius:8,border:'1.5px solid #E2E8F0',fontSize:12}}/></div>
+            <div><label style={{display:'block',fontSize:11,fontWeight:600,color:'#4A5568',marginBottom:4}}>Status</label><select value={newMachine.status} onChange={e=>setNewMachine(p=>({...p,status:e.target.value}))} style={{width:'100%',padding:'8px 12px',borderRadius:8,border:'1.5px solid #E2E8F0',fontSize:12}}><option>Active</option><option>Inactive</option><option>Decommissioned</option></select></div>
+            <div><label style={{display:'block',fontSize:11,fontWeight:600,color:'#4A5568',marginBottom:4}}>Notes</label><input value={newMachine.notes} onChange={e=>setNewMachine(p=>({...p,notes:e.target.value}))} placeholder="Optional notes" style={{width:'100%',padding:'8px 12px',borderRadius:8,border:'1.5px solid #E2E8F0',fontSize:12}}/></div>
+          </div>
+          <div style={{display:'flex',gap:8,marginTop:12}}>
+            <button className="bp" onClick={()=>{
+              if(!newMachine.name||!newMachine.modality){notify('Missing Fields','Name and Modality are required','warning');return;}
+              const m = {...newMachine};
+              dbSync(api.createMachine(m).then(saved=>{if(saved){setMachines(prev=>[saved,...prev]);logAction('create','machine',String(saved.id),{name:m.name,modality:m.modality});}}),'Machine not saved');
+              setNewMachine({name:'',modality:'',location:'',installDate:'',status:'Active',notes:''});
+              setShowAddMachine(false);
+              notify('Machine Added',`${m.name} (${m.modality})`,'success');
+            }}><Check size={14}/> Save Machine</button>
+            <button className="bs" onClick={()=>setShowAddMachine(false)}>Cancel</button>
+          </div>
+        </div>
+      )}
+
+      <div className="card" style={{overflow:'hidden'}}>
+        <table style={{width:'100%',borderCollapse:'collapse',fontSize:12.5}}>
+          <thead><tr style={{background:'#F8FAFB'}}>{['Name','Modality','Location','Install Date','Status','Actions'].map(h=><th key={h} className="th">{h}</th>)}</tr></thead>
+          <tbody>{machines.length===0?<tr><td colSpan={6} style={{padding:24,textAlign:'center',color:'#94A3B8',fontSize:13}}>No machines added yet. Add machines to improve forecast accuracy.</td></tr>:machines.map(m=>(
+            <tr key={m.id} className="tr" style={{borderBottom:'1px solid #F7FAFC'}}>
+              <td className="td" style={{fontWeight:600}}>{m.name}</td>
+              <td className="td"><Pill bg="#EDE9FE" color="#7C3AED">{m.modality}</Pill></td>
+              <td className="td" style={{color:'#64748B'}}>{m.location||'—'}</td>
+              <td className="td" style={{fontSize:11,color:'#94A3B8'}}>{m.installDate?fmtDate(m.installDate):'—'}</td>
+              <td className="td"><Pill bg={m.status==='Active'?'#D1FAE5':m.status==='Inactive'?'#FEF3C7':'#F3F4F6'} color={m.status==='Active'?'#059669':m.status==='Inactive'?'#D97706':'#64748B'}>{m.status}</Pill></td>
+              <td className="td"><button onClick={()=>{if(window.confirm(`Delete machine "${m.name}"?`)){setMachines(prev=>prev.filter(x=>x.id!==m.id));dbSync(api.deleteMachine(m.id),'Machine delete failed');logAction('delete','machine',String(m.id),{name:m.name});notify('Deleted',m.name,'success');}}} style={{background:'#DC2626',color:'#fff',border:'none',borderRadius:6,padding:'4px 8px',fontSize:10,cursor:'pointer',display:'flex',alignItems:'center',gap:3}}><Trash2 size={11}/> Delete</button></td>
+            </tr>
+          ))}</tbody>
+        </table>
+      </div>
+    </div>)}
+
+    {/* All Materials Forecast Summary */}
+    {forecastTab==='summary'&&(<div>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:16}}>
+        <p style={{fontSize:13,color:'#64748B',margin:0}}>Predicted material needs for next month based on historical trends</p>
+        <ExportDropdown data={forecastSummary} columns={[{key:'materialNo',label:'Material No'},{key:'description',label:'Description'},{key:'orderCount',label:'Orders'},{key:'totalQty',label:'Total Qty'},{key:'avgMonthly',label:'Avg Monthly'},{key:'predicted',label:'Predicted Next'},{key:'trend',label:'Trend'},{key:'confidence',label:'Confidence'}]} filename="forecast-summary" title="Material Forecast Summary"/>
+      </div>
+      <div className="card" style={{overflow:'hidden'}}>
+        <div style={{maxHeight:600,overflowY:'auto'}}>
+          <table style={{width:'100%',borderCollapse:'collapse',fontSize:12.5}}>
+            <thead><tr style={{background:'#F8FAFB',position:'sticky',top:0,zIndex:1}}>{['Material No','Description','Total Orders','Total Qty','Avg Monthly','Trend','Predicted Next Month','Confidence'].map(h=><th key={h} className="th">{h}</th>)}</tr></thead>
+            <tbody>{forecastSummary.length===0?<tr><td colSpan={8} style={{padding:24,textAlign:'center',color:'#94A3B8',fontSize:13}}>No order history available for forecasting</td></tr>:forecastSummary.map((m,i)=>(
+              <tr key={m.materialNo} className="tr" style={{borderBottom:'1px solid #F7FAFC',background:i%2===0?'#fff':'#FCFCFD',cursor:'pointer'}} onClick={()=>{setForecastMaterial(m.materialNo);setForecastTab('forecast');}}>
+                <td className="td mono" style={{fontSize:11,fontWeight:600,color:'#0B7A3E'}}>{m.materialNo}</td>
+                <td className="td" style={{maxWidth:200,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{m.description}</td>
+                <td className="td" style={{textAlign:'center',fontWeight:600}}>{m.orderCount}</td>
+                <td className="td" style={{textAlign:'center'}}>{m.totalQty}</td>
+                <td className="td" style={{textAlign:'center'}}>{m.avgMonthly}</td>
+                <td className="td" style={{textAlign:'center'}}>{m.trend==='up'?<span style={{color:'#DC2626'}}>↑ Up</span>:m.trend==='down'?<span style={{color:'#059669'}}>↓ Down</span>:<span style={{color:'#64748B'}}>→ Stable</span>}</td>
+                <td className="td" style={{textAlign:'center'}}><span className="mono" style={{fontWeight:700,fontSize:14,color:'#D97706'}}>{m.predicted}</span></td>
+                <td className="td"><Pill bg={m.confidence==='High'?'#D1FAE5':m.confidence==='Medium'?'#FEF3C7':'#FEE2E2'} color={m.confidence==='High'?'#059669':m.confidence==='Medium'?'#D97706':'#DC2626'}>{m.confidence}</Pill></td>
+              </tr>
+            ))}</tbody>
+          </table>
+        </div>
+      </div>
+    </div>)}
+  </div>);
+})()}
 
 {/* ═══════════ STOCK CHECK ═══════════ */}
 {page==='stockcheck'&&(<div>
@@ -2792,7 +3173,10 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
       <div style={{padding:'16px 20px',borderBottom:'1px solid #E8ECF0'}}>
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}>
           <span style={{fontWeight:600,fontSize:14}}>All Orders - Arrival Status</span>
-          <span style={{fontSize:11,color:'#94A3B8'}}>{arrivalSorted.length} of {orders.length} orders</span>
+          <div style={{display:'flex',alignItems:'center',gap:10}}>
+            <ExportDropdown data={arrivalSorted} columns={[{key:'id',label:'Order ID'},{key:'materialNo',label:'Material No'},{key:'description',label:'Description'},{key:'quantity',label:'Qty Ordered'},{key:'qtyReceived',label:'Qty Received',fmt:v=>v||0},{key:'backOrder',label:'Back Order',fmt:(v,row)=>(row.qtyReceived||0)-row.quantity},{key:'arrivalDate',label:'Arrival Date',fmt:v=>fmtDate(v)},{key:'status',label:'Status'}]} filename="part-arrival" title="Part Arrival - Arrival Status"/>
+            <span style={{fontSize:11,color:'#94A3B8'}}>{arrivalSorted.length} of {orders.length} orders</span>
+          </div>
         </div>
         <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
           {statusTabs.map(s=>{
@@ -3127,6 +3511,78 @@ if(scheduledNotifs.emailEnabled){                    addNotifEntry({id:'N-'+Date
     <table style={{width:'100%',borderCollapse:'collapse',fontSize:12.5}}><thead><tr style={{background:'#F8FAFB'}}>{hasPermission('deleteNotifications')&&<th className="th" style={{width:36}}><SelBox checked={selNotifs.size===notifLog.length&&notifLog.length>0} onChange={()=>toggleAll(selNotifs,setSelNotifs,notifLog.map(n=>n.id))}/></th>}{['ID','Channel','To','Subject','Date','Status'].map(h=><th key={h} className="th">{h}</th>)}</tr></thead><tbody>{notifLog.map(n=><tr key={n.id} className="tr" style={{borderBottom:'1px solid #F7FAFC',background:selNotifs.has(n.id)?'#EDE9FE':'#fff'}}>{hasPermission('deleteNotifications')&&<td className="td"><SelBox checked={selNotifs.has(n.id)} onChange={()=>toggleSel(selNotifs,setSelNotifs,n.id)}/></td>}<td className="td mono" style={{fontSize:11,fontWeight:500}}>{n.id}</td><td className="td"><Pill bg={n.type==='email'?'#DBEAFE':'#D1FAE5'} color={n.type==='email'?'#2563EB':'#059669'}>{n.type==='email'?<Mail size={11}/>:<MessageSquare size={11}/>} {n.type==='email'?'Email':'WhatsApp'}</Pill></td><td className="td" style={{fontSize:12,color:'#64748B'}}>{n.to}</td><td className="td" style={{maxWidth:250,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{n.subject}</td><td className="td" style={{color:'#94A3B8',fontSize:11}}>{fmtDate(n.date)}</td><td className="td"><Pill bg="#E6F4ED" color="#0B7A3E"><Check size={11}/> {n.status}</Pill></td></tr>)}</tbody></table>
   </div>
 </div>)}
+
+{/* ═══════════ AUDIT TRAIL ═══════════ */}
+{page==='audit'&&hasPermission('auditTrail')&&(()=>{
+  const AUDIT_COLORS = { create:'#059669', update:'#2563EB', delete:'#DC2626', approve:'#7C3AED', reject:'#DC2626', login:'#64748B', export:'#D97706', batch_approve:'#7C3AED' };
+  const actions = ['All',...new Set(auditLog.map(a=>a.action))];
+  const entityTypes = ['All',...new Set(auditLog.map(a=>a.entityType).filter(Boolean))];
+  const auditUsers = ['All',...new Set(auditLog.map(a=>a.userName).filter(Boolean))];
+  const filtered = auditLog.filter(a => {
+    if (auditFilter.action !== 'All' && a.action !== auditFilter.action) return false;
+    if (auditFilter.user !== 'All' && a.userName !== auditFilter.user) return false;
+    if (auditFilter.entityType !== 'All' && a.entityType !== auditFilter.entityType) return false;
+    return true;
+  });
+  return (<div>
+    <div style={{display:'flex',alignItems:'center',gap:12,marginBottom:24}}>
+      <div style={{padding:10,background:'linear-gradient(135deg,#4338CA,#6366F1)',borderRadius:12}}><Shield size={22} color="#fff"/></div>
+      <div><h2 style={{fontSize:18,fontWeight:700,margin:0}}>Audit Trail</h2><p style={{fontSize:12,color:'#94A3B8',margin:0}}>Track all user actions and changes across the system</p></div>
+    </div>
+
+    <div className="grid-4" style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:14,marginBottom:20}}>
+      {[
+        {l:'Total Events',v:auditLog.length,c:'#4338CA'},
+        {l:'Creates',v:auditLog.filter(a=>a.action==='create').length,c:'#059669'},
+        {l:'Updates',v:auditLog.filter(a=>a.action==='update').length,c:'#2563EB'},
+        {l:'Deletes',v:auditLog.filter(a=>a.action==='delete').length,c:'#DC2626'}
+      ].map((s,i)=><div key={i} className="card" style={{padding:'18px 22px',borderLeft:`3px solid ${s.c}`}}><div style={{fontSize:11,color:'#94A3B8',textTransform:'uppercase',letterSpacing:.5,marginBottom:4}}>{s.l}</div><div className="mono" style={{fontSize:28,fontWeight:700,color:s.c}}>{s.v}</div></div>)}
+    </div>
+
+    <div className="card" style={{padding:'14px 20px',marginBottom:16,display:'flex',alignItems:'center',gap:16,flexWrap:'wrap'}}>
+      <div style={{display:'flex',alignItems:'center',gap:6}}>
+        <span style={{fontSize:11,fontWeight:600,color:'#64748B',textTransform:'uppercase'}}>Action</span>
+        <select value={auditFilter.action} onChange={e=>setAuditFilter(p=>({...p,action:e.target.value}))} style={{padding:'5px 10px',borderRadius:8,border:'1px solid #E2E8F0',fontSize:11,fontFamily:'inherit'}}>
+          {actions.map(a=><option key={a} value={a}>{a}</option>)}
+        </select>
+      </div>
+      <div style={{display:'flex',alignItems:'center',gap:6}}>
+        <span style={{fontSize:11,fontWeight:600,color:'#64748B',textTransform:'uppercase'}}>User</span>
+        <select value={auditFilter.user} onChange={e=>setAuditFilter(p=>({...p,user:e.target.value}))} style={{padding:'5px 10px',borderRadius:8,border:'1px solid #E2E8F0',fontSize:11,fontFamily:'inherit'}}>
+          {auditUsers.map(u=><option key={u} value={u}>{u}</option>)}
+        </select>
+      </div>
+      <div style={{display:'flex',alignItems:'center',gap:6}}>
+        <span style={{fontSize:11,fontWeight:600,color:'#64748B',textTransform:'uppercase'}}>Entity</span>
+        <select value={auditFilter.entityType} onChange={e=>setAuditFilter(p=>({...p,entityType:e.target.value}))} style={{padding:'5px 10px',borderRadius:8,border:'1px solid #E2E8F0',fontSize:11,fontFamily:'inherit'}}>
+          {entityTypes.map(t=><option key={t} value={t}>{t}</option>)}
+        </select>
+      </div>
+      <div style={{flex:1}}/>
+      <ExportDropdown data={filtered} columns={[{key:'createdAt',label:'Timestamp',fmt:v=>v?new Date(v).toLocaleString('en-SG'):''},{key:'userName',label:'User'},{key:'action',label:'Action'},{key:'entityType',label:'Entity Type'},{key:'entityId',label:'Entity ID'},{key:'details',label:'Details',fmt:v=>v?JSON.stringify(v):''}]} filename="audit-trail" title="Audit Trail Export"/>
+      <span style={{fontSize:12,color:'#94A3B8'}}>{filtered.length} events</span>
+    </div>
+
+    <div className="card" style={{overflow:'hidden'}}>
+      <div style={{maxHeight:600,overflowY:'auto'}}>
+        <table style={{width:'100%',borderCollapse:'collapse',fontSize:12.5}}>
+          <thead><tr style={{background:'#F8FAFB',position:'sticky',top:0,zIndex:1}}>{['Timestamp','User','Action','Entity Type','Entity ID','Details'].map(h=><th key={h} className="th">{h}</th>)}</tr></thead>
+          <tbody>{filtered.length===0?<tr><td colSpan={6} style={{padding:24,textAlign:'center',color:'#94A3B8',fontSize:13}}>No audit events found</td></tr>:filtered.slice(0,200).map((a,i)=>(
+            <tr key={a.id||i} className="tr" style={{borderBottom:'1px solid #F7FAFC',background:i%2===0?'#fff':'#FCFCFD'}}>
+              <td className="td" style={{fontSize:11,color:'#94A3B8',whiteSpace:'nowrap'}}>{a.createdAt?new Date(a.createdAt).toLocaleString('en-SG'):''}</td>
+              <td className="td" style={{fontWeight:500}}>{a.userName||'—'}</td>
+              <td className="td"><Pill bg={`${AUDIT_COLORS[a.action]||'#64748B'}18`} color={AUDIT_COLORS[a.action]||'#64748B'}>{a.action}</Pill></td>
+              <td className="td"><Pill bg="#F3F4F6" color="#4A5568">{a.entityType||'—'}</Pill></td>
+              <td className="td mono" style={{fontSize:11,fontWeight:600}}>{a.entityId||'—'}</td>
+              <td className="td" style={{fontSize:11,color:'#64748B',maxWidth:300,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{a.details?JSON.stringify(a.details):''}</td>
+            </tr>
+          ))}</tbody>
+        </table>
+      </div>
+      {filtered.length>200&&<div style={{padding:'12px 16px',borderTop:'1px solid #F0F2F5',textAlign:'center',fontSize:11,color:'#94A3B8'}}>Showing first 200 of {filtered.length} events. Use export to see all.</div>}
+    </div>
+  </div>);
+})()}
 
 {/* ═══════════ USER MANAGEMENT (ADMIN ONLY) ═══════════ */}
 {page==='users'&&hasPermission('users')&&(<div>

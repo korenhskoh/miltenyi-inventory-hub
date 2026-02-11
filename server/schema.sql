@@ -125,6 +125,34 @@ DO $$ BEGIN
   END IF;
 END $$;
 
+-- Audit trail for tracking all user actions
+CREATE TABLE IF NOT EXISTS audit_log (
+  id SERIAL PRIMARY KEY,
+  user_id VARCHAR(20),
+  user_name VARCHAR(100),
+  action VARCHAR(50) NOT NULL,
+  entity_type VARCHAR(30),
+  entity_id VARCHAR(30),
+  details JSONB,
+  ip_address VARCHAR(45),
+  created_at TIMESTAMP DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_audit_log_user ON audit_log(user_id);
+CREATE INDEX IF NOT EXISTS idx_audit_log_action ON audit_log(action);
+CREATE INDEX IF NOT EXISTS idx_audit_log_created ON audit_log(created_at);
+
+-- Machines table for fleet tracking & forecasting
+CREATE TABLE IF NOT EXISTS machines (
+  id SERIAL PRIMARY KEY,
+  name VARCHAR(100) NOT NULL,
+  modality VARCHAR(100) NOT NULL,
+  location VARCHAR(100),
+  install_date DATE,
+  status VARCHAR(30) DEFAULT 'Active',
+  notes TEXT,
+  created_at TIMESTAMP DEFAULT NOW()
+);
+
 -- Migration: Add bulk_group_id for explicit bulk group linking
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS bulk_group_id VARCHAR(20);
 -- Backfill: Link existing orders to bulk groups by matching month field

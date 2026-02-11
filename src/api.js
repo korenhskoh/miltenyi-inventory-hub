@@ -540,6 +540,95 @@ async function migrateData(data) {
   }
 }
 
+// ─── Audit Log (protected) ───
+
+async function getAuditLog(filters = {}) {
+  try {
+    const params = new URLSearchParams();
+    for (const [k, v] of Object.entries(filters)) {
+      if (v !== '' && v !== null && v !== undefined) params.append(k, v);
+    }
+    const qs = params.toString();
+    const res = handleResponse(await fetch(`${BASE}/api/audit-log${qs ? `?${qs}` : ''}`, { headers: authHeadersGet() }));
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
+async function createAuditEntry(entry) {
+  try {
+    const res = handleResponse(await fetch(`${BASE}/api/audit-log`, {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify(entry),
+    }));
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
+async function clearAuditLog() {
+  try {
+    const res = handleResponse(await fetch(`${BASE}/api/audit-log`, { method: 'DELETE', headers: authHeadersGet() }));
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+// ─── Machines (protected) ───
+
+async function getMachines() {
+  try {
+    const res = handleResponse(await fetch(`${BASE}/api/machines`, { headers: authHeadersGet() }));
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
+async function createMachine(machine) {
+  try {
+    const res = handleResponse(await fetch(`${BASE}/api/machines`, {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify(machine),
+    }));
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
+async function updateMachine(id, updates) {
+  try {
+    const res = handleResponse(await fetch(`${BASE}/api/machines/${id}`, {
+      method: 'PUT',
+      headers: authHeaders(),
+      body: JSON.stringify(updates),
+    }));
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
+async function deleteMachine(id) {
+  try {
+    const res = handleResponse(await fetch(`${BASE}/api/machines/${id}`, { method: 'DELETE', headers: authHeadersGet() }));
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
 // ─── Export ───
 
 const api = {
@@ -587,6 +676,13 @@ const api = {
   clearNotifLog,
   clearApprovals,
   migrateData,
+  getAuditLog,
+  createAuditEntry,
+  clearAuditLog,
+  getMachines,
+  createMachine,
+  updateMachine,
+  deleteMachine,
 };
 
 export default api;
