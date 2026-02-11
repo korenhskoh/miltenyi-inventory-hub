@@ -2447,8 +2447,11 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
   </div>
   {hasPermission('deleteOrders') && <BatchBar count={selOrders.size} onClear={()=>setSelOrders(new Set())}>
     <BatchBtn onClick={batchApprovalNotifyOrders} bg="#7C3AED" icon={Send}>Order Approval & Notify</BatchBtn>
+    <BatchBtn onClick={()=>batchStatusOrders('Pending Approval')} bg="#D97706" icon={Clock}>Pending Approval</BatchBtn>
+    <BatchBtn onClick={()=>batchStatusOrders('Approved')} bg="#2563EB" icon={Check}>Approved</BatchBtn>
     <BatchBtn onClick={()=>batchStatusOrders('Received')} bg="#059669" icon={CheckCircle}>Received</BatchBtn>
     <BatchBtn onClick={()=>batchStatusOrders('Back Order')} bg="#D97706" icon={AlertTriangle}>Back Order</BatchBtn>
+    <BatchBtn onClick={()=>batchStatusOrders('Rejected')} bg="#991B1B" icon={X}>Rejected</BatchBtn>
     <BatchBtn onClick={batchDeleteOrders} bg="#DC2626" icon={Trash2}>Delete</BatchBtn>
   </BatchBar>}
   <div className="card" style={{overflow:'hidden'}}><div className="table-wrap" style={{overflowX:'auto'}}><table style={{width:'100%',borderCollapse:'collapse',fontSize:12.5}}>
@@ -2548,8 +2551,11 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
       </div>
       {hasPermission('deleteOrders')&&(()=>{ const monthOrders = orders.filter(o=>o.bulkGroupId&&(o.month===expandedMonth||o.month===expandedMonth.replace(/ /g,'_')||o.month.replace(/_/g,' ')===expandedMonth)); const monthIds = monthOrders.filter(o=>selOrders.has(o.id)); return monthIds.length>0 ? <BatchBar count={monthIds.length} onClear={()=>setSelOrders(prev=>{const n=new Set(prev);monthOrders.forEach(o=>n.delete(o.id));return n;})}>
         <BatchBtn onClick={batchApprovalNotifyOrders} bg="#7C3AED" icon={Send}>Order Approval & Notify</BatchBtn>
+        <BatchBtn onClick={()=>batchStatusOrders('Pending Approval')} bg="#D97706" icon={Clock}>Pending Approval</BatchBtn>
+        <BatchBtn onClick={()=>batchStatusOrders('Approved')} bg="#2563EB" icon={Check}>Approved</BatchBtn>
         <BatchBtn onClick={()=>batchStatusOrders('Received')} bg="#059669" icon={CheckCircle}>Received</BatchBtn>
         <BatchBtn onClick={()=>batchStatusOrders('Back Order')} bg="#D97706" icon={AlertTriangle}>Back Order</BatchBtn>
+        <BatchBtn onClick={()=>batchStatusOrders('Rejected')} bg="#991B1B" icon={X}>Rejected</BatchBtn>
         <BatchBtn onClick={batchDeleteOrders} bg="#DC2626" icon={Trash2}>Delete</BatchBtn>
       </BatchBar> : null; })()}
       <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
