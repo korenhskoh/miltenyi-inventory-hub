@@ -155,9 +155,7 @@ CREATE TABLE IF NOT EXISTS machines (
 
 -- Migration: Add bulk_group_id for explicit bulk group linking
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS bulk_group_id VARCHAR(20);
--- Backfill: Link existing orders to bulk groups by matching month field
-UPDATE orders o SET bulk_group_id = bg.id
-FROM bulk_groups bg
-WHERE REPLACE(COALESCE(o.month,''), '_', ' ') = REPLACE(COALESCE(bg.month,''), '_', ' ')
-  AND o.bulk_group_id IS NULL;
+-- NOTE: Backfill migration removed — it ran on every server start and
+-- incorrectly linked single orders to bulk groups by month match.
+-- Orders are now linked to bulk groups only via explicit user action.
 CREATE INDEX IF NOT EXISTS idx_orders_bulk_group_id ON orders(bulk_group_id);
