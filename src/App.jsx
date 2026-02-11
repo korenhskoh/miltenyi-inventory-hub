@@ -291,12 +291,12 @@ const [selectedUser, setSelectedUser] = useState(null);
   }, [dbSync]);
 
   // Helper: confirm arrival for a single order — applies status based on qtyReceived
+  // Works with pending value OR current value (e.g. 0 = no items received → Back Order)
   const confirmArrival = useCallback((orderId) => {
-    const pending = pendingArrival[orderId];
-    if (!pending) return;
     const order = orders.find(o => o.id === orderId);
     if (!order) return;
-    const val = pending.qtyReceived;
+    const pending = pendingArrival[orderId];
+    const val = pending ? pending.qtyReceived : (order.qtyReceived || 0);
     const status = val >= order.quantity ? 'Received' : 'Back Order';
     const updates = { qtyReceived: val, backOrder: val - order.quantity, status, arrivalDate: val > 0 ? new Date().toISOString().slice(0, 10) : order.arrivalDate };
     const updatedOrders = orders.map(x => x.id === orderId ? { ...x, ...updates } : x);
@@ -308,23 +308,24 @@ const [selectedUser, setSelectedUser] = useState(null);
     logAction('Confirm Arrival', 'order', orderId, { qtyReceived: val, status });
   }, [orders, pendingArrival, checkBulkGroupCompletion, dbSync, logAction]);
 
-  // Helper: batch confirm all orders that have pending arrival values
+  // Helper: batch confirm — confirms all provided orderIds (or all with pending values)
   const batchConfirmArrival = useCallback((orderIds) => {
-    const toConfirm = orderIds ? orderIds.filter(id => pendingArrival[id]) : Object.keys(pendingArrival);
-    if (toConfirm.length === 0) return;
+    if (!orderIds || orderIds.length === 0) return;
     let updatedOrders = [...orders];
+    const confirmedIds = [];
     const updates = [];
-    toConfirm.forEach(orderId => {
-      const pending = pendingArrival[orderId];
-      if (!pending) return;
+    orderIds.forEach(orderId => {
       const order = updatedOrders.find(o => o.id === orderId);
-      if (!order) return;
-      const val = pending.qtyReceived;
+      if (!order || order.status === 'Received') return;
+      const pending = pendingArrival[orderId];
+      const val = pending ? pending.qtyReceived : (order.qtyReceived || 0);
       const status = val >= order.quantity ? 'Received' : 'Back Order';
       const upd = { qtyReceived: val, backOrder: val - order.quantity, status, arrivalDate: val > 0 ? new Date().toISOString().slice(0, 10) : order.arrivalDate };
       updatedOrders = updatedOrders.map(x => x.id === orderId ? { ...x, ...upd } : x);
       updates.push({ orderId, upd, bulkGroupId: order.bulkGroupId });
+      confirmedIds.push(orderId);
     });
+    if (confirmedIds.length === 0) return;
     setOrders(updatedOrders);
     updates.forEach(({ orderId, upd, bulkGroupId }) => {
       dbSync(api.updateOrder(orderId, upd), 'Arrival update not saved');
@@ -332,12 +333,12 @@ const [selectedUser, setSelectedUser] = useState(null);
     });
     setPendingArrival(prev => {
       const next = { ...prev };
-      toConfirm.forEach(id => delete next[id]);
+      confirmedIds.forEach(id => delete next[id]);
       return next;
     });
     setArrivalSelected(new Set());
-    logAction('Batch Confirm Arrival', 'order', toConfirm.join(','), { count: toConfirm.length });
-    notify('Arrival Confirmed', `${toConfirm.length} order(s) status updated`, 'success');
+    logAction('Batch Confirm Arrival', 'order', confirmedIds.join(','), { count: confirmedIds.length });
+    notify('Arrival Confirmed', `${confirmedIds.length} order(s) status updated`, 'success');
   }, [orders, pendingArrival, checkBulkGroupCompletion, dbSync, logAction, notify]);
 
   const isAdmin = currentUser?.role === 'admin';
@@ -3118,7 +3119,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
                         <td className="td" style={{textAlign:'center',fontWeight:600,color:dispBO<0?'#DC2626':'#059669'}}>{dispBO<0?dispBO:'✓'}</td>
                         <td className="td"><Pill bg={o.status==='Received'?'#D1FAE5':o.status==='Back Order'?'#FEE2E2':'#FEF3C7'} color={o.status==='Received'?'#059669':o.status==='Back Order'?'#DC2626':'#D97706'}>{o.status==='Received'?'Received':o.status==='Back Order'?'Back Order':'Approved'}</Pill></td>
                         <td className="td">
-                          {o.status==='Received'?<span style={{display:'flex',alignItems:'center',gap:4,color:'#059669',fontSize:11,fontWeight:600}}><Check size={14}/>Done</span>:hasPending?<button className="bp" onClick={()=>confirmArrival(o.id)} style={{padding:'4px 10px',fontSize:11,borderRadius:6}}>Confirm</button>:<span style={{color:'#94A3B8',fontSize:11}}>Key in qty</span>}
+                          {o.status==='Received'?<span style={{display:'flex',alignItems:'center',gap:4,color:'#059669',fontSize:11,fontWeight:600}}><Check size={14}/>Done</span>:<button className={hasPending?"bp":"bs"} onClick={()=>confirmArrival(o.id)} style={{padding:'4px 10px',fontSize:11,borderRadius:6}}>{hasPending?'Confirm':'Confirm'}</button>}
                         </td>
                       </tr>);
                     })}
@@ -3127,7 +3128,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
 
                 {/* Batch Confirm + Notify Actions */}
                 <div style={{display:'flex',gap:10,marginTop:16,paddingTop:16,borderTop:'1px solid #E8ECF0',flexWrap:'wrap'}}>
-                  {Object.keys(pendingArrival).filter(id=>bgOrders.some(o=>o.id===id)).length>0 && <button className="bp" onClick={()=>{const ids=Object.keys(pendingArrival).filter(id=>bgOrders.some(o=>o.id===id));batchConfirmArrival(ids);}} style={{padding:'8px 16px',display:'flex',alignItems:'center',gap:6}}><CheckCircle size={14}/> Batch Confirm ({Object.keys(pendingArrival).filter(id=>bgOrders.some(o=>o.id===id)).length})</button>}
+                  {(()=>{const selIds=bgOrders.filter(o=>arrivalSelected.has(o.id)&&o.status!=='Received').map(o=>o.id);return selIds.length>0?<button className="bp" onClick={()=>batchConfirmArrival(selIds)} style={{padding:'8px 16px',display:'flex',alignItems:'center',gap:6}}><CheckCircle size={14}/> Batch Confirm ({selIds.length} selected)</button>:null;})()}
                   <button className="be" onClick={()=>{
                     const summary = bgOrders.map(o=>`• ${o.materialNo}: ${o.qtyReceived}/${o.quantity} ${o.qtyReceived>=o.quantity?'✓':'(B/O: '+(o.quantity-o.qtyReceived)+')'}`).join('\n');
                     notify('Email Sent',`Arrival report for ${bg.month} sent`,'success');
@@ -3212,14 +3213,14 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
                 <td className="td" style={{textAlign:'center',fontWeight:600,color:dispBO<0?'#DC2626':'#059669'}}>{dispBO<0?dispBO:'\u2713'}</td>
                 <td className="td"><Pill bg={o.status==='Received'?'#D1FAE5':o.status==='Back Order'?'#FEE2E2':'#FEF3C7'} color={o.status==='Received'?'#059669':o.status==='Back Order'?'#DC2626':'#D97706'}>{o.status==='Received'?'Received':o.status==='Back Order'?'Back Order':'Approved'}</Pill></td>
                 <td className="td">
-                  {o.status==='Received'?<span style={{display:'flex',alignItems:'center',gap:4,color:'#059669',fontSize:11,fontWeight:600}}><Check size={14}/>Done</span>:hasPending?<button className="bp" onClick={()=>confirmArrival(o.id)} style={{padding:'4px 10px',fontSize:11,borderRadius:6}}>Confirm</button>:<span style={{color:'#94A3B8',fontSize:11}}>Key in qty</span>}
+                  {o.status==='Received'?<span style={{display:'flex',alignItems:'center',gap:4,color:'#059669',fontSize:11,fontWeight:600}}><Check size={14}/>Done</span>:<button className={hasPending?"bp":"bs"} onClick={()=>confirmArrival(o.id)} style={{padding:'4px 10px',fontSize:11,borderRadius:6}}>{hasPending?'Confirm':'Confirm'}</button>}
                 </td>
               </tr>);
             })}
           </tbody>
         </table>
         <div style={{display:'flex',gap:10,marginTop:16,paddingTop:16,borderTop:'1px solid #E8ECF0',flexWrap:'wrap'}}>
-          {(()=>{const ids=Object.keys(pendingArrival).filter(id=>indivOrders.some(o=>o.id===id));return ids.length>0?<button className="bp" onClick={()=>batchConfirmArrival(ids)} style={{padding:'8px 16px',display:'flex',alignItems:'center',gap:6}}><CheckCircle size={14}/> Batch Confirm ({ids.length})</button>:null;})()}
+          {(()=>{const selIds=indivOrders.filter(o=>arrivalSelected.has(o.id)&&o.status!=='Received').map(o=>o.id);return selIds.length>0?<button className="bp" onClick={()=>batchConfirmArrival(selIds)} style={{padding:'8px 16px',display:'flex',alignItems:'center',gap:6}}><CheckCircle size={14}/> Batch Confirm ({selIds.length} selected)</button>:null;})()}
           <button className="be" onClick={()=>{
             notify('Email Sent','Individual orders arrival report sent','success');
             addNotifEntry({id:`N-${Date.now()}-${Math.random().toString(36).slice(2,6)}`,type:'email',to:'service-sg@miltenyibiotec.com',subject:'Arrival Check: Individual Orders',date:new Date().toISOString().slice(0,10),status:'Sent'});
