@@ -180,6 +180,9 @@ const [selectedUser, setSelectedUser] = useState(null);
   const [partsCatalog, setPartsCatalog] = useState([]);
   const [priceConfig, setPriceConfig] = useState(PRICE_CONFIG_DEFAULT);
   const [catalogPage, setCatalogPage] = useState(0);
+  const [showCatalogMapper, setShowCatalogMapper] = useState(false);
+  const [catalogMapperData, setCatalogMapperData] = useState({ rows: [], headers: [], fileName: '' });
+  const [catalogColumnMap, setCatalogColumnMap] = useState({ m: '', d: '', c: '', sg: '', dist: '', tp: '', rsp: '' });
 
   // ── WhatsApp Baileys State ──
   const [waConnected, setWaConnected] = useState(false);
@@ -4539,13 +4542,14 @@ if(scheduledNotifs.emailEnabled){                    addNotifEntry({id:'N-'+Date
           const wb=XLSX.read(data,{type:'array'});
           const ws=wb.Sheets[wb.SheetNames[0]];
           const rows=XLSX.utils.sheet_to_json(ws);
-          const hm={'material no':'m','material_no':'m','materialno':'m','mat no':'m','description':'d','desc':'d','category':'c','cat':'c','sg price':'sg','singapore price':'sg','sg_price':'sg','sgprice':'sg','dist price':'dist','distributor price':'dist','dist_price':'dist','distprice':'dist','transfer price':'tp','transfer_price':'tp','transferprice':'tp','rsp eur':'rsp','rsp_eur':'rsp','rspeur':'rsp'};
-          const mapped=rows.map(r=>{const o={};Object.entries(r).forEach(([k,v])=>{const nk=hm[k.toLowerCase().trim()];if(nk)o[nk]=nk==='m'||nk==='d'||nk==='c'?String(v):parseFloat(v)||0;});return o;}).filter(p=>p.m&&p.d);
-          if(!mapped.length){notify('Upload Failed','No valid parts found in file','warning');return;}
-          setPartsCatalog(mapped);
-          // Sync to DB
-          const uploadResult=await api.uploadCatalog(mapped.map(p=>({materialNo:p.m,description:p.d,category:p.c||'',sgPrice:p.sg||0,distPrice:p.dist||0,transferPrice:p.tp||0,rspEur:p.rsp||0})));
-          if(uploadResult){notify('Catalog Uploaded',`${mapped.length} parts saved to database from ${file.name}`,'success');}else{notify('Upload Warning',`${mapped.length} parts loaded locally but failed to save to database`,'error');}
+          if(!rows.length){notify('Upload Failed','No data found in file','warning');e.target.value='';return;}
+          const headers=Object.keys(rows[0]);
+          const hm={'material no':'m','material_no':'m','materialno':'m','mat no':'m','material number':'m','part no':'m','part number':'m','description':'d','desc':'d','name':'d','category':'c','cat':'c','sg price':'sg','singapore price':'sg','sg_price':'sg','sgprice':'sg','dist price':'dist','distributor price':'dist','dist_price':'dist','distprice':'dist','transfer price':'tp','transfer_price':'tp','transferprice':'tp','rsp eur':'rsp','rsp_eur':'rsp','rspeur':'rsp','rsp':'rsp','list price':'tp','listprice':'tp','price':'tp','unit price':'tp'};
+          const autoMap={m:'',d:'',c:'',sg:'',dist:'',tp:'',rsp:''};
+          headers.forEach(h=>{const nk=hm[h.toLowerCase().trim()];if(nk&&!autoMap[nk])autoMap[nk]=h;});
+          setCatalogMapperData({rows,headers,fileName:file.name});
+          setCatalogColumnMap(autoMap);
+          setShowCatalogMapper(true);
           e.target.value='';
         }}/>
       </label>
@@ -4559,6 +4563,66 @@ if(scheduledNotifs.emailEnabled){                    addNotifEntry({id:'N-'+Date
 
         </div>
       </main>
+
+      {/* ═══ CATALOG COLUMN MAPPER MODAL ═══ */}
+      {showCatalogMapper&&<div className="mo" onClick={()=>setShowCatalogMapper(false)}><div className="modal-box" onClick={e=>e.stopPropagation()} style={{background:'#fff',borderRadius:16,padding:'28px 32px',width:680,maxWidth:'94vw',maxHeight:'90vh',overflow:'auto',boxShadow:'0 20px 60px rgba(0,0,0,.2)'}}>
+        <div style={{display:'flex',justifyContent:'space-between',marginBottom:20}}><div><h2 style={{fontSize:18,fontWeight:700,margin:0}}>Map Column Headers</h2><div style={{fontSize:12,color:'#64748B',marginTop:4}}>File: <strong>{catalogMapperData.fileName}</strong> — {catalogMapperData.rows.length} rows detected</div></div><button onClick={()=>setShowCatalogMapper(false)} style={{background:'none',border:'none',cursor:'pointer',color:'#94A3B8'}}><X size={20}/></button></div>
+        <div style={{fontSize:12,color:'#64748B',marginBottom:16,padding:'10px 14px',background:'#F0F9FF',border:'1px solid #BAE6FD',borderRadius:8}}>Match each catalog field to a column from your file. Fields marked * are required. Auto-detected mappings are pre-selected.</div>
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:20}}>
+          {[{key:'m',label:'Material No. *',required:true},{key:'d',label:'Description *',required:true},{key:'c',label:'Category'},{key:'sg',label:'SG Price'},{key:'dist',label:'Distributor Price'},{key:'tp',label:'Transfer Price'},{key:'rsp',label:'RSP EUR'}].map(f=>(
+            <div key={f.key} style={{display:'flex',flexDirection:'column',gap:4}}>
+              <label style={{fontSize:12,fontWeight:600,color:f.required?'#1E293B':'#475569'}}>{f.label}</label>
+              <select value={catalogColumnMap[f.key]} onChange={e=>setCatalogColumnMap(prev=>({...prev,[f.key]:e.target.value}))} style={{padding:'8px 10px',borderRadius:6,border:catalogColumnMap[f.key]?'2px solid #059669':'1px solid #E2E8F0',fontSize:12,background:catalogColumnMap[f.key]?'#F0FDF4':'#fff'}}>
+                <option value="">— Not mapped —</option>
+                {catalogMapperData.headers.map(h=><option key={h} value={h}>{h}</option>)}
+              </select>
+            </div>
+          ))}
+        </div>
+        {/* Preview */}
+        <div style={{marginBottom:20}}>
+          <div style={{fontSize:12,fontWeight:600,color:'#475569',marginBottom:8}}>Preview (first 5 rows)</div>
+          <div style={{overflowX:'auto',border:'1px solid #E2E8F0',borderRadius:8}}>
+            <table style={{width:'100%',borderCollapse:'collapse',fontSize:11}}>
+              <thead><tr style={{background:'#F8FAFB'}}>{['Material No','Description','Category','SG Price','Dist Price','Transfer Price','RSP EUR'].map(h=><th key={h} className="th" style={{whiteSpace:'nowrap'}}>{h}</th>)}</tr></thead>
+              <tbody>{catalogMapperData.rows.slice(0,5).map((r,i)=>{
+                const cm=catalogColumnMap;
+                return <tr key={i} style={{borderBottom:'1px solid #F0F2F5'}}>
+                  <td className="td mono" style={{fontSize:10,color:'#0B7A3E'}}>{cm.m?r[cm.m]||'':''}</td>
+                  <td className="td" style={{maxWidth:180,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{cm.d?r[cm.d]||'':''}</td>
+                  <td className="td">{cm.c?r[cm.c]||'':''}</td>
+                  <td className="td mono" style={{textAlign:'right'}}>{cm.sg?r[cm.sg]||'':''}</td>
+                  <td className="td mono" style={{textAlign:'right'}}>{cm.dist?r[cm.dist]||'':''}</td>
+                  <td className="td mono" style={{textAlign:'right'}}>{cm.tp?r[cm.tp]||'':''}</td>
+                  <td className="td mono" style={{textAlign:'right'}}>{cm.rsp?r[cm.rsp]||'':''}</td>
+                </tr>;
+              })}</tbody>
+            </table>
+          </div>
+        </div>
+        <div style={{display:'flex',gap:10,justifyContent:'flex-end'}}>
+          <button className="bs" onClick={()=>setShowCatalogMapper(false)}>Cancel</button>
+          <button className="bp" disabled={!catalogColumnMap.m||!catalogColumnMap.d} onClick={async()=>{
+            const cm=catalogColumnMap;
+            const mapped=catalogMapperData.rows.map(r=>{
+              const o={};
+              if(cm.m)o.m=String(r[cm.m]||'');
+              if(cm.d)o.d=String(r[cm.d]||'');
+              if(cm.c)o.c=String(r[cm.c]||'');
+              if(cm.sg)o.sg=parseFloat(r[cm.sg])||0;
+              if(cm.dist)o.dist=parseFloat(r[cm.dist])||0;
+              if(cm.tp)o.tp=parseFloat(r[cm.tp])||0;
+              if(cm.rsp)o.rsp=parseFloat(r[cm.rsp])||0;
+              return o;
+            }).filter(p=>p.m&&p.d);
+            if(!mapped.length){notify('Upload Failed','No valid parts found after mapping','warning');return;}
+            setPartsCatalog(mapped);
+            const uploadResult=await api.uploadCatalog(mapped.map(p=>({materialNo:p.m,description:p.d,category:p.c||'',sgPrice:p.sg||0,distPrice:p.dist||0,transferPrice:p.tp||0,rspEur:p.rsp||0})));
+            if(uploadResult){notify('Catalog Uploaded',`${mapped.length} parts saved to database from ${catalogMapperData.fileName}`,'success');}else{notify('Upload Warning',`${mapped.length} parts loaded locally but failed to save to database`,'error');}
+            setShowCatalogMapper(false);
+          }} style={{opacity:(!catalogColumnMap.m||!catalogColumnMap.d)?0.5:1}}>Upload {catalogMapperData.rows.length} Parts</button>
+        </div>
+      </div></div>}
 
       {/* ═══ NEW ORDER MODAL ═══ */}
       {showNewOrder&&<div className="mo" onClick={()=>setShowNewOrder(false)}><div className="modal-box" onClick={e=>e.stopPropagation()} style={{background:'#fff',borderRadius:16,padding:'28px 32px',width:520,maxWidth:'94vw',maxHeight:'85vh',overflow:'auto',boxShadow:'0 20px 60px rgba(0,0,0,.2)'}}>
