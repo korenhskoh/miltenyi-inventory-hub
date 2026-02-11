@@ -38,7 +38,6 @@ const fmtNum = (n) => new Intl.NumberFormat('en-SG').format(n);
 const STATUS_CFG = {
   Received: { color: '#0B7A3E', bg: '#E6F4ED', icon: CheckCircle },
   'Back Order': { color: '#C53030', bg: '#FEE2E2', icon: AlertTriangle },
-  Processed: { color: '#2563EB', bg: '#DBEAFE', icon: Clock },
   'Pending Approval': { color: '#7C3AED', bg: '#EDE9FE', icon: Clock },
   Approved: { color: '#0B7A3E', bg: '#D1FAE5', icon: CheckCircle },
   Rejected: { color: '#DC2626', bg: '#FEE2E2', icon: X },
@@ -291,7 +290,7 @@ const [selectedUser, setSelectedUser] = useState(null);
   // ── Stats ──
   const stats = useMemo(() => {
     const t=orders.length, r=orders.filter(o=>o.status==='Received').length, b=orders.filter(o=>o.status==='Back Order').length;
-    const p=orders.filter(o=>o.status==='Pending Approval'||o.status==='Approved'||o.status==='Processed').length;
+    const p=orders.filter(o=>o.status==='Pending Approval'||o.status==='Approved').length;
     const tc=orders.reduce((s,o)=>s+(Number(o.totalCost)||0),0), tq=orders.reduce((s,o)=>s+(Number(o.quantity)||0),0), tr=orders.reduce((s,o)=>s+(Number(o.qtyReceived)||0),0);
     return { total:t, received:r, backOrder:b, pending:p, totalCost:tc, fulfillmentRate: tq>0?((tr/tq)*100).toFixed(1):0 };
   }, [orders]);
@@ -964,7 +963,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
           month: now.toLocaleString('default', { month: 'long', year: 'numeric' }),
           totalOrders: orders.length,
           received: orders.filter(o => o.status === 'Received').length,
-          pending: orders.filter(o => o.status === 'Pending Approval' || o.status === 'Approved' || o.status === 'Processed').length,
+          pending: orders.filter(o => o.status === 'Pending Approval' || o.status === 'Approved').length,
           backOrders: orders.filter(o => o.status === 'Back Order').length,
           totalValue: fmt(orders.reduce((s, o) => s + o.totalCost, 0))
         };
@@ -2116,7 +2115,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
     <div style={{width:1,height:24,background:'#E2E8F0'}}/>
     <div style={{display:'flex',alignItems:'center',gap:6}}>
       <span style={{fontSize:11,fontWeight:600,color:'#64748B',textTransform:'uppercase',letterSpacing:.5}}>Status</span>
-      {['All','Pending Approval','Approved','Received','Back Order','Processed'].map(s=><button key={s} onClick={()=>setAllOrdersStatus(s)} style={{padding:'5px 12px',borderRadius:20,border:allOrdersStatus===s?'none':'1px solid #E2E8F0',background:allOrdersStatus===s?'#0B7A3E':'#fff',color:allOrdersStatus===s?'#fff':'#64748B',fontSize:11,fontWeight:500,cursor:'pointer',fontFamily:'inherit'}}>{s}</button>)}
+      {['All','Pending Approval','Approved','Received','Back Order','Rejected'].map(s=><button key={s} onClick={()=>setAllOrdersStatus(s)} style={{padding:'5px 12px',borderRadius:20,border:allOrdersStatus===s?'none':'1px solid #E2E8F0',background:allOrdersStatus===s?'#0B7A3E':'#fff',color:allOrdersStatus===s?'#fff':'#64748B',fontSize:11,fontWeight:500,cursor:'pointer',fontFamily:'inherit'}}>{s}</button>)}
     </div>
   </div>
 
@@ -2173,12 +2172,11 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
 {/* ═══════════ SINGLE ORDERS ═══════════ */}
 {page==='orders'&&(<div>
   <div style={{display:'flex',justifyContent:'space-between',marginBottom:20}}>
-    <div style={{display:'flex',gap:8}}>{['All','Pending Approval','Approved','Received','Back Order','Processed'].map(s=><button key={s} onClick={()=>setStatusFilter(s)} style={{padding:'6px 14px',borderRadius:20,border:statusFilter===s?'none':'1px solid #E2E8F0',background:statusFilter===s?'#0B7A3E':'#fff',color:statusFilter===s?'#fff':'#64748B',fontSize:12,fontWeight:500,cursor:'pointer',fontFamily:'inherit'}}>{s} ({s==='All'?orders.filter(o=>!o.bulkGroupId).length:orders.filter(o=>!o.bulkGroupId&&o.status===s).length})</button>)}</div>
+    <div style={{display:'flex',gap:8}}>{['All','Pending Approval','Approved','Received','Back Order','Rejected'].map(s=><button key={s} onClick={()=>setStatusFilter(s)} style={{padding:'6px 14px',borderRadius:20,border:statusFilter===s?'none':'1px solid #E2E8F0',background:statusFilter===s?'#0B7A3E':'#fff',color:statusFilter===s?'#fff':'#64748B',fontSize:12,fontWeight:500,cursor:'pointer',fontFamily:'inherit'}}>{s} ({s==='All'?orders.filter(o=>!o.bulkGroupId).length:orders.filter(o=>!o.bulkGroupId&&o.status===s).length})</button>)}</div>
     <div style={{display:'flex',gap:8}}><button className="bp" onClick={()=>setShowNewOrder(true)}><Plus size={14}/> New Order</button></div>
   </div>
   {hasPermission('deleteOrders') && <BatchBar count={selOrders.size} onClear={()=>setSelOrders(new Set())}>
     <BatchBtn onClick={()=>batchStatusOrders('Received')} bg="#059669" icon={CheckCircle}>Received</BatchBtn>
-    <BatchBtn onClick={()=>batchStatusOrders('Processed')} bg="#2563EB" icon={RefreshCw}>Processed</BatchBtn>
     <BatchBtn onClick={()=>batchStatusOrders('Back Order')} bg="#D97706" icon={AlertTriangle}>Back Order</BatchBtn>
     <BatchBtn onClick={batchDeleteOrders} bg="#DC2626" icon={Trash2}>Delete</BatchBtn>
   </BatchBar>}
@@ -2691,10 +2689,10 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
 
   {/* All Orders - Arrival Status */}
   {(()=>{
-    const statusTabs = ['All','Pending Approval','Approved','Back Order','Received','Processed'];
+    const statusTabs = ['All','Pending Approval','Approved','Back Order','Received','Rejected'];
     const arrivalFiltered = arrivalStatusFilter==='All' ? orders : orders.filter(o=>o.status===arrivalStatusFilter);
     // Sort: Back Order first, then Pending, then others
-    const statusPriority = {'Back Order':0,'Pending Approval':1,'Approved':2,'Processed':3,'Received':4};
+    const statusPriority = {'Back Order':0,'Pending Approval':1,'Approved':2,'Rejected':3,'Received':4};
     const arrivalSorted = [...arrivalFiltered].sort((a,b)=>(statusPriority[a.status]??9)-(statusPriority[b.status]??9));
     return (
     <div className="card" style={{overflow:'hidden'}}>
@@ -2706,7 +2704,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
         <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
           {statusTabs.map(s=>{
             const cnt = s==='All'?orders.length:orders.filter(o=>o.status===s).length;
-            return <button key={s} onClick={()=>setArrivalStatusFilter(s)} style={{padding:'5px 12px',borderRadius:20,border:arrivalStatusFilter===s?'none':'1px solid #E2E8F0',background:arrivalStatusFilter===s?(s==='Back Order'?'#FEE2E2':s==='Received'?'#D1FAE5':s==='Approved'?'#D1FAE5':s==='Pending Approval'?'#EDE9FE':'#1E293B'):'#fff',color:arrivalStatusFilter===s?(s==='Back Order'?'#C53030':s==='Received'?'#059669':s==='Approved'?'#059669':s==='Pending Approval'?'#7C3AED':'#fff'):'#64748B',fontSize:11,fontWeight:600,cursor:'pointer'}}>{s} ({cnt})</button>;
+            return <button key={s} onClick={()=>setArrivalStatusFilter(s)} style={{padding:'5px 12px',borderRadius:20,border:arrivalStatusFilter===s?'none':'1px solid #E2E8F0',background:arrivalStatusFilter===s?(s==='Back Order'?'#FEE2E2':s==='Received'?'#D1FAE5':s==='Approved'?'#D1FAE5':s==='Pending Approval'?'#EDE9FE':s==='Rejected'?'#FEE2E2':'#1E293B'):'#fff',color:arrivalStatusFilter===s?(s==='Back Order'?'#C53030':s==='Received'?'#059669':s==='Approved'?'#059669':s==='Pending Approval'?'#7C3AED':s==='Rejected'?'#DC2626':'#fff'):'#64748B',fontSize:11,fontWeight:600,cursor:'pointer'}}>{s} ({cnt})</button>;
           })}
         </div>
       </div>
@@ -3363,7 +3361,6 @@ if(scheduledNotifs.emailEnabled){                    addNotifEntry({id:'N-'+Date
           <select value={editingOrder.status||'Pending Approval'} onChange={e=>{const s=e.target.value;const approvalSync=s==='Approved'?'approved':s==='Rejected'?'rejected':undefined;setEditingOrder(prev=>({...prev,status:s,...(approvalSync?{approvalStatus:approvalSync}:{})}));}} style={{width:'100%',padding:'10px 12px',borderRadius:8,border:'1.5px solid #E2E8F0',fontSize:13}}>
             <option value="Pending Approval">Pending Approval</option>
             <option value="Approved">Approved</option>
-            <option value="Processed">Processed</option>
             <option value="Back Order">Back Order</option>
             <option value="Received">Received</option>
             <option value="Rejected">Rejected</option>
