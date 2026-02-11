@@ -173,6 +173,7 @@ const [selectedUser, setSelectedUser] = useState(null);
   const [arrivalCheckMode, setArrivalCheckMode] = useState(false);
   const [selectedBulkForArrival, setSelectedBulkForArrival] = useState(null);
   const [arrivalItems, setArrivalItems] = useState([]);
+  const [arrivalStatusFilter, setArrivalStatusFilter] = useState('All');
 
   // ── Enhanced Stock Check State ──
   const [stockCheckMode, setStockCheckMode] = useState(false);
@@ -2529,9 +2530,9 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
   <div className="grid-4" style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:14,marginBottom:24}}>
     {[
       {l:'Awaiting Arrival',v:orders.filter(o=>o.status==='Back Order'||o.status==='Pending').length,c:'#D97706'},
-      {l:'Fully Received',v:orders.filter(o=>o.qtyReceived>=o.quantity&&o.quantity>0).length,c:'#0B7A3E'},
-      {l:'Partial Received',v:orders.filter(o=>o.qtyReceived>0&&o.qtyReceived<o.quantity).length,c:'#2563EB'},
-      {l:'Back Orders',v:orders.filter(o=>o.backOrder<0).length,c:'#DC2626'}
+      {l:'Fully Received',v:orders.filter(o=>(o.qtyReceived||0)>=o.quantity&&o.quantity>0).length,c:'#0B7A3E'},
+      {l:'Partial Received',v:orders.filter(o=>(o.qtyReceived||0)>0&&(o.qtyReceived||0)<o.quantity).length,c:'#2563EB'},
+      {l:'Back Orders',v:orders.filter(o=>o.status==='Back Order').length,c:'#DC2626'}
     ].map((s,i)=><div key={i} className="card" style={{padding:'18px 22px',borderLeft:`3px solid ${s.c}`}}><div style={{fontSize:11,color:'#94A3B8',textTransform:'uppercase',letterSpacing:.5,marginBottom:4}}>{s.l}</div><div className="mono" style={{fontSize:28,fontWeight:700,color:s.c}}>{s.v}</div></div>)}
   </div>
 
@@ -2692,25 +2693,44 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
     );
   })()}
 
-  {/* Recent Arrivals Table */}
-  <div className="card" style={{overflow:'hidden'}}>
-    <div style={{padding:'16px 20px',borderBottom:'1px solid #E8ECF0',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-      <span style={{fontWeight:600,fontSize:14}}>All Orders - Arrival Status</span>
-      <span style={{fontSize:11,color:'#94A3B8'}}>{orders.length} orders</span>
-    </div>
-    <table style={{width:'100%',borderCollapse:'collapse',fontSize:12.5}}>
-      <thead><tr style={{background:'#F8FAFB'}}>{['Material','Description','Ordered','Recv','B/O','Arrival Date','Status'].map(h=><th key={h} className="th">{h}</th>)}</tr></thead>
-      <tbody>{orders.slice(0,15).map((o,i)=><tr key={o.id} className="tr" style={{borderBottom:'1px solid #F7FAFC',background:i%2===0?'#fff':'#FCFCFD'}}>
-        <td className="td mono" style={{fontSize:11,color:'#0B7A3E',fontWeight:500}}>{o.materialNo||'—'}</td>
-        <td className="td" style={{maxWidth:200,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{o.description}</td>
-        <td className="td" style={{fontWeight:600,textAlign:'center'}}>{o.quantity}</td>
-        <td className="td" style={{fontWeight:600,textAlign:'center',color:o.qtyReceived>=o.quantity?'#0B7A3E':'#D97706'}}>{o.qtyReceived}</td>
-        <td className="td" style={{fontWeight:600,textAlign:'center',color:o.backOrder<0?'#DC2626':'#0B7A3E'}}>{o.backOrder<0?o.backOrder:'—'}</td>
-        <td className="td" style={{color:o.arrivalDate?'#1A202C':'#94A3B8',fontSize:11}}>{o.arrivalDate?fmtDate(o.arrivalDate):'—'}</td>
-        <td className="td"><Badge status={o.status}/></td>
-      </tr>)}</tbody>
-    </table>
-  </div>
+  {/* All Orders - Arrival Status */}
+  {(()=>{
+    const statusTabs = ['All','Pending','Back Order','Received','Processed'];
+    const arrivalFiltered = arrivalStatusFilter==='All' ? orders : orders.filter(o=>o.status===arrivalStatusFilter);
+    // Sort: Back Order first, then Pending, then others
+    const statusPriority = {'Back Order':0,'Pending':1,'Processed':2,'Pending Approval':3,'Approved':4,'Received':5};
+    const arrivalSorted = [...arrivalFiltered].sort((a,b)=>(statusPriority[a.status]??9)-(statusPriority[b.status]??9));
+    return (
+    <div className="card" style={{overflow:'hidden'}}>
+      <div style={{padding:'16px 20px',borderBottom:'1px solid #E8ECF0'}}>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}>
+          <span style={{fontWeight:600,fontSize:14}}>All Orders - Arrival Status</span>
+          <span style={{fontSize:11,color:'#94A3B8'}}>{arrivalSorted.length} of {orders.length} orders</span>
+        </div>
+        <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
+          {statusTabs.map(s=>{
+            const cnt = s==='All'?orders.length:orders.filter(o=>o.status===s).length;
+            return <button key={s} onClick={()=>setArrivalStatusFilter(s)} style={{padding:'5px 12px',borderRadius:20,border:arrivalStatusFilter===s?'none':'1px solid #E2E8F0',background:arrivalStatusFilter===s?(s==='Back Order'?'#FEE2E2':s==='Received'?'#D1FAE5':s==='Pending'?'#FEF3C7':'#1E293B'):'#fff',color:arrivalStatusFilter===s?(s==='Back Order'?'#C53030':s==='Received'?'#059669':s==='Pending'?'#92400E':'#fff'):'#64748B',fontSize:11,fontWeight:600,cursor:'pointer'}}>{s} ({cnt})</button>;
+          })}
+        </div>
+      </div>
+      <div style={{maxHeight:500,overflowY:'auto'}}>
+        <table style={{width:'100%',borderCollapse:'collapse',fontSize:12.5}}>
+          <thead><tr style={{background:'#F8FAFB',position:'sticky',top:0,zIndex:1}}>{['Order ID','Material','Description','Ordered','Recv','B/O','Arrival Date','Status'].map(h=><th key={h} className="th">{h}</th>)}</tr></thead>
+          <tbody>{arrivalSorted.length===0?<tr><td colSpan={8} style={{padding:24,textAlign:'center',color:'#94A3B8',fontSize:13}}>No orders with status "{arrivalStatusFilter}"</td></tr>:arrivalSorted.map((o,i)=><tr key={o.id} className="tr" style={{borderBottom:'1px solid #F7FAFC',background:i%2===0?'#fff':'#FCFCFD'}}>
+            <td className="td mono" style={{fontSize:11,fontWeight:500,color:'#475569'}}>{o.id}</td>
+            <td className="td mono" style={{fontSize:11,color:'#0B7A3E',fontWeight:500}}>{o.materialNo||'—'}</td>
+            <td className="td" style={{maxWidth:200,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{o.description}</td>
+            <td className="td" style={{fontWeight:600,textAlign:'center'}}>{o.quantity}</td>
+            <td className="td" style={{fontWeight:600,textAlign:'center',color:(o.qtyReceived||0)>=o.quantity?'#0B7A3E':'#D97706'}}>{o.qtyReceived||0}</td>
+            <td className="td" style={{fontWeight:600,textAlign:'center',color:(o.backOrder||0)<0?'#DC2626':'#0B7A3E'}}>{(o.backOrder||0)<0?o.backOrder:'—'}</td>
+            <td className="td" style={{color:o.arrivalDate?'#1A202C':'#94A3B8',fontSize:11}}>{o.arrivalDate?fmtDate(o.arrivalDate):'—'}</td>
+            <td className="td"><Badge status={o.status}/></td>
+          </tr>)}</tbody>
+        </table>
+      </div>
+    </div>);
+  })()}
 </div>)}
 
 {/* ═══════════ WHATSAPP BAILEYS ═══════════ */}
