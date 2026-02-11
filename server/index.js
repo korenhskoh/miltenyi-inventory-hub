@@ -53,6 +53,8 @@ let sock = null;
 let qrCode = null;
 let connectionStatus = 'disconnected';
 let sessionInfo = null;
+let waReconnectAttempts = 0;
+const WA_MAX_RECONNECTS = 5;
 
 // Logger (silent for cleaner output)
 const logger = pino({ level: 'silent' });
@@ -180,17 +182,22 @@ async function connectWhatsApp() {
 
       if (connection === 'close') {
         const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
-        console.log('Connection closed. Reconnecting:', shouldReconnect);
         connectionStatus = 'disconnected';
         qrCode = null;
         sessionInfo = null;
 
-        if (shouldReconnect) {
-          setTimeout(connectWhatsApp, 3000);
+        if (shouldReconnect && waReconnectAttempts < WA_MAX_RECONNECTS) {
+          waReconnectAttempts++;
+          console.log(`WhatsApp reconnecting (attempt ${waReconnectAttempts}/${WA_MAX_RECONNECTS})...`);
+          setTimeout(connectWhatsApp, 5000);
+        } else {
+          console.log('WhatsApp reconnection stopped — max attempts reached or logged out');
+          connectionStatus = 'disconnected';
         }
       } else if (connection === 'open') {
         console.log('✅ WhatsApp connected successfully!');
         connectionStatus = 'connected';
+        waReconnectAttempts = 0;
         qrCode = null;
 
         // Get session info
@@ -437,8 +444,13 @@ app.use('/api/config', verifyToken, configRouter);
 app.use('/api/migrate', verifyToken, requireAdmin, migrateRouter);
 
 // Health check
-app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', whatsapp: connectionStatus });
+app.get('/api/health', async (req, res) => {
+  let dbOk = false;
+  try {
+    const r = await dbQuery('SELECT 1');
+    dbOk = r.rows.length > 0;
+  } catch {}
+  res.json({ status: 'ok', whatsapp: connectionStatus, database: dbOk ? 'connected' : 'error', poolTotal: (await import('./db.js')).default.totalCount, poolIdle: (await import('./db.js')).default.idleCount, poolWaiting: (await import('./db.js')).default.waitingCount });
 });
 
 // ============ STATIC FILE SERVING ============
