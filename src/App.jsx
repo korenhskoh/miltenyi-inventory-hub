@@ -301,11 +301,27 @@ const [selectedUser, setSelectedUser] = useState(null);
     return ms && (statusFilter==='All'||o.status===statusFilter);
   }), [orders, search, statusFilter]);
   const monthlyData = useMemo(() => {
-    const months=['Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec','Jan'];
-    const mm={'Feb 2025':0,'March 2025':1,'April 2025':2,'May 2025':3,'June 2025':4,'July 2025':5,'2_July 2025':5,'3_July 2025':5,'4_July 2025':5,'2_Sep 2025':7,'Sep 2025':7,'Oct 2025':8,'Nov 2025':9,'1_Dec_2025':10,'Jan_2026':11};
-    const d=months.map(m=>({name:m,orders:0,cost:0,received:0,backOrder:0}));
-    orders.forEach(o=>{const i=mm[o.month];if(i!==undefined){d[i].orders++;d[i].cost+=(Number(o.totalCost)||0);if(o.status==='Received')d[i].received++;if(o.status==='Back Order')d[i].backOrder++;}});
-    return d;
+    const monthMap = {};
+    orders.forEach(o => {
+      if (!o.month) return;
+      // Normalize month key: strip prefixes like "2_", replace underscores with spaces
+      const norm = o.month.replace(/^\d+_/,'').replace(/_/g,' ');
+      // Extract short month name for display (e.g. "Feb 2026" → "Feb '26")
+      const parts = norm.split(' ');
+      const shortLabel = parts.length >= 2 ? `${parts[0].slice(0,3)} '${parts[1].slice(2)}` : norm;
+      if (!monthMap[shortLabel]) monthMap[shortLabel] = {name:shortLabel, orders:0, cost:0, received:0, backOrder:0, _sortKey:norm};
+      monthMap[shortLabel].orders++;
+      monthMap[shortLabel].cost += (Number(o.totalCost)||0);
+      if (o.status==='Received') monthMap[shortLabel].received++;
+      if (o.status==='Back Order') monthMap[shortLabel].backOrder++;
+    });
+    // Sort chronologically
+    const monthOrder = {jan:0,feb:1,mar:2,apr:3,may:4,jun:5,jul:6,aug:7,sep:8,oct:9,nov:10,dec:11};
+    return Object.values(monthMap).sort((a,b) => {
+      const [am,ay] = a._sortKey.toLowerCase().split(' ');
+      const [bm,by] = b._sortKey.toLowerCase().split(' ');
+      return (parseInt(ay)||0) - (parseInt(by)||0) || (monthOrder[am?.slice(0,3)]||0) - (monthOrder[bm?.slice(0,3)]||0);
+    });
   }, [orders]);
   const statusPieData = useMemo(() => [{name:'Received',value:stats.received,color:'#0B7A3E'},{name:'Back Order',value:stats.backOrder,color:'#C53030'},{name:'Processed/Pending',value:stats.pending,color:'#2563EB'}], [stats]);
   const allOrdersMonths = useMemo(() => [...new Set([...orders.map(o=>o.month),...bulkGroups.map(g=>g.month)].filter(Boolean))].sort(), [orders, bulkGroups]);
@@ -2006,7 +2022,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
 {/* ═══════════ DASHBOARD ═══════════ */}
 {page==='dashboard'&&(<div>
   <div className="grid-5" style={{display:'grid',gridTemplateColumns:'repeat(5,1fr)',gap:14,marginBottom:24}}>
-    {[{l:'Catalog',v:fmtNum(partsCatalog.length),i:Database,bg:'linear-gradient(135deg,#4338CA,#6366F1)'},{l:'Orders',v:stats.total,i:Package,bg:'linear-gradient(135deg,#006837,#0B9A4E)'},{l:'Spend',v:fmt(stats.totalCost),i:DollarSign,bg:'linear-gradient(135deg,#1E40AF,#3B82F6)'},{l:'Fulfillment',v:`${stats.fulfillmentRate}%`,i:TrendingUp,bg:'linear-gradient(135deg,#047857,#10B981)'},{l:'Back Orders',v:stats.backOrder,i:AlertTriangle,bg:'linear-gradient(135deg,#B91C1C,#EF4444)'}].map((s,i)=>(
+    {[{l:'Catalog',v:fmtNum(partsCatalog.length),i:Database,bg:'linear-gradient(135deg,#4338CA,#6366F1)'},{l:'Total Orders',v:stats.total,i:Package,bg:'linear-gradient(135deg,#006837,#0B9A4E)'},{l:'Spend',v:fmt(stats.totalCost),i:DollarSign,bg:'linear-gradient(135deg,#1E40AF,#3B82F6)'},{l:'Fulfillment',v:`${stats.fulfillmentRate}%`,i:TrendingUp,bg:'linear-gradient(135deg,#047857,#10B981)'},{l:'Back Orders',v:stats.backOrder,i:AlertTriangle,bg:'linear-gradient(135deg,#B91C1C,#EF4444)'}].map((s,i)=>(
       <div key={i} className="sc" style={{background:s.bg}}><div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start'}}><div><div style={{fontSize:11,fontWeight:500,opacity:.85,marginBottom:6,textTransform:'uppercase',letterSpacing:.8}}>{s.l}</div><div className="mono" style={{fontSize:24,fontWeight:700,letterSpacing:-1}}>{s.v}</div></div><div style={{background:'rgba(255,255,255,.15)',borderRadius:10,padding:8}}><s.i size={18}/></div></div></div>
     ))}
   </div>
@@ -2070,8 +2086,8 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
   <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:14,marginBottom:24}}>
     {[
       {l:'Total Orders',v:allOrdersCombined.length,i:Package,c:'#0B7A3E',bg:'linear-gradient(135deg,#006837,#0B9A4E)'},
-      {l:'Single Orders',v:orders.filter(o=>!o.bulkGroupId).length,i:Package,c:'#2563EB',bg:'linear-gradient(135deg,#1E40AF,#3B82F6)'},
-      {l:'Bulk Orders',v:orders.filter(o=>o.bulkGroupId).length,i:Layers,c:'#7C3AED',bg:'linear-gradient(135deg,#5B21B6,#7C3AED)'},
+      {l:'Single Orders',v:allOrdersCombined.filter(o=>o.orderType==='Single').length,i:Package,c:'#2563EB',bg:'linear-gradient(135deg,#1E40AF,#3B82F6)'},
+      {l:'Bulk Orders',v:allOrdersCombined.filter(o=>o.orderType==='Bulk').length,i:Layers,c:'#7C3AED',bg:'linear-gradient(135deg,#5B21B6,#7C3AED)'},
       {l:'Total Value',v:fmt(allOrdersCombined.reduce((s,o)=>s+(Number(o.totalCost)||0),0)),i:DollarSign,c:'#D97706',bg:'linear-gradient(135deg,#92400E,#D97706)'}
     ].map((s,i)=>(
       <div key={i} style={{background:s.bg,borderRadius:12,padding:'20px 22px',color:'#fff'}}>
