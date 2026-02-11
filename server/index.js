@@ -62,98 +62,8 @@ const logger = pino({ level: 'silent' });
 // Message Templates (imported from shared module)
 import { messageTemplates } from './messageTemplates.js';
 
-// ============ WHATSAPP BOT ENGINE ============
-const pendingBotOrders = new Map(); // jid → { materialNo, description, qty, price, ts }
-
-async function processIncomingWaMessage(text, senderJid) {
-  const msg = text.toLowerCase().trim();
-  const fmtPrice = (n) => n != null && n > 0 ? `S$${Number(n).toFixed(2)}` : '—';
-
-  // Help / greeting
-  if (msg === 'help' || msg === 'hi' || msg === 'hello' || msg === 'menu') {
-    return `🏥 *Miltenyi Inventory Bot*\n\nI can help you with:\n📋 *price <material-no>* — Check price\n📦 *status <order-id>* — Track order\n🛒 *order <qty> <material-no>* — Place order\n📊 *stock* — Recent stock checks\n\nExample: price 130-095-005`;
-  }
-
-  // Price lookup
-  const priceMatch = msg.match(/price\s+(\d{3}-\d{3}-\d{3})/);
-  if (priceMatch) {
-    const matNo = priceMatch[1];
-    const r = await dbQuery('SELECT * FROM parts_catalog WHERE material_no = $1', [matNo]);
-    if (r.rows.length) {
-      const p = r.rows[0];
-      return `📦 *${p.description}*\nMaterial: ${matNo}\n\n💰 *Prices:*\n• SG Price: ${fmtPrice(p.sg_price)}\n• Distributor: ${fmtPrice(p.dist_price)}\n• Transfer: ${fmtPrice(p.transfer_price)}\n\nTo order: *order <qty> ${matNo}*`;
-    }
-    return `❌ Part *${matNo}* not found in catalog. Please check the material number.`;
-  }
-
-  // Order status
-  const statusMatch = msg.match(/status\s+(ord-\d+)/i);
-  if (statusMatch) {
-    const orderId = statusMatch[1].toUpperCase();
-    const r = await dbQuery('SELECT * FROM orders WHERE id = $1', [orderId]);
-    if (r.rows.length) {
-      const o = r.rows[0];
-      return `📋 *Order ${o.id}*\n\n• Item: ${o.description}\n• Qty: ${o.quantity}\n• Status: *${o.status}*\n• Ordered: ${o.order_date || '—'}\n• Received: ${o.qty_received || 0}/${o.quantity}`;
-    }
-    return `❌ Order *${orderId}* not found.`;
-  }
-
-  // Place order
-  const orderMatch = msg.match(/order\s+(\d+)\s*[x×]?\s*(\d{3}-\d{3}-\d{3})/i) || msg.match(/order\s+(\d{3}-\d{3}-\d{3})\s*[x×]?\s*(\d+)/i);
-  if (orderMatch) {
-    let qty, matNo;
-    if (/^\d{3}-/.test(orderMatch[1])) { matNo = orderMatch[1]; qty = parseInt(orderMatch[2]) || 1; }
-    else { qty = parseInt(orderMatch[1]) || 1; matNo = orderMatch[2]; }
-
-    const r = await dbQuery('SELECT * FROM parts_catalog WHERE material_no = $1', [matNo]);
-    if (r.rows.length) {
-      const p = r.rows[0];
-      const total = Number(p.transfer_price || 0) * qty;
-      pendingBotOrders.set(senderJid, { materialNo: matNo, description: p.description, qty, price: Number(p.transfer_price || 0), total, ts: Date.now() });
-      return `🛒 *Ready to order:*\n\n• Part: ${p.description}\n• Material: ${matNo}\n• Qty: ${qty}\n• Unit: ${fmtPrice(p.transfer_price)}\n• Total: ${fmtPrice(total)}\n\nReply *confirm* to place or *cancel* to abort.`;
-    }
-    return `❌ Part *${matNo}* not found. Please check the material number.`;
-  }
-
-  // Confirm order
-  if (msg === 'confirm') {
-    const pending = pendingBotOrders.get(senderJid);
-    if (pending && Date.now() - pending.ts < 300000) { // 5 min expiry
-      pendingBotOrders.delete(senderJid);
-      const now = new Date();
-      const month = `${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][now.getMonth()]} ${now.getFullYear()}`;
-      const countR = await dbQuery('SELECT COUNT(*) as c FROM orders');
-      const orderId = `ORD-${2000 + parseInt(countR.rows[0].c)}`;
-      await dbQuery(
-        `INSERT INTO orders (id, material_no, description, quantity, list_price, total_cost, order_date, order_by, status, approval_status, month, year, remark)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
-        [orderId, pending.materialNo, pending.description, pending.qty, pending.price, pending.total,
-         now.toISOString().slice(0,10), 'WhatsApp Bot', 'Pending Approval', 'pending', month, String(now.getFullYear()), 'Created via WhatsApp Bot']
-      );
-      return `✅ *Order Created!*\n\n• ID: ${orderId}\n• Item: ${pending.description}\n• Qty: ${pending.qty}\n• Total: ${fmtPrice(pending.total)}\n\nTrack it: *status ${orderId}*`;
-    }
-    return `No pending order to confirm. Start with: *order <qty> <material-no>*`;
-  }
-
-  // Cancel
-  if (msg === 'cancel') {
-    pendingBotOrders.delete(senderJid);
-    return `Cancelled. How else can I help? Type *help* for commands.`;
-  }
-
-  // Stock check
-  if (msg.includes('stock') || msg.includes('inventory')) {
-    const r = await dbQuery('SELECT * FROM stock_checks ORDER BY date DESC LIMIT 3');
-    if (r.rows.length) {
-      const list = r.rows.map(s => `• ${s.id}: ${s.items} items, ${s.disc} discrepancies (${s.status})`).join('\n');
-      return `📊 *Recent Stock Checks:*\n\n${list}`;
-    }
-    return `No stock checks recorded yet.`;
-  }
-
-  // Default
-  return `I didn't understand that. Type *help* for available commands.\n\nQuick examples:\n• price 130-095-005\n• status ORD-2001\n• order 2 130-095-005`;
-}
+// WhatsApp Bot Agent (modular)
+import { handleBotMessage } from './waBot.js';
 
 // Initialize WhatsApp Connection
 async function connectWhatsApp() {
@@ -228,7 +138,7 @@ async function connectWhatsApp() {
           const botEnabled = cfgResult.rows.length > 0 && cfgResult.rows[0].value === true;
           if (!botEnabled) return;
 
-          const reply = await processIncomingWaMessage(text, jid);
+          const reply = await handleBotMessage(text, jid);
           if (reply && sock) {
             await sock.sendMessage(jid, { text: reply });
             console.log(`🤖 Bot replied to ${jid}`);
