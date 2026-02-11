@@ -39,12 +39,11 @@ const STATUS_CFG = {
   Received: { color: '#0B7A3E', bg: '#E6F4ED', icon: CheckCircle },
   'Back Order': { color: '#C53030', bg: '#FEE2E2', icon: AlertTriangle },
   Processed: { color: '#2563EB', bg: '#DBEAFE', icon: Clock },
-  Pending: { color: '#D97706', bg: '#FEF3C7', icon: AlertCircle },
   'Pending Approval': { color: '#7C3AED', bg: '#EDE9FE', icon: Clock },
   Approved: { color: '#0B7A3E', bg: '#D1FAE5', icon: CheckCircle },
   Rejected: { color: '#DC2626', bg: '#FEE2E2', icon: X },
 };
-const Badge = ({ status }) => { const c = STATUS_CFG[status]||STATUS_CFG.Pending; const I=c.icon; return <span style={{ display:'inline-flex',alignItems:'center',gap:4,padding:'3px 10px',borderRadius:20,fontSize:11,fontWeight:600,color:c.color,background:c.bg }}><I size={12}/> {status}</span>; };
+const Badge = ({ status }) => { const c = STATUS_CFG[status]||STATUS_CFG['Pending Approval']; const I=c.icon; return <span style={{ display:'inline-flex',alignItems:'center',gap:4,padding:'3px 10px',borderRadius:20,fontSize:11,fontWeight:600,color:c.color,background:c.bg }}><I size={12}/> {status}</span>; };
 const Pill = ({ bg, color, children }) => <span className="pill" style={{ background: bg, color }}>{children}</span>;
 const Toggle = ({ active, onClick, color }) => <div onClick={onClick} style={{ width:40,height:22,borderRadius:11,background:active?(color||'#0B7A3E'):'#E2E8F0',cursor:'pointer',position:'relative',transition:'background 0.2s' }}><div style={{ width:18,height:18,borderRadius:'50%',background:'#fff',position:'absolute',top:2,left:active?20:2,transition:'left 0.2s',boxShadow:'0 1px 3px rgba(0,0,0,0.15)' }}/></div>;
 const Toast = ({ items, onDismiss }) => <div style={{ position:'fixed',top:80,right:24,zIndex:9999,display:'flex',flexDirection:'column',gap:8,maxWidth:380 }}>{items.map((n,i) => <div key={i} style={{ background:n.type==='success'?'#0B7A3E':n.type==='warning'?'#D97706':'#2563EB',color:'#fff',padding:'12px 16px',borderRadius:10,boxShadow:'0 8px 24px rgba(0,0,0,0.18)',display:'flex',alignItems:'center',gap:10,animation:'slideIn 0.3s' }}>{n.type==='success'?<CheckCircle size={18}/>:n.type==='warning'?<AlertTriangle size={18}/>:<Bell size={18}/>}<div style={{flex:1}}><div style={{fontWeight:600,fontSize:13}}>{n.title}</div><div style={{fontSize:11,opacity:0.9}}>{n.message}</div></div><button onClick={()=>onDismiss(i)} style={{background:'none',border:'none',color:'#fff',cursor:'pointer'}}><X size={14}/></button></div>)}</div>;
@@ -292,7 +291,7 @@ const [selectedUser, setSelectedUser] = useState(null);
   // ── Stats ──
   const stats = useMemo(() => {
     const t=orders.length, r=orders.filter(o=>o.status==='Received').length, b=orders.filter(o=>o.status==='Back Order').length;
-    const p=orders.filter(o=>o.status==='Pending'||o.status==='Processed').length;
+    const p=orders.filter(o=>o.status==='Pending Approval'||o.status==='Approved'||o.status==='Processed').length;
     const tc=orders.reduce((s,o)=>s+(Number(o.totalCost)||0),0), tq=orders.reduce((s,o)=>s+(Number(o.quantity)||0),0), tr=orders.reduce((s,o)=>s+(Number(o.qtyReceived)||0),0);
     return { total:t, received:r, backOrder:b, pending:p, totalCost:tc, fulfillmentRate: tq>0?((tr/tq)*100).toFixed(1):0 };
   }, [orders]);
@@ -324,7 +323,7 @@ const [selectedUser, setSelectedUser] = useState(null);
       return (parseInt(ay)||0) - (parseInt(by)||0) || (monthOrder[am?.slice(0,3)]||0) - (monthOrder[bm?.slice(0,3)]||0);
     });
   }, [orders]);
-  const statusPieData = useMemo(() => [{name:'Received',value:stats.received,color:'#0B7A3E'},{name:'Back Order',value:stats.backOrder,color:'#C53030'},{name:'Processed/Pending',value:stats.pending,color:'#2563EB'}], [stats]);
+  const statusPieData = useMemo(() => [{name:'Received',value:stats.received,color:'#0B7A3E'},{name:'Back Order',value:stats.backOrder,color:'#C53030'},{name:'In Progress',value:stats.pending,color:'#2563EB'}], [stats]);
   const allOrdersMonths = useMemo(() => [...new Set([...orders.map(o=>o.month),...bulkGroups.map(g=>g.month)].filter(Boolean))].sort(), [orders, bulkGroups]);
   const allOrdersCombined = useMemo(() => {
     let combined = orders.map(o=>({...o, orderType: o.bulkGroupId ? 'Bulk' : 'Single'}));
@@ -647,7 +646,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
       arrivalDate: null,
       qtyReceived: 0,
       backOrder: -sourceOrder.quantity,
-      status: 'Pending',
+      status: 'Pending Approval',
       approvalStatus: undefined,
       approvalSentDate: undefined,
       emailFull: '',
@@ -667,14 +666,14 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
     dbSync(api.updateApproval(approvalId, {status:action,actionDate:new Date().toISOString().slice(0,10)}), 'Approval update not saved');
 
     if (action === 'approved') {
-      // Update order status to Approved/Pending
+      // Update order status to Approved
       if (approval.orderType === 'single') {
-        setOrders(prev=>prev.map(o=>o.id===approval.orderId?{...o,status:'Pending',approvalStatus:'approved'}:o));
-        dbSync(api.updateOrder(approval.orderId, {status:'Pending',approvalStatus:'approved'}), 'Order approval not saved');
+        setOrders(prev=>prev.map(o=>o.id===approval.orderId?{...o,status:'Approved',approvalStatus:'approved'}:o));
+        dbSync(api.updateOrder(approval.orderId, {status:'Approved',approvalStatus:'approved'}), 'Order approval not saved');
       } else if (approval.orderType === 'bulk' && approval.orderIds) {
-        setOrders(prev=>prev.map(o=>approval.orderIds.includes(o.id)?{...o,status:'Pending',approvalStatus:'approved'}:o));
+        setOrders(prev=>prev.map(o=>approval.orderIds.includes(o.id)?{...o,status:'Approved',approvalStatus:'approved'}:o));
         setBulkGroups(prev=>prev.map(g=>g.id===approval.orderId?{...g,status:'Approved'}:g));
-        dbSync(api.bulkUpdateOrderStatus(approval.orderIds, 'Pending'), 'Bulk order status not saved');
+        dbSync(api.bulkUpdateOrderStatus(approval.orderIds, 'Approved'), 'Bulk order status not saved');
         dbSync(api.updateBulkGroup(approval.orderId, {status:'Approved'}), 'Bulk group approval not saved');
       }
       addNotifEntry({id:`N-${Date.now()}-${Math.random().toString(36).slice(2,6)}`,type:'approval',to:approval.requestedBy,subject:`Order ${approval.orderId} Approved`,date:new Date().toISOString().slice(0,10),status:'Approved'});
@@ -965,7 +964,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
           month: now.toLocaleString('default', { month: 'long', year: 'numeric' }),
           totalOrders: orders.length,
           received: orders.filter(o => o.status === 'Received').length,
-          pending: orders.filter(o => o.status === 'Pending').length,
+          pending: orders.filter(o => o.status === 'Pending Approval' || o.status === 'Approved' || o.status === 'Processed').length,
           backOrders: orders.filter(o => o.status === 'Back Order').length,
           totalValue: fmt(orders.reduce((s, o) => s + o.totalCost, 0))
         };
@@ -1024,13 +1023,13 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
       totalCost:(parseFloat(item.listPrice)||0)*(parseInt(item.quantity)||1),
       orderDate:new Date().toISOString().slice(0,10), orderBy:bulkOrderBy, remark:`Bulk: ${bulkMonth} — ${bulkRemark}`,
       arrivalDate:null, qtyReceived:0, backOrder:-(parseInt(item.quantity)||1), engineer:'',
-      emailFull:'', emailBack:'', status:'Pending', month:bulkMonth, year:String(new Date().getFullYear()),
+      emailFull:'', emailBack:'', status:'Pending Approval', month:bulkMonth, year:String(new Date().getFullYear()),
       bulkGroupId:bgId
     }));
     const totalCost = newOrders.reduce((s,o)=>s+o.totalCost,0);
     setOrders(prev=>[...newOrders,...prev]);
     newOrders.forEach(o => dbSync(api.createOrder(o), 'Bulk order item not saved'));
-    const bg = {id:bgId, month:bulkMonth, createdBy:bulkOrderBy, items:newOrders.length, totalCost, status:'Pending', date:new Date().toISOString().slice(0,10)};
+    const bg = {id:bgId, month:bulkMonth, createdBy:bulkOrderBy, items:newOrders.length, totalCost, status:'Pending Approval', date:new Date().toISOString().slice(0,10)};
     setBulkGroups(prev=>[bg,...prev]);
     dbSync(api.createBulkGroup(bg), 'Bulk group not saved to database');
     setShowBulkOrder(false); setBulkItems([{materialNo:'',description:'',quantity:1,listPrice:0}]); setBulkRemark('');
@@ -1348,7 +1347,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
         backOrder: received - qty,
         engineer: getValue('engineer') || '',
         emailFull: '', emailBack: '',
-        status: getValue('status') || (received >= qty && qty > 0 ? 'Received' : received > 0 ? 'Back Order' : 'Pending'),
+        status: getValue('status') || (received >= qty && qty > 0 ? 'Received' : received > 0 ? 'Back Order' : 'Pending Approval'),
         month: getValue('month') || sheetMonth || ('Import ' + new Date().toISOString().slice(0, 7)),
         year: getValue('year') || new Date().getFullYear().toString()
       };
@@ -1397,7 +1396,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
               createdBy: currentUser.name,
               items: sheetOrders.length,
               totalCost,
-              status: 'Pending',
+              status: 'Pending Approval',
               date: new Date().toISOString().slice(0, 10)
             });
           }
@@ -2117,7 +2116,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
     <div style={{width:1,height:24,background:'#E2E8F0'}}/>
     <div style={{display:'flex',alignItems:'center',gap:6}}>
       <span style={{fontSize:11,fontWeight:600,color:'#64748B',textTransform:'uppercase',letterSpacing:.5}}>Status</span>
-      {['All','Approved','Pending','Received','Back Order','Processed','Completed'].map(s=><button key={s} onClick={()=>setAllOrdersStatus(s)} style={{padding:'5px 12px',borderRadius:20,border:allOrdersStatus===s?'none':'1px solid #E2E8F0',background:allOrdersStatus===s?'#0B7A3E':'#fff',color:allOrdersStatus===s?'#fff':'#64748B',fontSize:11,fontWeight:500,cursor:'pointer',fontFamily:'inherit'}}>{s}</button>)}
+      {['All','Pending Approval','Approved','Received','Back Order','Processed'].map(s=><button key={s} onClick={()=>setAllOrdersStatus(s)} style={{padding:'5px 12px',borderRadius:20,border:allOrdersStatus===s?'none':'1px solid #E2E8F0',background:allOrdersStatus===s?'#0B7A3E':'#fff',color:allOrdersStatus===s?'#fff':'#64748B',fontSize:11,fontWeight:500,cursor:'pointer',fontFamily:'inherit'}}>{s}</button>)}
     </div>
   </div>
 
@@ -2174,14 +2173,13 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
 {/* ═══════════ SINGLE ORDERS ═══════════ */}
 {page==='orders'&&(<div>
   <div style={{display:'flex',justifyContent:'space-between',marginBottom:20}}>
-    <div style={{display:'flex',gap:8}}>{['All','Received','Back Order','Processed','Pending'].map(s=><button key={s} onClick={()=>setStatusFilter(s)} style={{padding:'6px 14px',borderRadius:20,border:statusFilter===s?'none':'1px solid #E2E8F0',background:statusFilter===s?'#0B7A3E':'#fff',color:statusFilter===s?'#fff':'#64748B',fontSize:12,fontWeight:500,cursor:'pointer',fontFamily:'inherit'}}>{s} ({s==='All'?orders.filter(o=>!o.bulkGroupId).length:orders.filter(o=>!o.bulkGroupId&&o.status===s).length})</button>)}</div>
+    <div style={{display:'flex',gap:8}}>{['All','Pending Approval','Approved','Received','Back Order','Processed'].map(s=><button key={s} onClick={()=>setStatusFilter(s)} style={{padding:'6px 14px',borderRadius:20,border:statusFilter===s?'none':'1px solid #E2E8F0',background:statusFilter===s?'#0B7A3E':'#fff',color:statusFilter===s?'#fff':'#64748B',fontSize:12,fontWeight:500,cursor:'pointer',fontFamily:'inherit'}}>{s} ({s==='All'?orders.filter(o=>!o.bulkGroupId).length:orders.filter(o=>!o.bulkGroupId&&o.status===s).length})</button>)}</div>
     <div style={{display:'flex',gap:8}}><button className="bp" onClick={()=>setShowNewOrder(true)}><Plus size={14}/> New Order</button></div>
   </div>
   {hasPermission('deleteOrders') && <BatchBar count={selOrders.size} onClear={()=>setSelOrders(new Set())}>
     <BatchBtn onClick={()=>batchStatusOrders('Received')} bg="#059669" icon={CheckCircle}>Received</BatchBtn>
     <BatchBtn onClick={()=>batchStatusOrders('Processed')} bg="#2563EB" icon={RefreshCw}>Processed</BatchBtn>
     <BatchBtn onClick={()=>batchStatusOrders('Back Order')} bg="#D97706" icon={AlertTriangle}>Back Order</BatchBtn>
-    <BatchBtn onClick={()=>batchStatusOrders('Pending')} bg="#6366F1" icon={Clock}>Pending</BatchBtn>
     <BatchBtn onClick={batchDeleteOrders} bg="#DC2626" icon={Trash2}>Delete</BatchBtn>
   </BatchBar>}
   <div className="card" style={{overflow:'hidden'}}><div className="table-wrap" style={{overflowX:'auto'}}><table style={{width:'100%',borderCollapse:'collapse',fontSize:12.5}}>
@@ -2221,8 +2219,6 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
     ))}
   </div>
   {hasPermission('deleteBulkOrders') && <BatchBar count={selBulk.size} onClear={()=>setSelBulk(new Set())}>
-    <BatchBtn onClick={()=>batchStatusBulk('Completed')} bg="#059669" icon={CheckCircle}>Completed</BatchBtn>
-    <BatchBtn onClick={()=>batchStatusBulk('Pending')} bg="#D97706" icon={Clock}>Pending</BatchBtn>
     <BatchBtn onClick={()=>batchStatusBulk('Approved')} bg="#2563EB" icon={Shield}>Approved</BatchBtn>
     <BatchBtn onClick={batchDeleteBulk} bg="#DC2626" icon={Trash2}>Delete</BatchBtn>
   </BatchBar>}
@@ -2238,7 +2234,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
           <td className="td">{g.createdBy}</td>
           <td className="td" style={{fontWeight:600,textAlign:'center'}}>{g.items}</td>
           <td className="td mono" style={{fontWeight:600,fontSize:11}}>{fmt(g.totalCost)}</td>
-          <td className="td"><Pill bg={g.status==='Completed'?'#E6F4ED':'#FEF3C7'} color={g.status==='Completed'?'#0B7A3E':'#D97706'}>{g.status}</Pill></td>
+          <td className="td"><Pill bg={g.status==='Completed'?'#E6F4ED':g.status==='Approved'?'#D1FAE5':g.status==='Rejected'?'#FEE2E2':'#FEF3C7'} color={g.status==='Completed'?'#0B7A3E':g.status==='Approved'?'#059669':g.status==='Rejected'?'#DC2626':'#D97706'}>{g.status}</Pill></td>
           <td className="td" style={{color:'#94A3B8',fontSize:11}}>{fmtDate(g.date)}</td>
           <td className="td">
             <div style={{display:'flex',gap:6}}>
@@ -2529,7 +2525,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
   {/* Stats Cards */}
   <div className="grid-4" style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:14,marginBottom:24}}>
     {[
-      {l:'Awaiting Arrival',v:orders.filter(o=>o.status==='Back Order'||o.status==='Pending').length,c:'#D97706'},
+      {l:'Awaiting Arrival',v:orders.filter(o=>o.status==='Back Order'||o.status==='Approved').length,c:'#D97706'},
       {l:'Fully Received',v:orders.filter(o=>(o.qtyReceived||0)>=o.quantity&&o.quantity>0).length,c:'#0B7A3E'},
       {l:'Partial Received',v:orders.filter(o=>(o.qtyReceived||0)>0&&(o.qtyReceived||0)<o.quantity).length,c:'#2563EB'},
       {l:'Back Orders',v:orders.filter(o=>o.status==='Back Order').length,c:'#DC2626'}
@@ -2587,10 +2583,10 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
                         <td className="td" style={{maxWidth:180,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{o.description}</td>
                         <td className="td" style={{textAlign:'center',fontWeight:600}}>{o.quantity}</td>
                         <td className="td" style={{textAlign:'center'}}>
-                          <input type="number" min="0" max={o.quantity} value={o.qtyReceived} disabled={o.approvalStatus!=='approved'} title={o.approvalStatus!=='approved'?'Order must be approved first':''} onChange={e=>{const val=parseInt(e.target.value)||0;const updates={qtyReceived:val,backOrder:val-o.quantity,status:val>=o.quantity?'Received':val>0?'Back Order':'Pending'};const updatedOrders=orders.map(x=>x.id===o.id?{...x,...updates}:x);setOrders(updatedOrders);dbSync(api.updateOrder(o.id,updates),'Arrival update not saved');if(o.bulkGroupId)checkBulkGroupCompletion(o.bulkGroupId,updatedOrders);}} style={{width:50,padding:'4px 6px',textAlign:'center',borderRadius:6,border:'1px solid #E2E8F0',fontSize:12,opacity:o.approvalStatus!=='approved'?0.5:1,cursor:o.approvalStatus!=='approved'?'not-allowed':'text'}}/>
+                          <input type="number" min="0" max={o.quantity} value={o.qtyReceived} disabled={o.approvalStatus!=='approved'} title={o.approvalStatus!=='approved'?'Order must be approved first':''} onChange={e=>{const val=parseInt(e.target.value)||0;const updates={qtyReceived:val,backOrder:val-o.quantity,status:val>=o.quantity?'Received':val>0?'Back Order':'Approved'};const updatedOrders=orders.map(x=>x.id===o.id?{...x,...updates}:x);setOrders(updatedOrders);dbSync(api.updateOrder(o.id,updates),'Arrival update not saved');if(o.bulkGroupId)checkBulkGroupCompletion(o.bulkGroupId,updatedOrders);}} style={{width:50,padding:'4px 6px',textAlign:'center',borderRadius:6,border:'1px solid #E2E8F0',fontSize:12,opacity:o.approvalStatus!=='approved'?0.5:1,cursor:o.approvalStatus!=='approved'?'not-allowed':'text'}}/>
                         </td>
                         <td className="td" style={{textAlign:'center',fontWeight:600,color:o.quantity-o.qtyReceived>0?'#DC2626':'#059669'}}>{o.quantity-o.qtyReceived>0?`-${o.quantity-o.qtyReceived}`:'✓'}</td>
-                        <td className="td"><Pill bg={o.qtyReceived>=o.quantity?'#D1FAE5':o.qtyReceived>0?'#DBEAFE':'#FEF3C7'} color={o.qtyReceived>=o.quantity?'#059669':o.qtyReceived>0?'#2563EB':'#D97706'}>{o.qtyReceived>=o.quantity?'Full':o.qtyReceived>0?'Partial':'Pending'}</Pill></td>
+                        <td className="td"><Pill bg={o.qtyReceived>=o.quantity?'#D1FAE5':o.qtyReceived>0?'#DBEAFE':'#FEF3C7'} color={o.qtyReceived>=o.quantity?'#059669':o.qtyReceived>0?'#2563EB':'#D97706'}>{o.qtyReceived>=o.quantity?'Full':o.qtyReceived>0?'Partial':'Awaiting'}</Pill></td>
                         <td className="td">
                           {o.qtyReceived>=o.quantity && <Check size={14} color="#059669"/>}
                         </td>
@@ -2674,10 +2670,10 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
                 <td className="td" style={{maxWidth:180,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{o.description}</td>
                 <td className="td" style={{textAlign:'center',fontWeight:600}}>{o.quantity}</td>
                 <td className="td" style={{textAlign:'center'}}>
-                  <input type="number" min="0" max={o.quantity} value={o.qtyReceived} onChange={e=>{const val=parseInt(e.target.value)||0;const updates={qtyReceived:val,backOrder:val-o.quantity,status:val>=o.quantity?'Received':val>0?'Back Order':'Pending'};setOrders(prev=>prev.map(x=>x.id===o.id?{...x,...updates}:x));dbSync(api.updateOrder(o.id,updates),'Arrival update not saved');}} style={{width:50,padding:'4px 6px',textAlign:'center',borderRadius:6,border:'1px solid #E2E8F0',fontSize:12}}/>
+                  <input type="number" min="0" max={o.quantity} value={o.qtyReceived} onChange={e=>{const val=parseInt(e.target.value)||0;const updates={qtyReceived:val,backOrder:val-o.quantity,status:val>=o.quantity?'Received':val>0?'Back Order':'Approved'};setOrders(prev=>prev.map(x=>x.id===o.id?{...x,...updates}:x));dbSync(api.updateOrder(o.id,updates),'Arrival update not saved');}} style={{width:50,padding:'4px 6px',textAlign:'center',borderRadius:6,border:'1px solid #E2E8F0',fontSize:12}}/>
                 </td>
                 <td className="td" style={{textAlign:'center',fontWeight:600,color:o.quantity-(o.qtyReceived||0)>0?'#DC2626':'#059669'}}>{o.quantity-(o.qtyReceived||0)>0?`-${o.quantity-(o.qtyReceived||0)}`:'\u2713'}</td>
-                <td className="td"><Pill bg={o.qtyReceived>=o.quantity?'#D1FAE5':o.qtyReceived>0?'#DBEAFE':'#FEF3C7'} color={o.qtyReceived>=o.quantity?'#059669':o.qtyReceived>0?'#2563EB':'#D97706'}>{o.qtyReceived>=o.quantity?'Full':o.qtyReceived>0?'Partial':'Pending'}</Pill></td>
+                <td className="td"><Pill bg={o.qtyReceived>=o.quantity?'#D1FAE5':o.qtyReceived>0?'#DBEAFE':'#FEF3C7'} color={o.qtyReceived>=o.quantity?'#059669':o.qtyReceived>0?'#2563EB':'#D97706'}>{o.qtyReceived>=o.quantity?'Full':o.qtyReceived>0?'Partial':'Awaiting'}</Pill></td>
                 <td className="td">{o.qtyReceived>=o.quantity && <Check size={14} color="#059669"/>}</td>
               </tr>
             ))}
@@ -2695,10 +2691,10 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
 
   {/* All Orders - Arrival Status */}
   {(()=>{
-    const statusTabs = ['All','Pending','Back Order','Received','Processed'];
+    const statusTabs = ['All','Pending Approval','Approved','Back Order','Received','Processed'];
     const arrivalFiltered = arrivalStatusFilter==='All' ? orders : orders.filter(o=>o.status===arrivalStatusFilter);
     // Sort: Back Order first, then Pending, then others
-    const statusPriority = {'Back Order':0,'Pending':1,'Processed':2,'Pending Approval':3,'Approved':4,'Received':5};
+    const statusPriority = {'Back Order':0,'Pending Approval':1,'Approved':2,'Processed':3,'Received':4};
     const arrivalSorted = [...arrivalFiltered].sort((a,b)=>(statusPriority[a.status]??9)-(statusPriority[b.status]??9));
     return (
     <div className="card" style={{overflow:'hidden'}}>
@@ -2710,7 +2706,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
         <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
           {statusTabs.map(s=>{
             const cnt = s==='All'?orders.length:orders.filter(o=>o.status===s).length;
-            return <button key={s} onClick={()=>setArrivalStatusFilter(s)} style={{padding:'5px 12px',borderRadius:20,border:arrivalStatusFilter===s?'none':'1px solid #E2E8F0',background:arrivalStatusFilter===s?(s==='Back Order'?'#FEE2E2':s==='Received'?'#D1FAE5':s==='Pending'?'#FEF3C7':'#1E293B'):'#fff',color:arrivalStatusFilter===s?(s==='Back Order'?'#C53030':s==='Received'?'#059669':s==='Pending'?'#92400E':'#fff'):'#64748B',fontSize:11,fontWeight:600,cursor:'pointer'}}>{s} ({cnt})</button>;
+            return <button key={s} onClick={()=>setArrivalStatusFilter(s)} style={{padding:'5px 12px',borderRadius:20,border:arrivalStatusFilter===s?'none':'1px solid #E2E8F0',background:arrivalStatusFilter===s?(s==='Back Order'?'#FEE2E2':s==='Received'?'#D1FAE5':s==='Approved'?'#D1FAE5':s==='Pending Approval'?'#EDE9FE':'#1E293B'):'#fff',color:arrivalStatusFilter===s?(s==='Back Order'?'#C53030':s==='Received'?'#059669':s==='Approved'?'#059669':s==='Pending Approval'?'#7C3AED':'#fff'):'#64748B',fontSize:11,fontWeight:600,cursor:'pointer'}}>{s} ({cnt})</button>;
           })}
         </div>
       </div>
@@ -3244,9 +3240,8 @@ if(scheduledNotifs.emailEnabled){                    addNotifEntry({id:'N-'+Date
           <label style={{display:'block',fontSize:12,fontWeight:600,color:'#4A5568',marginBottom:6}}>Status</label>
           <select value={selectedBulkGroup.status} onChange={e=>setSelectedBulkGroup(prev=>({...prev,status:e.target.value}))} style={{width:'100%',padding:'10px 12px',borderRadius:8,border:'1.5px solid #E2E8F0',fontSize:13}}>
             <option value="Pending Approval">Pending Approval</option>
-            <option value="Pending">Pending</option>
-            <option value="Processing">Processing</option>
             <option value="Approved">Approved</option>
+            <option value="Processing">Processing</option>
             <option value="Rejected">Rejected</option>
             <option value="Completed">Completed</option>
           </select>
@@ -3289,7 +3284,7 @@ if(scheduledNotifs.emailEnabled){                    addNotifEntry({id:'N-'+Date
           }
           setSelectedBulkGroup(null);notify('Bulk Order Updated','Changes saved to database','success');
         }} style={{flex:1,padding:'10px',borderRadius:8,border:'none',background:'linear-gradient(135deg,#4338CA,#6366F1)',color:'#fff',fontWeight:600,fontSize:13,cursor:'pointer'}}>Save Changes</button>
-        {(selectedBulkGroup.status==='Pending Approval'||selectedBulkGroup.status==='Pending')&&(
+        {selectedBulkGroup.status==='Pending Approval'&&(
           <div style={{gridColumn:'span 2',marginTop:8,padding:12,background:'#FEF3C7',borderRadius:8,fontSize:11,color:'#92400E'}}>
             <strong>Tip:</strong> If you made changes to a pending order, consider resending the approval email to notify the approver of the updates.
           </div>
@@ -3365,13 +3360,12 @@ if(scheduledNotifs.emailEnabled){                    addNotifEntry({id:'N-'+Date
         </div>
         <div>
           <label style={{display:'block',fontSize:12,fontWeight:600,color:'#4A5568',marginBottom:6}}>Status</label>
-          <select value={editingOrder.status||'Pending'} onChange={e=>{const s=e.target.value;const approvalSync=s==='Approved'?'approved':s==='Rejected'?'rejected':undefined;setEditingOrder(prev=>({...prev,status:s,...(approvalSync?{approvalStatus:approvalSync}:{})}));}} style={{width:'100%',padding:'10px 12px',borderRadius:8,border:'1.5px solid #E2E8F0',fontSize:13}}>
+          <select value={editingOrder.status||'Pending Approval'} onChange={e=>{const s=e.target.value;const approvalSync=s==='Approved'?'approved':s==='Rejected'?'rejected':undefined;setEditingOrder(prev=>({...prev,status:s,...(approvalSync?{approvalStatus:approvalSync}:{})}));}} style={{width:'100%',padding:'10px 12px',borderRadius:8,border:'1.5px solid #E2E8F0',fontSize:13}}>
             <option value="Pending Approval">Pending Approval</option>
-            <option value="Pending">Pending</option>
+            <option value="Approved">Approved</option>
             <option value="Processed">Processed</option>
             <option value="Back Order">Back Order</option>
             <option value="Received">Received</option>
-            <option value="Approved">Approved</option>
             <option value="Rejected">Rejected</option>
           </select>
         </div>
@@ -3973,7 +3967,7 @@ if(scheduledNotifs.emailEnabled){                    addNotifEntry({id:'N-'+Date
             </select>
             {newOrder.bulkGroupId==='__new__'&&<div style={{display:'flex',gap:8,marginTop:8,alignItems:'center'}}>
               <select value={newBulkMonth} onChange={e=>setNewBulkMonth(e.target.value)} style={{flex:1}}>{MONTH_OPTIONS.map(m=><option key={m}>{m}</option>)}</select>
-              <button type="button" onClick={()=>{if(!newBulkMonth)return;const bgId=`BG-${String(bulkGroups.length+1).padStart(3,'0')}`;const bg={id:bgId,month:newBulkMonth,createdBy:currentUser?.name||'',items:0,totalCost:0,status:'Pending',date:new Date().toISOString().slice(0,10)};setBulkGroups(prev=>[bg,...prev]);dbSync(api.createBulkGroup(bg),'New bulk group not saved');setNewOrder(p=>({...p,bulkGroupId:bgId}));setNewBulkMonth('');notify('Bulk Batch Created',`${bgId} — ${newBulkMonth}`,'success');}} style={{padding:'6px 14px',background:'#4338CA',color:'#fff',border:'none',borderRadius:6,fontSize:11,fontWeight:600,cursor:'pointer',whiteSpace:'nowrap'}}>Create</button>
+              <button type="button" onClick={()=>{if(!newBulkMonth)return;const bgId=`BG-${String(bulkGroups.length+1).padStart(3,'0')}`;const bg={id:bgId,month:newBulkMonth,createdBy:currentUser?.name||'',items:0,totalCost:0,status:'Pending Approval',date:new Date().toISOString().slice(0,10)};setBulkGroups(prev=>[bg,...prev]);dbSync(api.createBulkGroup(bg),'New bulk group not saved');setNewOrder(p=>({...p,bulkGroupId:bgId}));setNewBulkMonth('');notify('Bulk Batch Created',`${bgId} — ${newBulkMonth}`,'success');}} style={{padding:'6px 14px',background:'#4338CA',color:'#fff',border:'none',borderRadius:6,fontSize:11,fontWeight:600,cursor:'pointer',whiteSpace:'nowrap'}}>Create</button>
             </div>}
           </div>
           <div><label style={{display:'block',fontSize:12,fontWeight:600,color:'#4A5568',marginBottom:6}}>Remark</label><textarea value={newOrder.remark} onChange={e=>setNewOrder(p=>({...p,remark:e.target.value}))} rows={2} style={{width:'100%',resize:'vertical'}}/></div>
@@ -4093,7 +4087,7 @@ if(scheduledNotifs.emailEnabled){                    addNotifEntry({id:'N-'+Date
               <input type="number" min="0" max={selectedOrder.quantity||0} value={selectedOrder.qtyReceived||0} onChange={e=>{
                 const val = parseInt(e.target.value)||0;
                 const newBackOrder = val - selectedOrder.quantity;
-                const newStatus = val >= selectedOrder.quantity ? 'Received' : val > 0 ? 'Back Order' : 'Pending';
+                const newStatus = val >= selectedOrder.quantity ? 'Received' : val > 0 ? 'Back Order' : 'Approved';
                 const updatedOrder = {...selectedOrder, qtyReceived: val, backOrder: newBackOrder, status: newStatus, arrivalDate: val > 0 ? (selectedOrder.arrivalDate || new Date().toISOString().slice(0,10)) : selectedOrder.arrivalDate};
                 const updatedOrders = orders.map(o=>o.id===selectedOrder.id ? updatedOrder : o);
                 setOrders(updatedOrders);
