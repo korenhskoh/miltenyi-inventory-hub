@@ -13,6 +13,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@vitejs/plugin-react": "^4.2.1",
     "@whiskeysockets/baileys": "^6.7.9",
     "bcryptjs": "^2.4.3",
     "cors": "^2.8.5",
@@ -27,11 +28,10 @@
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "recharts": "^2.10.4",
+    "vite": "^5.0.10",
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
-    "@vitejs/plugin-react": "^4.2.1",
-    "vite": "^5.0.10",
     "vitest": "^4.0.18"
   },
   "engines": {

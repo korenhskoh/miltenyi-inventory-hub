@@ -2,6 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
+import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import makeWASocket, { DisconnectReason, fetchLatestBaileysVersion } from '@whiskeysockets/baileys';
@@ -442,12 +443,21 @@ app.get('/api/health', (req, res) => {
 
 // ============ STATIC FILE SERVING ============
 const distPath = path.join(__dirname, '..', 'dist');
-app.use(express.static(distPath));
-
-// SPA fallback — all non-API routes serve index.html
-app.get('*', (req, res) => {
-  res.sendFile(path.join(distPath, 'index.html'));
-});
+const distExists = fs.existsSync(distPath);
+if (distExists) {
+  app.use(express.static(distPath));
+  // SPA fallback — all non-API routes serve index.html
+  app.get('*', (req, res) => {
+    res.sendFile(path.join(distPath, 'index.html'));
+  });
+} else {
+  console.warn('WARNING: dist/ directory not found. Run "npm run build" first. API-only mode.');
+  app.get('*', (req, res) => {
+    if (!req.path.startsWith('/api/')) {
+      res.status(503).send('Frontend not built. Run npm run build.');
+    }
+  });
+}
 
 // ============ START SERVER ============
 async function start() {
