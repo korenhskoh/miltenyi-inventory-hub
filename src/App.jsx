@@ -174,7 +174,7 @@ export default function App() {
   const [selectedPart, setSelectedPart] = useState(null);
 const [selectedUser, setSelectedUser] = useState(null);
   const [selectedBulkGroup, setSelectedBulkGroup] = useState(null);
-  const [expandedMonth, setExpandedMonth] = useState(null);
+  const [expandedBulkGroup, setExpandedBulkGroup] = useState(null);
   const [historyImportData, setHistoryImportData] = useState([]);
   const [historyImportPreview, setHistoryImportPreview] = useState(false);
   const [catalogSearch, setCatalogSearch] = useState('');
@@ -213,6 +213,7 @@ const [selectedUser, setSelectedUser] = useState(null);
   const [selectedBulkForArrival, setSelectedBulkForArrival] = useState(null);
   const [arrivalItems, setArrivalItems] = useState([]);
   const [arrivalStatusFilter, setArrivalStatusFilter] = useState('All');
+  const [arrivalTypeFilter, setArrivalTypeFilter] = useState('All');
   const [pendingArrival, setPendingArrival] = useState({}); // {orderId: {qtyReceived, backOrder}} - keyed-in but not confirmed
   const [arrivalSelected, setArrivalSelected] = useState(new Set()); // selected order IDs for batch confirm
 
@@ -2540,22 +2541,25 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
           <td className="td">
             <div style={{display:'flex',gap:6}}>
               {(hasPermission('editAllBulkOrders')||g.createdBy===currentUser?.name)&&<button onClick={()=>setSelectedBulkGroup({...g})} style={{background:'#2563EB',color:'#fff',border:'none',borderRadius:6,padding:'4px 8px',fontSize:10,cursor:'pointer',display:'flex',alignItems:'center',gap:3}}><Edit3 size={11}/> Edit</button>}
-              <button onClick={()=>setExpandedMonth(expandedMonth===g.month?null:g.month)} style={{background:expandedMonth===g.month?'#064E3B':'#0B7A3E',color:'#fff',border:'none',borderRadius:6,padding:'4px 8px',fontSize:10,cursor:'pointer',display:'flex',alignItems:'center',gap:3}}><Eye size={11}/> {expandedMonth===g.month?'Hide':'View'}</button>
+              <button onClick={()=>setExpandedBulkGroup(expandedBulkGroup===g.id?null:g.id)} style={{background:expandedBulkGroup===g.id?'#064E3B':'#0B7A3E',color:'#fff',border:'none',borderRadius:6,padding:'4px 8px',fontSize:10,cursor:'pointer',display:'flex',alignItems:'center',gap:3}}><Eye size={11}/> {expandedBulkGroup===g.id?'Hide':'View'}</button>
               {hasPermission('deleteBulkOrders')&&<button onClick={()=>{if(window.confirm(`Delete bulk group ${g.id} and its linked orders?`)){const orphaned=orders.filter(o=>o.bulkGroupId===g.id);if(orphaned.length){setOrders(prev=>prev.filter(o=>o.bulkGroupId!==g.id));orphaned.forEach(o=>dbSync(api.deleteOrder(o.id),'Orphaned order delete'));}setBulkGroups(prev=>prev.filter(x=>x.id!==g.id));dbSync(api.deleteBulkGroup(g.id),'Bulk group delete not saved');notify('Deleted',`${g.id} + ${orphaned.length} orders`,'success');}}} style={{background:'#DC2626',color:'#fff',border:'none',borderRadius:6,padding:'4px 8px',fontSize:10,cursor:'pointer',display:'flex',alignItems:'center',gap:3}}><Trash2 size={11}/></button>}
             </div>
           </td>
         </tr>))}</tbody>
     </table>
   </div>
-  {/* Orders grouped by month batch */}
+  {/* Orders grouped by bulk group */}
   <div className="card" style={{padding:'20px 24px',marginTop:16}}>
-    <h3 style={{fontSize:15,fontWeight:600,marginBottom:16}}>Orders by Month Batch <span style={{fontWeight:400,fontSize:12,color:'#64748B'}}>(Click to view orders)</span></h3>
+    <h3 style={{fontSize:15,fontWeight:600,marginBottom:16}}>Orders by Bulk Group <span style={{fontWeight:400,fontSize:12,color:'#64748B'}}>(Click to view orders)</span></h3>
     <div className="grid-4" style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:12}}>
-      {[...new Set(orders.filter(o=>o.bulkGroupId).map(o=>o.month))].slice(0,16).map(month=>{
-        const mo = orders.filter(o=>o.bulkGroupId&&o.month===month);
+      {[...new Set(orders.filter(o=>o.bulkGroupId).map(o=>o.bulkGroupId))].slice(0,16).map(bgId=>{
+        const bg = bulkGroups.find(g=>g.id===bgId);
+        const mo = orders.filter(o=>o.bulkGroupId===bgId);
         const createdByUsers = [...new Set(mo.map(o=>o.orderBy).filter(Boolean))];
-        return <div key={month} onClick={()=>setExpandedMonth(expandedMonth===month?null:month)} style={{padding:14,borderRadius:10,background:expandedMonth===month?'#E6F4ED':'#F8FAFB',border:expandedMonth===month?'2px solid #0B7A3E':'1px solid #E8ECF0',cursor:'pointer',transition:'all 0.2s'}}>
-          <div style={{fontWeight:600,fontSize:12,marginBottom:8,color:'#0B7A3E',display:'flex',alignItems:'center',gap:6}}><Calendar size={12}/> {month}</div>
+        const bgMonth = bg?.month || mo[0]?.month || '—';
+        return <div key={bgId} onClick={()=>setExpandedBulkGroup(expandedBulkGroup===bgId?null:bgId)} style={{padding:14,borderRadius:10,background:expandedBulkGroup===bgId?'#E6F4ED':'#F8FAFB',border:expandedBulkGroup===bgId?'2px solid #0B7A3E':'1px solid #E8ECF0',cursor:'pointer',transition:'all 0.2s'}}>
+          <div style={{fontWeight:600,fontSize:12,marginBottom:4,color:'#4338CA'}}>{bgId}</div>
+          <div style={{fontSize:11,marginBottom:8,color:'#0B7A3E',display:'flex',alignItems:'center',gap:6}}><Calendar size={12}/> {bgMonth}</div>
           <div className="grid-2" style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:4,fontSize:11}}>
             <div>Orders: <strong>{mo.length}</strong></div>
             <div>Qty: <strong>{mo.reduce((s,o)=>s+o.quantity,0)}</strong></div>
@@ -2567,14 +2571,18 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
     </div>
   </div>
 
-  {/* Expanded Month Orders View */}
-  {expandedMonth&&(
+  {/* Expanded Bulk Group Orders View */}
+  {expandedBulkGroup&&(()=>{
+    const bgOrders = orders.filter(o=>o.bulkGroupId===expandedBulkGroup);
+    const bg = bulkGroups.find(g=>g.id===expandedBulkGroup);
+    const bgLabel = `${expandedBulkGroup}${bg?.month ? ' — '+bg.month : ''}`;
+    return (
     <div className="card" style={{padding:'20px 24px',marginTop:16}}>
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:16}}>
-        <h3 style={{fontSize:15,fontWeight:600,display:'flex',alignItems:'center',gap:8}}><Calendar size={16} color="#0B7A3E"/> Orders for: {expandedMonth}</h3>
-        <button onClick={()=>setExpandedMonth(null)} style={{background:'none',border:'none',cursor:'pointer'}}><X size={18} color="#64748B"/></button>
+        <h3 style={{fontSize:15,fontWeight:600,display:'flex',alignItems:'center',gap:8}}><Calendar size={16} color="#0B7A3E"/> Orders for: {bgLabel}</h3>
+        <button onClick={()=>setExpandedBulkGroup(null)} style={{background:'none',border:'none',cursor:'pointer'}}><X size={18} color="#64748B"/></button>
       </div>
-      {hasPermission('deleteOrders')&&(()=>{ const monthOrders = orders.filter(o=>o.bulkGroupId&&(o.month===expandedMonth||o.month===expandedMonth.replace(/ /g,'_')||o.month.replace(/_/g,' ')===expandedMonth)); const monthIds = monthOrders.filter(o=>selOrders.has(o.id)); return monthIds.length>0 ? <BatchBar count={monthIds.length} onClear={()=>setSelOrders(prev=>{const n=new Set(prev);monthOrders.forEach(o=>n.delete(o.id));return n;})}>
+      {hasPermission('deleteOrders')&&(()=>{ const monthIds = bgOrders.filter(o=>selOrders.has(o.id)); return monthIds.length>0 ? <BatchBar count={monthIds.length} onClear={()=>setSelOrders(prev=>{const n=new Set(prev);bgOrders.forEach(o=>n.delete(o.id));return n;})}>
         <BatchBtn onClick={batchApprovalNotifyOrders} bg="#7C3AED" icon={Send}>Order Approval & Notify</BatchBtn>
         <BatchBtn onClick={()=>batchStatusOrders('Pending Approval')} bg="#D97706" icon={Clock}>Pending Approval</BatchBtn>
         <BatchBtn onClick={()=>batchStatusOrders('Approved')} bg="#2563EB" icon={Check}>Approved</BatchBtn>
@@ -2584,8 +2592,8 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
         <BatchBtn onClick={batchDeleteOrders} bg="#DC2626" icon={Trash2}>Delete</BatchBtn>
       </BatchBar> : null; })()}
       <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
-        <thead><tr style={{background:'#F8FAFB'}}>{hasPermission('deleteOrders')&&<th className="th" style={{width:36}}>{(()=>{const mo=orders.filter(o=>o.bulkGroupId&&(o.month===expandedMonth||o.month===expandedMonth.replace(/ /g,'_')||o.month.replace(/_/g,' ')===expandedMonth));return <SelBox checked={mo.length>0&&mo.every(o=>selOrders.has(o.id))} onChange={()=>{const mo2=orders.filter(o=>o.bulkGroupId&&(o.month===expandedMonth||o.month===expandedMonth.replace(/ /g,'_')||o.month.replace(/_/g,' ')===expandedMonth));const ids=mo2.map(o=>o.id);setSelOrders(prev=>{const n=new Set(prev);const allSel=ids.every(id=>prev.has(id));ids.forEach(id=>allSel?n.delete(id):n.add(id));return n;});}}/>;})()}</th>}{['Order ID','Material No','Description','Qty','Unit Price','Total','Ordered By','Order Date','Status','Actions'].map(h=><th key={h} className="th">{h}</th>)}</tr></thead>
-        <tbody>{orders.filter(o=>o.bulkGroupId&&(o.month===expandedMonth||o.month===expandedMonth.replace(/ /g,'_')||o.month.replace(/_/g,' ')===expandedMonth)).map(o=>(
+        <thead><tr style={{background:'#F8FAFB'}}>{hasPermission('deleteOrders')&&<th className="th" style={{width:36}}>{(()=>{return <SelBox checked={bgOrders.length>0&&bgOrders.every(o=>selOrders.has(o.id))} onChange={()=>{const ids=bgOrders.map(o=>o.id);setSelOrders(prev=>{const n=new Set(prev);const allSel=ids.every(id=>prev.has(id));ids.forEach(id=>allSel?n.delete(id):n.add(id));return n;});}}/>;})()}</th>}{['Order ID','Material No','Description','Qty','Unit Price','Total','Ordered By','Order Date','Status','Actions'].map(h=><th key={h} className="th">{h}</th>)}</tr></thead>
+        <tbody>{bgOrders.map(o=>(
           <tr key={o.id} className="tr" onClick={()=>openOrderInNewTab(o)} style={{borderBottom:'1px solid #F7FAFC',cursor:'pointer',background:selOrders.has(o.id)?'#E6F4ED':'#fff'}}>
             {hasPermission('deleteOrders')&&<td className="td" onClick={e=>e.stopPropagation()}><SelBox checked={selOrders.has(o.id)} onChange={()=>toggleSel(selOrders,setSelOrders,o.id)}/></td>}
             <td className="td mono" style={{fontSize:11,fontWeight:600,color:'#4338CA'}}>{o.id}</td>
@@ -2607,12 +2615,12 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
           </tr>))}</tbody>
       </table>
       <div style={{marginTop:12,padding:12,background:'#F8FAFB',borderRadius:8,fontSize:12}}>
-        <strong>Summary:</strong> {orders.filter(o=>o.bulkGroupId&&(o.month===expandedMonth||o.month===expandedMonth.replace(/ /g,'_')||o.month.replace(/_/g,' ')===expandedMonth)).length} orders |
-        Total Qty: {orders.filter(o=>o.bulkGroupId&&(o.month===expandedMonth||o.month===expandedMonth.replace(/ /g,'_')||o.month.replace(/_/g,' ')===expandedMonth)).reduce((s,o)=>s+o.quantity,0)} |
-        Total Cost: <strong className="mono">{fmt(orders.filter(o=>o.bulkGroupId&&(o.month===expandedMonth||o.month===expandedMonth.replace(/ /g,'_')||o.month.replace(/_/g,' ')===expandedMonth)).reduce((s,o)=>{const cp=catalogLookup[o.materialNo];const price=cp?(cp.sg||cp.tp||cp.dist||0):o.listPrice;return s+(price>0?price*o.quantity:o.totalCost);},0))}</strong>
+        <strong>Summary:</strong> {bgOrders.length} orders |
+        Total Qty: {bgOrders.reduce((s,o)=>s+o.quantity,0)} |
+        Total Cost: <strong className="mono">{fmt(bgOrders.reduce((s,o)=>{const cp=catalogLookup[o.materialNo];const price=cp?(cp.sg||cp.tp||cp.dist||0):o.listPrice;return s+(price>0?price*o.quantity:o.totalCost);},0))}</strong>
       </div>
-    </div>
-  )}
+    </div>);
+  })()}
 </div>)}
 
 {/* ═══════════ ANALYTICS ═══════════ */}
@@ -3288,7 +3296,9 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
   {/* All Orders - Arrival Status (approved orders only) */}
   {(()=>{
     const statusTabs = ['All','Approved','Back Order','Received'];
-    const approvedOrders = orders.filter(o=>o.approvalStatus==='approved'&&(arrivalMonthFilter==='All'||o.month===arrivalMonthFilter));
+    const typeTabs = ['All','Bulk','Single'];
+    const approvedAll = orders.filter(o=>o.approvalStatus==='approved'&&(arrivalMonthFilter==='All'||o.month===arrivalMonthFilter));
+    const approvedOrders = arrivalTypeFilter==='Bulk' ? approvedAll.filter(o=>o.bulkGroupId) : arrivalTypeFilter==='Single' ? approvedAll.filter(o=>!o.bulkGroupId) : approvedAll;
     const arrivalFiltered = arrivalStatusFilter==='All' ? approvedOrders : approvedOrders.filter(o=>o.status===arrivalStatusFilter);
     // Sort: Back Order first, then Pending, then others
     const statusPriority = {'Back Order':0,'Pending Approval':1,'Approved':2,'Rejected':3,'Received':4};
@@ -3303,6 +3313,12 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
             <span style={{fontSize:11,color:'#94A3B8'}}>{arrivalSorted.length} of {approvedOrders.length} approved orders</span>
           </div>
         </div>
+        <div style={{display:'flex',gap:6,flexWrap:'wrap',marginBottom:8}}>
+          {typeTabs.map(t=>{
+            const cnt = t==='All'?approvedAll.length:t==='Bulk'?approvedAll.filter(o=>o.bulkGroupId).length:approvedAll.filter(o=>!o.bulkGroupId).length;
+            return <button key={t} onClick={()=>setArrivalTypeFilter(t)} style={{padding:'5px 12px',borderRadius:20,border:arrivalTypeFilter===t?'none':'1px solid #E2E8F0',background:arrivalTypeFilter===t?(t==='Bulk'?'#DBEAFE':t==='Single'?'#FEF3C7':'#1E293B'):'#fff',color:arrivalTypeFilter===t?(t==='Bulk'?'#2563EB':t==='Single'?'#D97706':'#fff'):'#64748B',fontSize:11,fontWeight:600,cursor:'pointer'}}>{t} ({cnt})</button>;
+          })}
+        </div>
         <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
           {statusTabs.map(s=>{
             const cnt = s==='All'?approvedOrders.length:approvedOrders.filter(o=>o.status===s).length;
@@ -3312,9 +3328,10 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
       </div>
       <div style={{maxHeight:500,overflowY:'auto'}}>
         <table style={{width:'100%',borderCollapse:'collapse',fontSize:12.5}}>
-          <thead><tr style={{background:'#F8FAFB',position:'sticky',top:0,zIndex:1}}>{['Order ID','Material','Description','Ordered','Recv','B/O','Arrival Date','Status'].map(h=><th key={h} className="th">{h}</th>)}</tr></thead>
-          <tbody>{arrivalSorted.length===0?<tr><td colSpan={8} style={{padding:24,textAlign:'center',color:'#94A3B8',fontSize:13}}>No orders with status "{arrivalStatusFilter}"</td></tr>:arrivalSorted.map((o,i)=><tr key={o.id} className="tr" style={{borderBottom:'1px solid #F7FAFC',background:i%2===0?'#fff':'#FCFCFD'}}>
+          <thead><tr style={{background:'#F8FAFB',position:'sticky',top:0,zIndex:1}}>{['Order ID','Type','Material','Description','Ordered','Recv','B/O','Arrival Date','Status'].map(h=><th key={h} className="th">{h}</th>)}</tr></thead>
+          <tbody>{arrivalSorted.length===0?<tr><td colSpan={9} style={{padding:24,textAlign:'center',color:'#94A3B8',fontSize:13}}>No orders with status "{arrivalStatusFilter}"</td></tr>:arrivalSorted.map((o,i)=><tr key={o.id} className="tr" style={{borderBottom:'1px solid #F7FAFC',background:i%2===0?'#fff':'#FCFCFD'}}>
             <td className="td mono" style={{fontSize:11,fontWeight:500,color:'#475569'}}>{o.id}</td>
+            <td className="td">{o.bulkGroupId?<Pill bg="#DBEAFE" color="#2563EB" style={{fontSize:10}}>{o.bulkGroupId}</Pill>:<Pill bg="#FEF3C7" color="#D97706" style={{fontSize:10}}>Single</Pill>}</td>
             <td className="td mono" style={{fontSize:11,color:'#0B7A3E',fontWeight:500}}>{o.materialNo||'—'}</td>
             <td className="td" style={{maxWidth:200,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{o.description}</td>
             <td className="td" style={{fontWeight:600,textAlign:'center'}}>{o.quantity}</td>
