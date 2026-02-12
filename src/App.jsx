@@ -393,10 +393,12 @@ const [selectedUser, setSelectedUser] = useState(null);
   // ── Stats ──
   const stats = useMemo(() => {
     const t=orders.length, r=orders.filter(o=>o.status==='Received').length, b=orders.filter(o=>o.status==='Back Order').length;
-    const p=orders.filter(o=>o.status==='Pending Approval'||o.status==='Approved').length;
-    const tc=orders.reduce((s,o)=>s+(Number(o.totalCost)||0),0), tq=orders.reduce((s,o)=>s+(Number(o.quantity)||0),0), tr=orders.reduce((s,o)=>s+(Number(o.qtyReceived)||0),0);
-    return { total:t, received:r, backOrder:b, pending:p, totalCost:tc, fulfillmentRate: tq>0?((tr/tq)*100).toFixed(1):0 };
-  }, [orders]);
+    const pa=orders.filter(o=>o.status==='Pending Approval').length, ap=orders.filter(o=>o.status==='Approved').length;
+    const rej=orders.filter(o=>o.status==='Rejected').length;
+    const tc=orders.reduce((s,o)=>{const cp=catalogLookup[o.materialNo];const price=cp?(cp.sg||cp.tp||cp.dist||0):Number(o.listPrice)||0;return s+(price>0?price*o.quantity:(Number(o.totalCost)||0));},0);
+    const tq=orders.reduce((s,o)=>s+(Number(o.quantity)||0),0), tr=orders.reduce((s,o)=>s+(Number(o.qtyReceived)||0),0);
+    return { total:t, received:r, backOrder:b, pendingApproval:pa, approved:ap, rejected:rej, pending:pa+ap, totalCost:tc, fulfillmentRate: tq>0?((tr/tq)*100).toFixed(1):0 };
+  }, [orders, catalogLookup]);
   const singleOrderMonths = useMemo(() => [...new Set(orders.filter(o=>!o.bulkGroupId).map(o=>o.month).filter(Boolean))].sort(), [orders]);
   const filteredOrders = useMemo(() => orders.filter(o => {
     if (o.bulkGroupId) return false;
@@ -408,16 +410,17 @@ const [selectedUser, setSelectedUser] = useState(null);
     const monthMap = {};
     orders.forEach(o => {
       if (!o.month) return;
-      // Normalize month key: strip prefixes like "2_", replace underscores with spaces
       const norm = o.month.replace(/^\d+_/,'').replace(/_/g,' ');
-      // Extract short month name for display (e.g. "Feb 2026" → "Feb '26")
       const parts = norm.split(' ');
       const shortLabel = parts.length >= 2 ? `${parts[0].slice(0,3)} '${parts[1].slice(2)}` : norm;
-      if (!monthMap[shortLabel]) monthMap[shortLabel] = {name:shortLabel, orders:0, cost:0, received:0, backOrder:0, _sortKey:norm};
+      if (!monthMap[shortLabel]) monthMap[shortLabel] = {name:shortLabel, orders:0, cost:0, received:0, backOrder:0, pending:0, approved:0, _sortKey:norm};
       monthMap[shortLabel].orders++;
-      monthMap[shortLabel].cost += (Number(o.totalCost)||0);
+      const cp=catalogLookup[o.materialNo];const price=cp?(cp.sg||cp.tp||cp.dist||0):Number(o.listPrice)||0;
+      monthMap[shortLabel].cost += (price>0?price*(Number(o.quantity)||0):(Number(o.totalCost)||0));
       if (o.status==='Received') monthMap[shortLabel].received++;
       if (o.status==='Back Order') monthMap[shortLabel].backOrder++;
+      if (o.status==='Pending Approval') monthMap[shortLabel].pending++;
+      if (o.status==='Approved') monthMap[shortLabel].approved++;
     });
     // Sort chronologically
     const monthOrder = {jan:0,feb:1,mar:2,apr:3,may:4,jun:5,jul:6,aug:7,sep:8,oct:9,nov:10,dec:11};
@@ -426,8 +429,8 @@ const [selectedUser, setSelectedUser] = useState(null);
       const [bm,by] = b._sortKey.toLowerCase().split(' ');
       return (parseInt(ay)||0) - (parseInt(by)||0) || (monthOrder[am?.slice(0,3)]||0) - (monthOrder[bm?.slice(0,3)]||0);
     });
-  }, [orders]);
-  const statusPieData = useMemo(() => [{name:'Received',value:stats.received,color:'#0B7A3E'},{name:'Back Order',value:stats.backOrder,color:'#C53030'},{name:'In Progress',value:stats.pending,color:'#2563EB'}], [stats]);
+  }, [orders, catalogLookup]);
+  const statusPieData = useMemo(() => [{name:'Received',value:stats.received,color:'#0B7A3E'},{name:'Back Order',value:stats.backOrder,color:'#DC2626'},{name:'Approved',value:stats.approved,color:'#2563EB'},{name:'Pending Approval',value:stats.pendingApproval,color:'#D97706'},{name:'Rejected',value:stats.rejected,color:'#991B1B'}].filter(s=>s.value>0), [stats]);
   const allOrdersMonths = useMemo(() => [...new Set([...orders.map(o=>o.month),...bulkGroups.map(g=>g.month)].filter(Boolean))].sort(), [orders, bulkGroups]);
   const allOrdersCombined = useMemo(() => {
     let combined = orders.map(o=>({...o, orderType: o.bulkGroupId ? 'Bulk' : 'Single'}));
@@ -437,9 +440,9 @@ const [selectedUser, setSelectedUser] = useState(null);
     return combined;
   }, [orders, allOrdersTypeFilter, allOrdersMonth, allOrdersStatus]);
   const topItems = useMemo(() => {
-    const m={}; orders.forEach(o=>{if(!m[o.description])m[o.description]={name:o.description.length>30?o.description.slice(0,30)+'...':o.description,qty:0,cost:0};m[o.description].qty+=(Number(o.quantity)||0);m[o.description].cost+=(Number(o.totalCost)||0);});
+    const m={}; orders.forEach(o=>{if(!m[o.description])m[o.description]={name:o.description.length>30?o.description.slice(0,30)+'...':o.description,qty:0,cost:0};const cp=catalogLookup[o.materialNo];const price=cp?(cp.sg||cp.tp||cp.dist||0):Number(o.listPrice)||0;m[o.description].qty+=(Number(o.quantity)||0);m[o.description].cost+=(price>0?price*(Number(o.quantity)||0):(Number(o.totalCost)||0));});
     return Object.values(m).sort((a,b)=>b.cost-a.cost).slice(0,8);
-  }, [orders]);
+  }, [orders, catalogLookup]);
   const catPriceData = useMemo(() => Object.entries(CATEGORIES).map(([k,c])=>{const i=partsCatalog.filter(p=>p.c===k);if(!i.length)return null;return{name:c.short,sg:Math.round(i.reduce((s,p)=>s+p.sg,0)/i.length),dist:Math.round(i.reduce((s,p)=>s+p.dist,0)/i.length),count:i.length,color:c.color};}).filter(Boolean),[partsCatalog]);
   const catalogStats = useMemo(()=>{const t=partsCatalog.length;const cc={};partsCatalog.forEach(p=>{cc[p.c]=(cc[p.c]||0)+1;});return{total:t,avgSg:partsCatalog.reduce((s,p)=>s+p.sg,0)/t,avgDist:partsCatalog.reduce((s,p)=>s+p.dist,0)/t,catCounts:cc};},[partsCatalog]);
 
@@ -488,24 +491,29 @@ const [selectedUser, setSelectedUser] = useState(null);
     orders.forEach(o => {
       const key = o.materialNo || o.description;
       if (!m[key]) m[key] = { name: (o.description||key).length > 25 ? (o.description||key).slice(0,25)+'...' : (o.description||key), materialNo: o.materialNo, qty: 0, cost: 0, orderCount: 0 };
+      const cp=catalogLookup[o.materialNo];const price=cp?(cp.sg||cp.tp||cp.dist||0):Number(o.listPrice)||0;
       m[key].qty += (Number(o.quantity)||0);
-      m[key].cost += (Number(o.totalCost)||0);
+      m[key].cost += (price>0?price*(Number(o.quantity)||0):(Number(o.totalCost)||0));
       m[key].orderCount++;
     });
     return Object.values(m).sort((a,b) => b.orderCount - a.orderCount).slice(0, 10);
-  }, [orders]);
+  }, [orders, catalogLookup]);
 
   const categorySpendData = useMemo(() => {
     const catMap = {};
     orders.forEach(o => {
-      const cat = partsCatalog.find(p => p.m === o.materialNo);
+      const cp=catalogLookup[o.materialNo];
+      const cat = cp ? cp : null;
       const catName = cat ? (CATEGORIES[cat.c]?.short || cat.c || 'Unknown') : 'Unknown';
-      if (!catMap[catName]) catMap[catName] = { name: catName, value: 0, count: 0, color: cat ? (CATEGORIES[cat.c]?.color || '#94A3B8') : '#94A3B8' };
-      catMap[catName].value += (Number(o.totalCost)||0);
+      const catColor = cat ? (CATEGORIES[cat.c]?.color || '#94A3B8') : '#94A3B8';
+      if (!catMap[catName]) catMap[catName] = { name: catName, value: 0, count: 0, qty: 0, color: catColor };
+      const price=cp?(cp.sg||cp.tp||cp.dist||0):Number(o.listPrice)||0;
+      catMap[catName].value += (price>0?price*(Number(o.quantity)||0):(Number(o.totalCost)||0));
+      catMap[catName].qty += (Number(o.quantity)||0);
       catMap[catName].count++;
     });
     return Object.values(catMap).sort((a,b) => b.value - a.value);
-  }, [orders, partsCatalog]);
+  }, [orders, catalogLookup]);
 
   // ── New Order ──
   
@@ -872,8 +880,9 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
   const batchStatusOrders = (status) => {
     if (!selOrders.size) return;
     const ids = [...selOrders];
-    setOrders(prev => prev.map(o => selOrders.has(o.id) ? { ...o, status } : o));
-    dbSync(api.bulkUpdateOrderStatus(ids, status), 'Order status update not saved');
+    const approvalStatus = status === 'Approved' ? 'approved' : status === 'Rejected' ? 'rejected' : undefined;
+    setOrders(prev => prev.map(o => selOrders.has(o.id) ? { ...o, status, ...(approvalStatus ? { approvalStatus } : {}) } : o));
+    dbSync(api.bulkUpdateOrderStatus(ids, status, approvalStatus), 'Order status update not saved');
     notify('Batch Update', `${ids.length} orders → ${status}`, 'success');
     setSelOrders(new Set());
   };
@@ -1442,7 +1451,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
       const matNo = priceMatch ? (priceMatch[1] || priceMatch[2]) : null;
       if (matNo && catalogLookupLocal[matNo]) {
         const p = catalogLookupLocal[matNo];
-        return { type: "price", text: `📦 **${p.d}** (${matNo})\n\n💰 **Prices (${priceConfig.year}):**\n• SG Price: ${fmt(p.sg)}\n• Distributor: ${fmt(p.dist)}\n• Transfer: ${fmt(p.tp)}\n\nWould you like to place an order?` };
+        return { type: "price", text: `📦 **${p.d}** (${matNo})\n\n💰 **Prices (${priceConfig.year}):**\n• Unit Price: ${fmt(p.sg)}\n• Distributor: ${fmt(p.dist)}\n• Transfer: ${fmt(p.tp)}\n\nWould you like to place an order?` };
       }
       if (matNo) return { type: "not_found", text: `I couldn't find part number **${matNo}** in the catalog. Please verify the material number.` };
       return { type: "prompt", text: "Please provide a material number (e.g., 130-095-005) to check the price." };
@@ -2296,7 +2305,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
     ))}
   </div>
   <div className="grid-2" style={{display:'grid',gridTemplateColumns:'2fr 1fr',gap:16,marginBottom:24}}>
-    <div className="card" style={{padding:'20px 24px'}}><div style={{display:'flex',justifyContent:'space-between',marginBottom:16}}><h3 style={{fontSize:15,fontWeight:600}}>Monthly Trends</h3><span style={{fontSize:11,color:'#94A3B8'}}>Feb 2025 — Jan 2026</span></div>
+    <div className="card" style={{padding:'20px 24px'}}><div style={{display:'flex',justifyContent:'space-between',marginBottom:16}}><h3 style={{fontSize:15,fontWeight:600}}>Monthly Trends</h3><span style={{fontSize:11,color:'#94A3B8'}}>{monthlyData.length>0?`${monthlyData[0].name} — ${monthlyData[monthlyData.length-1].name}`:''}</span></div>
       <ResponsiveContainer width="100%" height={250}><AreaChart data={monthlyData}><defs><linearGradient id="g1" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#0B7A3E" stopOpacity={.15}/><stop offset="95%" stopColor="#0B7A3E" stopOpacity={0}/></linearGradient><linearGradient id="g2" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#DC2626" stopOpacity={.15}/><stop offset="95%" stopColor="#DC2626" stopOpacity={0}/></linearGradient></defs><CartesianGrid strokeDasharray="3 3" stroke="#F0F2F5"/><XAxis dataKey="name" tick={{fontSize:11,fill:'#94A3B8'}} axisLine={false} tickLine={false}/><YAxis tick={{fontSize:11,fill:'#94A3B8'}} axisLine={false} tickLine={false}/><Tooltip contentStyle={{borderRadius:10,border:'none',fontSize:12}}/><Area type="monotone" dataKey="received" stroke="#0B7A3E" fillOpacity={1} fill="url(#g1)" name="Received" strokeWidth={2}/><Area type="monotone" dataKey="backOrder" stroke="#DC2626" fillOpacity={1} fill="url(#g2)" name="Back Order" strokeWidth={2}/></AreaChart></ResponsiveContainer>
     </div>
     <div className="card" style={{padding:'20px 24px'}}><h3 style={{fontSize:15,fontWeight:600,marginBottom:16}}>Status</h3>
@@ -2306,14 +2315,14 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
   </div>
   <div className="grid-2" style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16}}>
     <div className="card" style={{padding:'20px 24px'}}><h3 style={{fontSize:15,fontWeight:600,marginBottom:16}}>Top Items by Cost</h3><ResponsiveContainer width="100%" height={260}><BarChart data={topItems} layout="vertical" margin={{left:140}}><CartesianGrid strokeDasharray="3 3" stroke="#F0F2F5" horizontal={false}/><XAxis type="number" tick={{fontSize:10,fill:'#94A3B8'}} axisLine={false} tickLine={false} tickFormatter={v=>`$${(v/1000).toFixed(0)}k`}/><YAxis type="category" dataKey="name" tick={{fontSize:10,fill:'#4A5568'}} axisLine={false} tickLine={false} width={135}/><Tooltip formatter={v=>fmt(v)} contentStyle={{borderRadius:10,border:'none',fontSize:12}}/><Bar dataKey="cost" fill="#0B7A3E" radius={[0,6,6,0]} barSize={16}/></BarChart></ResponsiveContainer></div>
-    <div className="card" style={{padding:'20px 24px'}}><h3 style={{fontSize:15,fontWeight:600,marginBottom:16}}>Avg Price: SG vs Distributor</h3><ResponsiveContainer width="100%" height={260}><BarChart data={catPriceData}><CartesianGrid strokeDasharray="3 3" stroke="#F0F2F5"/><XAxis dataKey="name" tick={{fontSize:10,fill:'#94A3B8'}} axisLine={false} tickLine={false}/><YAxis tick={{fontSize:10,fill:'#94A3B8'}} axisLine={false} tickLine={false} tickFormatter={v=>`$${(v/1000).toFixed(0)}k`}/><Tooltip formatter={v=>fmt(v)} contentStyle={{borderRadius:10,border:'none',fontSize:12}}/><Bar dataKey="sg" name="Singapore" fill="#0B7A3E" radius={[4,4,0,0]} barSize={14}/><Bar dataKey="dist" name="Distributor" fill="#2563EB" radius={[4,4,0,0]} barSize={14}/><Legend iconSize={10} wrapperStyle={{fontSize:11}}/></BarChart></ResponsiveContainer></div>
+    <div className="card" style={{padding:'20px 24px'}}><h3 style={{fontSize:15,fontWeight:600,marginBottom:16}}>Avg Price: Unit Price vs Distributor</h3><ResponsiveContainer width="100%" height={260}><BarChart data={catPriceData}><CartesianGrid strokeDasharray="3 3" stroke="#F0F2F5"/><XAxis dataKey="name" tick={{fontSize:10,fill:'#94A3B8'}} axisLine={false} tickLine={false}/><YAxis tick={{fontSize:10,fill:'#94A3B8'}} axisLine={false} tickLine={false} tickFormatter={v=>`$${(v/1000).toFixed(0)}k`}/><Tooltip formatter={v=>fmt(v)} contentStyle={{borderRadius:10,border:'none',fontSize:12}}/><Bar dataKey="sg" name="Unit Price" fill="#0B7A3E" radius={[4,4,0,0]} barSize={14}/><Bar dataKey="dist" name="Distributor" fill="#2563EB" radius={[4,4,0,0]} barSize={14}/><Legend iconSize={10} wrapperStyle={{fontSize:11}}/></BarChart></ResponsiveContainer></div>
   </div>
 </div>)}
 
 {/* ═══════════ CATALOG ═══════════ */}
 {page==='catalog'&&(<div>
   <div className="grid-4" style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:14,marginBottom:20}}>
-    {[{l:'Total Parts',v:fmtNum(catalogStats.total),i:Database,c:'#4338CA'},{l:'Avg SG',v:fmt(catalogStats.avgSg),i:DollarSign,c:'#0B7A3E'},{l:'Avg Dist',v:fmt(catalogStats.avgDist),i:Tag,c:'#2563EB'},{l:'Categories',v:Object.keys(catalogStats.catCounts).length,i:Archive,c:'#D97706'}].map((s,i)=>(
+    {[{l:'Total Parts',v:fmtNum(catalogStats.total),i:Database,c:'#4338CA'},{l:'Avg Unit Price',v:fmt(catalogStats.avgSg),i:DollarSign,c:'#0B7A3E'},{l:'Avg Dist',v:fmt(catalogStats.avgDist),i:Tag,c:'#2563EB'},{l:'Categories',v:Object.keys(catalogStats.catCounts).length,i:Archive,c:'#D97706'}].map((s,i)=>(
       <div key={i} className="card" style={{padding:'16px 20px'}}><div style={{display:'flex',justifyContent:'space-between'}}><div><div style={{fontSize:11,color:'#94A3B8',textTransform:'uppercase',letterSpacing:.5,marginBottom:4}}>{s.l}</div><div className="mono" style={{fontSize:22,fontWeight:700,color:s.c}}>{s.v}</div></div><div style={{padding:10,background:`${s.c}10`,borderRadius:10}}><s.i size={18} color={s.c}/></div></div></div>
     ))}
   </div>
@@ -2325,7 +2334,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
   <div className="card" style={{overflow:'hidden'}}><div className="table-wrap" style={{overflowX:'auto'}}><table style={{width:'100%',borderCollapse:'collapse',fontSize:12.5}}>
     <thead><tr style={{background:'#F8FAFB'}}>
       <th className="th" style={{width:120}}>Material No.</th><th className="th">Description</th><th className="th" style={{width:120}}>Category</th>
-      {[{k:'tp',l:'Transfer'},{k:'sg',l:'SG Price'},{k:'dist',l:'Dist Price'}].map(h=><th key={h.k} className="th" style={{width:110,textAlign:'right',cursor:'pointer'}} onClick={()=>setCatalogSort(s=>({key:h.k,dir:s.key===h.k&&s.dir==='desc'?'asc':'desc'}))}>{h.l} {catalogSort.key===h.k?(catalogSort.dir==='desc'?'↓':'↑'):''}</th>)}
+      {[{k:'tp',l:'Transfer'},{k:'sg',l:'Unit Price'},{k:'dist',l:'Dist Price'}].map(h=><th key={h.k} className="th" style={{width:110,textAlign:'right',cursor:'pointer'}} onClick={()=>setCatalogSort(s=>({key:h.k,dir:s.key===h.k&&s.dir==='desc'?'asc':'desc'}))}>{h.l} {catalogSort.key===h.k?(catalogSort.dir==='desc'?'↓':'↑'):''}</th>)}
       <th className="th" style={{width:70,textAlign:'right'}}>Margin</th>
     </tr></thead>
     <tbody>{catalog.slice(catalogPage*PAGE_SIZE,(catalogPage+1)*PAGE_SIZE).map((p,i)=>{const margin=p.singaporePrice>0?((p.singaporePrice-p.distributorPrice)/p.singaporePrice*100).toFixed(1):0;const cc=CATEGORIES[p.category];return(
@@ -2358,7 +2367,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
       {l:'Total Orders',v:allOrdersCombined.length,i:Package,c:'#0B7A3E',bg:'linear-gradient(135deg,#006837,#0B9A4E)'},
       {l:'Single Orders',v:allOrdersCombined.filter(o=>o.orderType==='Single').length,i:Package,c:'#2563EB',bg:'linear-gradient(135deg,#1E40AF,#3B82F6)'},
       {l:'Bulk Orders',v:allOrdersCombined.filter(o=>o.orderType==='Bulk').length,i:Layers,c:'#7C3AED',bg:'linear-gradient(135deg,#5B21B6,#7C3AED)'},
-      {l:'Total Value',v:fmt(allOrdersCombined.reduce((s,o)=>s+(Number(o.totalCost)||0),0)),i:DollarSign,c:'#D97706',bg:'linear-gradient(135deg,#92400E,#D97706)'}
+      {l:'Total Value',v:fmt(allOrdersCombined.reduce((s,o)=>{const cp=catalogLookup[o.materialNo];const price=cp?(cp.sg||cp.tp||cp.dist||0):Number(o.listPrice)||0;return s+(price>0?price*o.quantity:(Number(o.totalCost)||0));},0)),i:DollarSign,c:'#D97706',bg:'linear-gradient(135deg,#92400E,#D97706)'}
     ].map((s,i)=>(
       <div key={i} style={{background:s.bg,borderRadius:12,padding:'20px 22px',color:'#fff'}}>
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start'}}>
@@ -2397,15 +2406,16 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
       <span style={{fontSize:11,color:'#94A3B8'}}>{allOrdersCombined.length} results</span>
     </div>
     <div className="table-wrap" style={{overflowX:'auto'}}><table style={{width:'100%',borderCollapse:'collapse',fontSize:12.5}}>
-      <thead><tr style={{background:'#F8FAFB'}}>{['Type','ID','Material / Items','Description','Qty','Total Cost','By','Date','Status'].map(h=><th key={h} className="th" style={{whiteSpace:'nowrap'}}>{h}</th>)}</tr></thead>
-      <tbody>{allOrdersCombined.length===0?<tr><td colSpan={9} style={{textAlign:'center',padding:40,color:'#94A3B8',fontSize:13}}>No orders match the selected filters</td></tr>:allOrdersCombined.map((o,i)=>(
+      <thead><tr style={{background:'#F8FAFB'}}>{['Type','ID','Material / Items','Description','Qty','Unit Price','Total','By','Date','Status'].map(h=><th key={h} className="th" style={{whiteSpace:'nowrap'}}>{h}</th>)}</tr></thead>
+      <tbody>{allOrdersCombined.length===0?<tr><td colSpan={10} style={{textAlign:'center',padding:40,color:'#94A3B8',fontSize:13}}>No orders match the selected filters</td></tr>:allOrdersCombined.map((o,i)=>(
         <tr key={o.id} className="tr" style={{borderBottom:'1px solid #F7FAFC',background:i%2===0?'#fff':'#FCFCFD',cursor:'pointer'}} onClick={()=>openOrderInNewTab(o)}>
           <td className="td"><Pill bg={o.orderType==='Single'?'#DBEAFE':'#EDE9FE'} color={o.orderType==='Single'?'#2563EB':'#7C3AED'}>{o.orderType==='Single'?'Single':'Bulk'}</Pill></td>
           <td className="td mono" style={{fontSize:11,fontWeight:600,color:o.orderType==='Single'?'#0B7A3E':'#4338CA'}}>{o.id}</td>
           <td className="td mono" style={{fontSize:11,color:'#64748B'}}>{o.materialNo||'—'}</td>
           <td className="td" style={{maxWidth:220,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{o.description}</td>
           <td className="td" style={{fontWeight:600,textAlign:'center'}}>{o.quantity}</td>
-          <td className="td mono" style={{fontSize:11,fontWeight:600}}>{(Number(o.totalCost)||0)>0?fmt(o.totalCost):'—'}</td>
+          <td className="td mono" style={{fontSize:11}}>{(()=>{const cp=catalogLookup[o.materialNo];const price=cp?(cp.sg||cp.tp||cp.dist||0):o.listPrice;return price>0?fmt(price):'—';})()}</td>
+          <td className="td mono" style={{fontSize:11,fontWeight:600}}>{(()=>{const cp=catalogLookup[o.materialNo];const price=cp?(cp.sg||cp.tp||cp.dist||0):o.listPrice;const total=price>0?price*o.quantity:o.totalCost;return total>0?fmt(total):'—';})()}</td>
           <td className="td" style={{fontSize:11}}>{o.orderBy||'—'}</td>
           <td className="td" style={{color:'#94A3B8',fontSize:11}}>{fmtDate(o.orderDate)}</td>
           <td className="td"><Badge status={o.status}/></td>
@@ -2414,7 +2424,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
     </table></div>
     <div style={{padding:'12px 16px',borderTop:'1px solid #F0F2F5',display:'flex',justifyContent:'space-between',background:'#FCFCFD'}}>
       <span style={{fontSize:12,color:'#94A3B8'}}>{allOrdersCombined.length} orders{allOrdersTypeFilter!=='All'||allOrdersMonth!=='All'||allOrdersStatus!=='All'?' (filtered)':''}</span>
-      <span style={{fontSize:12,fontWeight:500}}>{fmt(allOrdersCombined.reduce((s,o)=>s+(Number(o.totalCost)||0),0))}</span>
+      <span style={{fontSize:12,fontWeight:500}}>{fmt(allOrdersCombined.reduce((s,o)=>{const cp=catalogLookup[o.materialNo];const price=cp?(cp.sg||cp.tp||cp.dist||0):Number(o.listPrice)||0;return s+(price>0?price*o.quantity:(Number(o.totalCost)||0));},0))}</span>
     </div>
   </div>
 
@@ -2466,7 +2476,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
     <BatchBtn onClick={batchDeleteOrders} bg="#DC2626" icon={Trash2}>Delete</BatchBtn>
   </BatchBar>}
   <div className="card" style={{overflow:'hidden'}}><div className="table-wrap" style={{overflowX:'auto'}}><table style={{width:'100%',borderCollapse:'collapse',fontSize:12.5}}>
-    <thead><tr style={{background:'#F8FAFB'}}>{hasPermission('deleteOrders')&&<th className="th" style={{width:36}}><SelBox checked={selOrders.size===filteredOrders.length&&filteredOrders.length>0} onChange={()=>toggleAll(selOrders,setSelOrders,filteredOrders.map(o=>o.id))}/></th>}{['Material No.','Description','Qty','Price','Total','Ordered','By','Status','Actions'].map(h=><th key={h} className="th">{h}</th>)}</tr></thead>
+    <thead><tr style={{background:'#F8FAFB'}}>{hasPermission('deleteOrders')&&<th className="th" style={{width:36}}><SelBox checked={selOrders.size===filteredOrders.length&&filteredOrders.length>0} onChange={()=>toggleAll(selOrders,setSelOrders,filteredOrders.map(o=>o.id))}/></th>}{['Material No.','Description','Qty','Unit Price','Total','Ordered','By','Status','Actions'].map(h=><th key={h} className="th">{h}</th>)}</tr></thead>
     <tbody>{filteredOrders.map((o,i)=>(
       <tr key={o.id} className="tr" style={{borderBottom:'1px solid #F7FAFC',background:selOrders.has(o.id)?'#E6F4ED':i%2===0?'#fff':'#FCFCFD',cursor:'pointer'}} onClick={()=>openOrderInNewTab(o)}>
         {hasPermission('deleteOrders')&&<td className="td" onClick={e=>e.stopPropagation()}><SelBox checked={selOrders.has(o.id)} onChange={()=>toggleSel(selOrders,setSelOrders,o.id)}/></td>}
@@ -2574,7 +2584,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
         <BatchBtn onClick={batchDeleteOrders} bg="#DC2626" icon={Trash2}>Delete</BatchBtn>
       </BatchBar> : null; })()}
       <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
-        <thead><tr style={{background:'#F8FAFB'}}>{hasPermission('deleteOrders')&&<th className="th" style={{width:36}}>{(()=>{const mo=orders.filter(o=>o.bulkGroupId&&(o.month===expandedMonth||o.month===expandedMonth.replace(/ /g,'_')||o.month.replace(/_/g,' ')===expandedMonth));return <SelBox checked={mo.length>0&&mo.every(o=>selOrders.has(o.id))} onChange={()=>{const mo2=orders.filter(o=>o.bulkGroupId&&(o.month===expandedMonth||o.month===expandedMonth.replace(/ /g,'_')||o.month.replace(/_/g,' ')===expandedMonth));const ids=mo2.map(o=>o.id);setSelOrders(prev=>{const n=new Set(prev);const allSel=ids.every(id=>prev.has(id));ids.forEach(id=>allSel?n.delete(id):n.add(id));return n;});}}/>;})()}</th>}{['Order ID','Material No','Description','Qty','Price','Total','Ordered By','Order Date','Status','Actions'].map(h=><th key={h} className="th">{h}</th>)}</tr></thead>
+        <thead><tr style={{background:'#F8FAFB'}}>{hasPermission('deleteOrders')&&<th className="th" style={{width:36}}>{(()=>{const mo=orders.filter(o=>o.bulkGroupId&&(o.month===expandedMonth||o.month===expandedMonth.replace(/ /g,'_')||o.month.replace(/_/g,' ')===expandedMonth));return <SelBox checked={mo.length>0&&mo.every(o=>selOrders.has(o.id))} onChange={()=>{const mo2=orders.filter(o=>o.bulkGroupId&&(o.month===expandedMonth||o.month===expandedMonth.replace(/ /g,'_')||o.month.replace(/_/g,' ')===expandedMonth));const ids=mo2.map(o=>o.id);setSelOrders(prev=>{const n=new Set(prev);const allSel=ids.every(id=>prev.has(id));ids.forEach(id=>allSel?n.delete(id):n.add(id));return n;});}}/>;})()}</th>}{['Order ID','Material No','Description','Qty','Unit Price','Total','Ordered By','Order Date','Status','Actions'].map(h=><th key={h} className="th">{h}</th>)}</tr></thead>
         <tbody>{orders.filter(o=>o.bulkGroupId&&(o.month===expandedMonth||o.month===expandedMonth.replace(/ /g,'_')||o.month.replace(/_/g,' ')===expandedMonth)).map(o=>(
           <tr key={o.id} className="tr" onClick={()=>openOrderInNewTab(o)} style={{borderBottom:'1px solid #F7FAFC',cursor:'pointer',background:selOrders.has(o.id)?'#E6F4ED':'#fff'}}>
             {hasPermission('deleteOrders')&&<td className="td" onClick={e=>e.stopPropagation()}><SelBox checked={selOrders.has(o.id)} onChange={()=>toggleSel(selOrders,setSelOrders,o.id)}/></td>}
@@ -2608,21 +2618,23 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
 {/* ═══════════ ANALYTICS ═══════════ */}
 {page==='analytics'&&(<div>
   {/* Summary Cards */}
-  <div className="grid-4" style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:14,marginBottom:24}}>
+  {(()=>{const avgOrderVal=stats.total>0?stats.totalCost/stats.total:0;const approvalRate=stats.total>0?((stats.received+stats.approved)/(stats.total)*100).toFixed(1):0;const avgLead=leadTimeData.length>0?Math.round(leadTimeData.reduce((s,d)=>s+d.avgDays,0)/leadTimeData.length):null;return(
+  <div style={{display:'grid',gridTemplateColumns:'repeat(5,1fr)',gap:14,marginBottom:24}}>
     {[
-      {l:'Total Orders',v:fmtNum(stats.total),c:'#0B7A3E',bg:'linear-gradient(135deg,#006837,#0B9A4E)',i:Package},
-      {l:'Total Spend',v:fmt(stats.totalCost),c:'#2563EB',bg:'linear-gradient(135deg,#1E40AF,#3B82F6)',i:DollarSign},
-      {l:'Avg Lead Time',v:leadTimeData.length>0?`${Math.round(leadTimeData.reduce((s,d)=>s+d.avgDays,0)/leadTimeData.length)}d`:'—',c:'#D97706',bg:'linear-gradient(135deg,#92400E,#D97706)',i:Clock},
-      {l:'Fulfillment Rate',v:`${stats.fulfillmentRate}%`,c:'#7C3AED',bg:'linear-gradient(135deg,#5B21B6,#7C3AED)',i:TrendingUp}
+      {l:'Total Orders',v:fmtNum(stats.total),sub:`${stats.received} received`,bg:'linear-gradient(135deg,#006837,#0B9A4E)',i:Package},
+      {l:'Total Spend',v:fmt(stats.totalCost),sub:`Avg ${fmt(avgOrderVal)}/order`,bg:'linear-gradient(135deg,#1E40AF,#3B82F6)',i:DollarSign},
+      {l:'Fulfillment',v:`${stats.fulfillmentRate}%`,sub:`${stats.backOrder} back orders`,bg:'linear-gradient(135deg,#5B21B6,#7C3AED)',i:TrendingUp},
+      {l:'Approval Rate',v:`${approvalRate}%`,sub:`${stats.pendingApproval} pending`,bg:'linear-gradient(135deg,#047857,#10B981)',i:CheckCircle},
+      {l:'Avg Lead Time',v:avgLead!=null?`${avgLead} days`:'—',sub:avgLead!=null?`${leadTimeData.length} months tracked`:'No data yet',bg:'linear-gradient(135deg,#92400E,#D97706)',i:Clock}
     ].map((s,i)=>(
       <div key={i} style={{background:s.bg,borderRadius:12,padding:'20px 22px',color:'#fff'}}>
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start'}}>
-          <div><div style={{fontSize:11,opacity:.8,textTransform:'uppercase',letterSpacing:.5,marginBottom:6}}>{s.l}</div><div className="mono" style={{fontSize:24,fontWeight:700}}>{s.v}</div></div>
+          <div><div style={{fontSize:11,opacity:.8,textTransform:'uppercase',letterSpacing:.5,marginBottom:6}}>{s.l}</div><div className="mono" style={{fontSize:24,fontWeight:700}}>{s.v}</div><div style={{fontSize:10,opacity:.7,marginTop:4}}>{s.sub}</div></div>
           <div style={{padding:8,background:'rgba(255,255,255,0.15)',borderRadius:8}}><s.i size={18}/></div>
         </div>
       </div>
     ))}
-  </div>
+  </div>);})()}
 
   {/* Row 1: Monthly Spend + Order Volume */}
   <div className="grid-2" style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16,marginBottom:16}}>
@@ -2636,7 +2648,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
       {statusTrendData.length>0?<ResponsiveContainer width="100%" height={270}><BarChart data={statusTrendData}><CartesianGrid strokeDasharray="3 3" stroke="#F0F2F5"/><XAxis dataKey="name" tick={{fontSize:11,fill:'#94A3B8'}} axisLine={false} tickLine={false}/><YAxis tick={{fontSize:11,fill:'#94A3B8'}} axisLine={false} tickLine={false}/><Tooltip/><Bar dataKey="Received" stackId="a" fill="#0B7A3E" radius={[0,0,0,0]}/><Bar dataKey="Approved" stackId="a" fill="#059669"/><Bar dataKey="Pending Approval" stackId="a" fill="#7C3AED"/><Bar dataKey="Back Order" stackId="a" fill="#DC2626"/><Bar dataKey="Rejected" stackId="a" fill="#F87171" radius={[4,4,0,0]}/></BarChart></ResponsiveContainer>:<div style={{height:270,display:'flex',alignItems:'center',justifyContent:'center',color:'#94A3B8',fontSize:13}}>No data available</div>}
     </div>
     <div className="card" style={{padding:'20px 24px'}}><h3 style={{fontSize:15,fontWeight:600,marginBottom:16}}>Top 10 Ordered Materials</h3>
-      {materialFrequency.length>0?<ResponsiveContainer width="100%" height={270}><BarChart data={materialFrequency} layout="vertical"><CartesianGrid strokeDasharray="3 3" stroke="#F0F2F5"/><XAxis type="number" tick={{fontSize:11,fill:'#94A3B8'}} axisLine={false} tickLine={false}/><YAxis dataKey="name" type="category" width={120} tick={{fontSize:10,fill:'#64748B'}} axisLine={false} tickLine={false}/><Tooltip formatter={(v,n)=>n==='cost'?fmt(v):v}/><Bar dataKey="orderCount" fill="#2563EB" radius={[0,4,4,0]} barSize={16} name="Orders"/></BarChart></ResponsiveContainer>:<div style={{height:270,display:'flex',alignItems:'center',justifyContent:'center',color:'#94A3B8',fontSize:13}}>No data available</div>}
+      {materialFrequency.length>0?<div><ResponsiveContainer width="100%" height={220}><BarChart data={materialFrequency} layout="vertical"><CartesianGrid strokeDasharray="3 3" stroke="#F0F2F5"/><XAxis type="number" tick={{fontSize:11,fill:'#94A3B8'}} axisLine={false} tickLine={false}/><YAxis dataKey="name" type="category" width={120} tick={{fontSize:10,fill:'#64748B'}} axisLine={false} tickLine={false}/><Tooltip formatter={(v,n)=>n==='cost'?fmt(v):v}/><Bar dataKey="orderCount" fill="#2563EB" radius={[0,4,4,0]} barSize={14} name="Orders"/></BarChart></ResponsiveContainer><div style={{display:'flex',flexWrap:'wrap',gap:6,marginTop:8}}>{materialFrequency.slice(0,5).map((m,i)=><div key={i} style={{padding:'4px 10px',borderRadius:6,background:'#EFF6FF',fontSize:10,color:'#2563EB'}}><strong>{m.materialNo}</strong> — {m.qty} units, {fmt(m.cost)}</div>)}</div></div>:<div style={{height:270,display:'flex',alignItems:'center',justifyContent:'center',color:'#94A3B8',fontSize:13}}>No data available</div>}
     </div>
   </div>
 
@@ -2647,12 +2659,12 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
     </div>
     <div className="card" style={{padding:'20px 24px'}}><h3 style={{fontSize:15,fontWeight:600,marginBottom:16}}>Spend by Category</h3>
       {categorySpendData.length>0?<ResponsiveContainer width="100%" height={270}><PieChart><Pie data={categorySpendData} cx="50%" cy="50%" innerRadius={55} outerRadius={85} paddingAngle={3} dataKey="value" strokeWidth={0}>{categorySpendData.map((e,i)=><Cell key={i} fill={e.color}/>)}</Pie><Tooltip formatter={v=>fmt(v)}/></PieChart></ResponsiveContainer>:<div style={{height:270,display:'flex',alignItems:'center',justifyContent:'center',color:'#94A3B8',fontSize:13}}>No category data available</div>}
-      {categorySpendData.length>0&&<div style={{display:'flex',justifyContent:'center',gap:10,marginTop:4,flexWrap:'wrap'}}>{categorySpendData.slice(0,6).map((s,i)=><div key={i} style={{display:'flex',alignItems:'center',gap:4,fontSize:10,color:'#64748B'}}><div style={{width:8,height:8,borderRadius:'50%',background:s.color}}/>{s.name}</div>)}</div>}
+      {categorySpendData.length>0&&<div style={{display:'flex',justifyContent:'center',gap:10,marginTop:4,flexWrap:'wrap'}}>{categorySpendData.slice(0,6).map((s,i)=><div key={i} style={{display:'flex',alignItems:'center',gap:4,fontSize:10,color:'#64748B'}}><div style={{width:8,height:8,borderRadius:'50%',background:s.color}}/>{s.name} ({fmt(s.value)})</div>)}</div>}
     </div>
   </div>
 
   {/* Row 4: Engineer Activity */}
-  <div className="card" style={{padding:'20px 24px'}}><h3 style={{fontSize:15,fontWeight:600,marginBottom:16}}>Engineer Activity</h3><div className="grid-2" style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16}}>{[...new Set(orders.flatMap(o=>[o.orderBy,o.engineer]).filter(Boolean))].map(eng=>{const eo=orders.filter(o=>o.orderBy===eng||o.engineer===eng);return(<div key={eng} style={{padding:16,borderRadius:12,background:'#F8FAFB'}}><div style={{display:'flex',alignItems:'center',gap:10,marginBottom:12}}><div style={{width:36,height:36,borderRadius:'50%',background:'linear-gradient(135deg,#006837,#00A550)',display:'flex',alignItems:'center',justifyContent:'center',color:'#fff',fontSize:13,fontWeight:700}}>{eng.split(' ').map(w=>w[0]).join('')}</div><div><div style={{fontWeight:600,fontSize:14}}>{eng}</div><div style={{fontSize:11,color:'#94A3B8'}}>User</div></div></div><div className="grid-3" style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:8}}><div><div style={{fontSize:10,color:'#94A3B8',textTransform:'uppercase'}}>Orders</div><div className="mono" style={{fontSize:18,fontWeight:700}}>{eo.length}</div></div><div><div style={{fontSize:10,color:'#94A3B8',textTransform:'uppercase'}}>Checked</div><div className="mono" style={{fontSize:18,fontWeight:700,color:'#0B7A3E'}}>{eo.filter(o=>o.engineer===eng).length}</div></div><div><div style={{fontSize:10,color:'#94A3B8',textTransform:'uppercase'}}>Value</div><div className="mono" style={{fontSize:14,fontWeight:700}}>{fmt(eo.reduce((s,o)=>s+o.totalCost,0))}</div></div></div></div>);})}</div></div>
+  <div className="card" style={{padding:'20px 24px'}}><h3 style={{fontSize:15,fontWeight:600,marginBottom:16}}>Engineer Activity</h3><div className="grid-2" style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16}}>{[...new Set(orders.flatMap(o=>[o.orderBy,o.engineer]).filter(Boolean))].map(eng=>{const eo=orders.filter(o=>o.orderBy===eng||o.engineer===eng);const engValue=eo.reduce((s,o)=>{const cp=catalogLookup[o.materialNo];const price=cp?(cp.sg||cp.tp||cp.dist||0):Number(o.listPrice)||0;return s+(price>0?price*(Number(o.quantity)||0):(Number(o.totalCost)||0));},0);const rcvd=eo.filter(o=>o.status==='Received').length;return(<div key={eng} style={{padding:16,borderRadius:12,background:'#F8FAFB'}}><div style={{display:'flex',alignItems:'center',gap:10,marginBottom:12}}><div style={{width:36,height:36,borderRadius:'50%',background:'linear-gradient(135deg,#006837,#00A550)',display:'flex',alignItems:'center',justifyContent:'center',color:'#fff',fontSize:13,fontWeight:700}}>{eng.split(' ').map(w=>w[0]).join('')}</div><div><div style={{fontWeight:600,fontSize:14}}>{eng}</div><div style={{fontSize:11,color:'#94A3B8'}}>{eo.length} orders</div></div></div><div className="grid-4" style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr 1fr',gap:8}}><div><div style={{fontSize:10,color:'#94A3B8',textTransform:'uppercase'}}>Orders</div><div className="mono" style={{fontSize:18,fontWeight:700}}>{eo.length}</div></div><div><div style={{fontSize:10,color:'#94A3B8',textTransform:'uppercase'}}>Received</div><div className="mono" style={{fontSize:18,fontWeight:700,color:'#0B7A3E'}}>{rcvd}</div></div><div><div style={{fontSize:10,color:'#94A3B8',textTransform:'uppercase'}}>Pending</div><div className="mono" style={{fontSize:18,fontWeight:700,color:'#D97706'}}>{eo.length-rcvd}</div></div><div><div style={{fontSize:10,color:'#94A3B8',textTransform:'uppercase'}}>Value</div><div className="mono" style={{fontSize:14,fontWeight:700}}>{fmt(engValue)}</div></div></div></div>);})}</div></div>
 </div>)}
 
 {/* ═══════════ FORECASTING ═══════════ */}
@@ -4106,7 +4118,7 @@ if(scheduledNotifs.emailEnabled){                    addNotifEntry({id:'N-'+Date
     <div style={{border:'1px solid #E2E8F0',borderRadius:10,overflow:'hidden',maxHeight:400,overflowY:'auto'}}>
       <table style={{width:'100%',borderCollapse:'collapse',fontSize:11}}>
         <thead style={{position:'sticky',top:0,background:'#F8FAFB'}}>
-          <tr>{['ID','Material No','Description','Qty','Price','Total','Order Date','Order By','Month','Status'].map(h=><th key={h} className="th" style={{padding:'10px 8px',fontSize:10}}>{h}</th>)}</tr>
+          <tr>{['ID','Material No','Description','Qty','Unit Price','Total','Order Date','Order By','Month','Status'].map(h=><th key={h} className="th" style={{padding:'10px 8px',fontSize:10}}>{h}</th>)}</tr>
         </thead>
         <tbody>
           {historyImportData.slice(0,50).map((o,i)=>(
@@ -4610,7 +4622,7 @@ if(scheduledNotifs.emailEnabled){                    addNotifEntry({id:'N-'+Date
         <div style={{display:'flex',justifyContent:'space-between',marginBottom:20}}><div><h2 style={{fontSize:18,fontWeight:700,margin:0}}>Map Column Headers</h2><div style={{fontSize:12,color:'#64748B',marginTop:4}}>File: <strong>{catalogMapperData.fileName}</strong> — {catalogMapperData.rows.length} rows detected</div></div><button onClick={()=>setShowCatalogMapper(false)} style={{background:'none',border:'none',cursor:'pointer',color:'#94A3B8'}}><X size={20}/></button></div>
         <div style={{fontSize:12,color:'#64748B',marginBottom:16,padding:'10px 14px',background:'#F0F9FF',border:'1px solid #BAE6FD',borderRadius:8}}>Match each catalog field to a column from your file. Fields marked * are required. Auto-detected mappings are pre-selected.</div>
         <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:20}}>
-          {[{key:'m',label:'Material No. *',required:true},{key:'d',label:'Description *',required:true},{key:'c',label:'Category'},{key:'sg',label:'SG Price'},{key:'dist',label:'Distributor Price'},{key:'tp',label:'Transfer Price'},{key:'rsp',label:'RSP EUR'}].map(f=>(
+          {[{key:'m',label:'Material No. *',required:true},{key:'d',label:'Description *',required:true},{key:'c',label:'Category'},{key:'sg',label:'Unit Price (SG)'},{key:'dist',label:'Distributor Price'},{key:'tp',label:'Transfer Price'},{key:'rsp',label:'RSP EUR'}].map(f=>(
             <div key={f.key} style={{display:'flex',flexDirection:'column',gap:4}}>
               <label style={{fontSize:12,fontWeight:600,color:f.required?'#1E293B':'#475569'}}>{f.label}</label>
               <select value={catalogColumnMap[f.key]} onChange={e=>setCatalogColumnMap(prev=>({...prev,[f.key]:e.target.value}))} style={{padding:'8px 10px',borderRadius:6,border:catalogColumnMap[f.key]?'2px solid #059669':'1px solid #E2E8F0',fontSize:12,background:catalogColumnMap[f.key]?'#F0FDF4':'#fff'}}>
@@ -4625,7 +4637,7 @@ if(scheduledNotifs.emailEnabled){                    addNotifEntry({id:'N-'+Date
           <div style={{fontSize:12,fontWeight:600,color:'#475569',marginBottom:8}}>Preview (first 5 rows)</div>
           <div style={{overflowX:'auto',border:'1px solid #E2E8F0',borderRadius:8}}>
             <table style={{width:'100%',borderCollapse:'collapse',fontSize:11}}>
-              <thead><tr style={{background:'#F8FAFB'}}>{['Material No','Description','Category','SG Price','Dist Price','Transfer Price','RSP EUR'].map(h=><th key={h} className="th" style={{whiteSpace:'nowrap'}}>{h}</th>)}</tr></thead>
+              <thead><tr style={{background:'#F8FAFB'}}>{['Material No','Description','Category','Unit Price','Dist Price','Transfer Price','RSP EUR'].map(h=><th key={h} className="th" style={{whiteSpace:'nowrap'}}>{h}</th>)}</tr></thead>
               <tbody>{catalogMapperData.rows.slice(0,5).map((r,i)=>{
                 const cm=catalogColumnMap;
                 return <tr key={i} style={{borderBottom:'1px solid #F0F2F5'}}>
@@ -4677,7 +4689,7 @@ if(scheduledNotifs.emailEnabled){                    addNotifEntry({id:'N-'+Date
             <div><label style={{display:'block',fontSize:12,fontWeight:600,color:'#4A5568',marginBottom:6}}>Total Cost</label><div className="mono" style={{padding:'8px 12px',borderRadius:8,background:newOrder.listPrice>0?'#E6F4ED':'#F8FAFB',border:'1.5px solid #E2E8F0',fontSize:13,fontWeight:600,color:newOrder.listPrice>0?'#0B7A3E':'#94A3B8'}}>{newOrder.listPrice>0?fmt((parseFloat(newOrder.listPrice)||0)*(parseInt(newOrder.quantity)||1)):'—'}</div></div>
           </div>
           {newOrder.materialNo&&catalogLookup[newOrder.materialNo]&&<div style={{padding:12,borderRadius:8,background:'#F0FDF4',border:'1px solid #BBF7D0',fontSize:12}}><strong style={{color:'#0B7A3E'}}>Catalog Match</strong><div className="grid-3" style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:8,marginTop:6}}>
-            <div>SG: <strong className="mono">{fmt(catalogLookup[newOrder.materialNo].sg)}</strong></div><div>Dist: <strong className="mono">{fmt(catalogLookup[newOrder.materialNo].dist)}</strong></div><div>TP: <strong className="mono">{fmt(catalogLookup[newOrder.materialNo].tp)}</strong></div></div></div>}
+            <div>Unit Price: <strong className="mono">{fmt(catalogLookup[newOrder.materialNo].sg)}</strong></div><div>Dist: <strong className="mono">{fmt(catalogLookup[newOrder.materialNo].dist)}</strong></div><div>TP: <strong className="mono">{fmt(catalogLookup[newOrder.materialNo].tp)}</strong></div></div></div>}
           <div><label style={{display:'block',fontSize:12,fontWeight:600,color:'#4A5568',marginBottom:6}}>Order By</label><select value={newOrder.orderBy} onChange={e=>setNewOrder(p=>({...p,orderBy:e.target.value}))} style={{width:'100%'}}><option value="">— Select —</option>{users.filter(u=>u.status==='active').map(u=><option key={u.id} value={u.name}>{u.name}</option>)}</select></div>
           <div>
             <label style={{display:'block',fontSize:12,fontWeight:600,color:'#4A5568',marginBottom:6}}>Link to Bulk Batch <span style={{fontWeight:400,color:'#94A3B8'}}>(optional)</span></label>
@@ -4784,7 +4796,7 @@ if(scheduledNotifs.emailEnabled){                    addNotifEntry({id:'N-'+Date
           </div>}
         </div>
 
-        {selectedOrder.materialNo&&catalogLookup[selectedOrder.materialNo]&&<div style={{padding:12,borderRadius:8,background:'#EFF6FF',border:'1px solid #BFDBFE',marginTop:12,fontSize:12}}><strong style={{color:'#2563EB'}}>Catalog Price ({priceConfig.year})</strong><div className="grid-3" style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:8,marginTop:6}}><div>SG: <strong className="mono">{fmt(catalogLookup[selectedOrder.materialNo].sg)}</strong></div><div>Dist: <strong className="mono">{fmt(catalogLookup[selectedOrder.materialNo].dist)}</strong></div><div>TP: <strong className="mono">{fmt(catalogLookup[selectedOrder.materialNo].tp)}</strong></div></div></div>}
+        {selectedOrder.materialNo&&catalogLookup[selectedOrder.materialNo]&&<div style={{padding:12,borderRadius:8,background:'#EFF6FF',border:'1px solid #BFDBFE',marginTop:12,fontSize:12}}><strong style={{color:'#2563EB'}}>Catalog Price ({priceConfig.year})</strong><div className="grid-3" style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:8,marginTop:6}}><div>Unit Price: <strong className="mono">{fmt(catalogLookup[selectedOrder.materialNo].sg)}</strong></div><div>Dist: <strong className="mono">{fmt(catalogLookup[selectedOrder.materialNo].dist)}</strong></div><div>TP: <strong className="mono">{fmt(catalogLookup[selectedOrder.materialNo].tp)}</strong></div></div></div>}
 
         {/* Update Received Quantity Section */}
         <div style={{padding:16,borderRadius:10,background:'#F0FDF4',border:'1px solid #BBF7D0',marginTop:16}}>
@@ -4830,8 +4842,8 @@ if(scheduledNotifs.emailEnabled){                    addNotifEntry({id:'N-'+Date
       {selectedPart&&<div className="mo" onClick={()=>setSelectedPart(null)}><div onClick={e=>e.stopPropagation()} style={{background:'#fff',borderRadius:16,padding:'28px 32px',width:520,maxHeight:'85vh',overflow:'auto',boxShadow:'0 20px 60px rgba(0,0,0,.2)'}}>
         <div style={{display:'flex',justifyContent:'space-between',marginBottom:16}}><div><h2 style={{fontSize:17,fontWeight:700}}>{selectedPart.description}</h2><span className="mono" style={{fontSize:12,color:'#94A3B8'}}>{selectedPart.materialNo}</span></div><button onClick={()=>setSelectedPart(null)} style={{background:'none',border:'none',cursor:'pointer',color:'#94A3B8'}}><X size={20}/></button></div>
         <div style={{marginBottom:14}}><Pill bg={`${CATEGORIES[selectedPart.category]?.color||'#64748B'}12`} color={CATEGORIES[selectedPart.category]?.color||'#64748B'}>{CATEGORIES[selectedPart.category]?.label||selectedPart.category}</Pill></div>
-        <div className="grid-2" style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:16}}>{[{l:'SG Price',v:fmt(selectedPart.singaporePrice),c:'#0B7A3E'},{l:'Dist Price',v:fmt(selectedPart.distributorPrice),c:'#2563EB'},{l:'Transfer (SGD)',v:fmt(selectedPart.transferPrice),c:'#7C3AED'},{l:'RSP (EUR)',v:`€${selectedPart.rspEur?.toLocaleString()}`,c:'#D97706'},{l:'Margin',v:`${selectedPart.singaporePrice>0?((selectedPart.singaporePrice-selectedPart.distributorPrice)/selectedPart.singaporePrice*100).toFixed(1):0}%`,c:'#059669'},{l:'Year',v:priceConfig.year,c:'#64748B'}].map((f,i)=><div key={i} style={{padding:12,borderRadius:8,background:'#F8FAFB'}}><div style={{fontSize:10,color:'#94A3B8',textTransform:'uppercase',letterSpacing:.5,marginBottom:4}}>{f.l}</div><div className="mono" style={{fontSize:16,fontWeight:700,color:f.c}}>{f.v}</div></div>)}</div>
-        <div style={{display:'flex',gap:10}}><button className="bp" onClick={()=>{setShowNewOrder(true);setNewOrder({materialNo:selectedPart.materialNo,description:selectedPart.description,quantity:1,listPrice:selectedPart.transferPrice,orderBy:'',remark:''});setSelectedPart(null);}}><ShoppingCart size={14}/> Order</button><button className="bs" onClick={()=>setSelectedPart(null)}>Close</button></div>
+        <div className="grid-2" style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:16}}>{[{l:'Unit Price',v:fmt(selectedPart.singaporePrice),c:'#0B7A3E'},{l:'Dist Price',v:fmt(selectedPart.distributorPrice),c:'#2563EB'},{l:'Transfer (SGD)',v:fmt(selectedPart.transferPrice),c:'#7C3AED'},{l:'RSP (EUR)',v:`€${selectedPart.rspEur?.toLocaleString()}`,c:'#D97706'},{l:'Margin',v:`${selectedPart.singaporePrice>0?((selectedPart.singaporePrice-selectedPart.distributorPrice)/selectedPart.singaporePrice*100).toFixed(1):0}%`,c:'#059669'},{l:'Year',v:priceConfig.year,c:'#64748B'}].map((f,i)=><div key={i} style={{padding:12,borderRadius:8,background:'#F8FAFB'}}><div style={{fontSize:10,color:'#94A3B8',textTransform:'uppercase',letterSpacing:.5,marginBottom:4}}>{f.l}</div><div className="mono" style={{fontSize:16,fontWeight:700,color:f.c}}>{f.v}</div></div>)}</div>
+        <div style={{display:'flex',gap:10}}><button className="bp" onClick={()=>{setShowNewOrder(true);setNewOrder({materialNo:selectedPart.materialNo,description:selectedPart.description,quantity:1,listPrice:selectedPart.singaporePrice||selectedPart.transferPrice||selectedPart.distributorPrice||0,orderBy:'',remark:''});setSelectedPart(null);}}><ShoppingCart size={14}/> Order</button><button className="bs" onClick={()=>setSelectedPart(null)}>Close</button></div>
       </div></div>}
 
       {/* ═══════════ AI CHAT PANEL (SLIDE-IN) ═══════════ */}

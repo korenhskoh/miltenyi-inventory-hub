@@ -170,12 +170,12 @@ async function deleteOrder(id) {
   }
 }
 
-async function bulkUpdateOrderStatus(ids, status) {
+async function bulkUpdateOrderStatus(ids, status, approvalStatus) {
   try {
     const res = handleResponse(await fetch(`${BASE}/api/orders/bulk-status`, {
       method: 'PUT',
       headers: authHeaders(),
-      body: JSON.stringify({ ids, status }),
+      body: JSON.stringify({ ids, status, ...(approvalStatus ? { approvalStatus } : {}) }),
     }));
     return res.ok;
   } catch {

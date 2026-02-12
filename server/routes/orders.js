@@ -85,7 +85,7 @@ router.post('/', async (req, res) => {
 // PUT /bulk-status - update status of multiple orders
 router.put('/bulk-status', async (req, res) => {
   try {
-    const { ids, status } = req.body;
+    const { ids, status, approvalStatus } = req.body;
     if (!ids || !Array.isArray(ids) || ids.length === 0) {
       return res.status(400).json({ error: 'ids array is required' });
     }
@@ -93,9 +93,12 @@ router.put('/bulk-status', async (req, res) => {
       return res.status(400).json({ error: 'status is required' });
     }
 
-    const placeholders = ids.map((_, i) => `$${i + 2}`).join(', ');
-    const sql = `UPDATE orders SET status = $1 WHERE id IN (${placeholders}) RETURNING *`;
-    const result = await query(sql, [status, ...ids]);
+    const placeholders = ids.map((_, i) => `$${i + (approvalStatus ? 3 : 2)}`).join(', ');
+    const sql = approvalStatus
+      ? `UPDATE orders SET status = $1, approval_status = $2 WHERE id IN (${placeholders}) RETURNING *`
+      : `UPDATE orders SET status = $1 WHERE id IN (${placeholders}) RETURNING *`;
+    const params = approvalStatus ? [status, approvalStatus, ...ids] : [status, ...ids];
+    const result = await query(sql, params);
     const rows = result.rows.map(snakeToCamel);
     res.json(rows);
   } catch (e) {

@@ -81,7 +81,7 @@ async function handlePriceLookup(params, session) {
   await logBotAudit('price_lookup', 'parts_catalog', materialNo, { materialNo });
   if (r.rows.length) {
     const p = r.rows[0];
-    return `📦 *${p.description}*\nMaterial: ${materialNo}\n\n💰 *Prices:*\n• SG Price: ${fmtPrice(p.sg_price)}\n• Distributor: ${fmtPrice(p.dist_price)}\n• Transfer: ${fmtPrice(p.transfer_price)}\n\nTo order: *order <qty> ${materialNo}*`;
+    return `📦 *${p.description}*\nMaterial: ${materialNo}\n\n💰 *Prices:*\n• Unit Price: ${fmtPrice(p.sg_price)}\n• Distributor: ${fmtPrice(p.dist_price)}\n• Transfer: ${fmtPrice(p.transfer_price)}\n\nTo order: *order <qty> ${materialNo}*`;
   }
   return `❌ Part *${materialNo}* not found in catalog.`;
 }
@@ -406,7 +406,7 @@ async function handleSearchCatalog(params, session) {
 
   session.page = 0;
   return paginate(r.rows, session, (p) =>
-    `*${p.material_no}* | ${p.description}\nCategory: ${p.category || '—'}\nSG: ${fmtPrice(p.sg_price)} | Dist: ${fmtPrice(p.dist_price)} | Transfer: ${fmtPrice(p.transfer_price)}`
+    `*${p.material_no}* | ${p.description}\nCategory: ${p.category || '—'}\nUnit: ${fmtPrice(p.sg_price)} | Dist: ${fmtPrice(p.dist_price)} | Transfer: ${fmtPrice(p.transfer_price)}`
   );
 }
 
