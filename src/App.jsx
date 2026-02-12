@@ -2473,8 +2473,8 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
         <td className="td mono" style={{fontSize:11,color:'#0B7A3E',fontWeight:500}}>{o.materialNo||'—'}</td>
         <td className="td" style={{maxWidth:200,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{o.description}</td>
         <td className="td" style={{fontWeight:600,textAlign:'center'}}>{o.quantity}</td>
-        <td className="td mono" style={{fontSize:11}}>{o.listPrice>0?fmt(o.listPrice):'—'}</td>
-        <td className="td mono" style={{fontSize:11,fontWeight:600}}>{o.totalCost>0?fmt(o.totalCost):'—'}</td>
+        <td className="td mono" style={{fontSize:11}}>{(()=>{const cp=catalogLookup[o.materialNo];const price=cp?cp.tp:o.listPrice;return price>0?fmt(price):'—';})()}</td>
+        <td className="td mono" style={{fontSize:11,fontWeight:600}}>{(()=>{const cp=catalogLookup[o.materialNo];const price=cp?cp.tp:o.listPrice;const total=price>0?price*o.quantity:o.totalCost;return total>0?fmt(total):'—';})()}</td>
         <td className="td" style={{color:'#94A3B8',fontSize:11}}>{fmtDate(o.orderDate)}</td>
         <td className="td" style={{fontSize:11}}>{o.orderBy||'—'}</td>
         <td className="td"><Badge status={o.status}/></td>
@@ -2574,7 +2574,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
         <BatchBtn onClick={batchDeleteOrders} bg="#DC2626" icon={Trash2}>Delete</BatchBtn>
       </BatchBar> : null; })()}
       <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
-        <thead><tr style={{background:'#F8FAFB'}}>{hasPermission('deleteOrders')&&<th className="th" style={{width:36}}>{(()=>{const mo=orders.filter(o=>o.bulkGroupId&&(o.month===expandedMonth||o.month===expandedMonth.replace(/ /g,'_')||o.month.replace(/_/g,' ')===expandedMonth));return <SelBox checked={mo.length>0&&mo.every(o=>selOrders.has(o.id))} onChange={()=>{const mo2=orders.filter(o=>o.bulkGroupId&&(o.month===expandedMonth||o.month===expandedMonth.replace(/ /g,'_')||o.month.replace(/_/g,' ')===expandedMonth));const ids=mo2.map(o=>o.id);setSelOrders(prev=>{const n=new Set(prev);const allSel=ids.every(id=>prev.has(id));ids.forEach(id=>allSel?n.delete(id):n.add(id));return n;});}}/>;})()}</th>}{['Order ID','Material No','Description','Qty','Ordered By','Order Date','Status','Total Cost','Actions'].map(h=><th key={h} className="th">{h}</th>)}</tr></thead>
+        <thead><tr style={{background:'#F8FAFB'}}>{hasPermission('deleteOrders')&&<th className="th" style={{width:36}}>{(()=>{const mo=orders.filter(o=>o.bulkGroupId&&(o.month===expandedMonth||o.month===expandedMonth.replace(/ /g,'_')||o.month.replace(/_/g,' ')===expandedMonth));return <SelBox checked={mo.length>0&&mo.every(o=>selOrders.has(o.id))} onChange={()=>{const mo2=orders.filter(o=>o.bulkGroupId&&(o.month===expandedMonth||o.month===expandedMonth.replace(/ /g,'_')||o.month.replace(/_/g,' ')===expandedMonth));const ids=mo2.map(o=>o.id);setSelOrders(prev=>{const n=new Set(prev);const allSel=ids.every(id=>prev.has(id));ids.forEach(id=>allSel?n.delete(id):n.add(id));return n;});}}/>;})()}</th>}{['Order ID','Material No','Description','Qty','Price','Total','Ordered By','Order Date','Status','Actions'].map(h=><th key={h} className="th">{h}</th>)}</tr></thead>
         <tbody>{orders.filter(o=>o.bulkGroupId&&(o.month===expandedMonth||o.month===expandedMonth.replace(/ /g,'_')||o.month.replace(/_/g,' ')===expandedMonth)).map(o=>(
           <tr key={o.id} className="tr" onClick={()=>openOrderInNewTab(o)} style={{borderBottom:'1px solid #F7FAFC',cursor:'pointer',background:selOrders.has(o.id)?'#E6F4ED':'#fff'}}>
             {hasPermission('deleteOrders')&&<td className="td" onClick={e=>e.stopPropagation()}><SelBox checked={selOrders.has(o.id)} onChange={()=>toggleSel(selOrders,setSelOrders,o.id)}/></td>}
@@ -2582,10 +2582,11 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
             <td className="td mono" style={{fontSize:10}}>{o.materialNo||'—'}</td>
             <td className="td" style={{fontSize:11,maxWidth:200}}>{o.description}</td>
             <td className="td" style={{fontWeight:600,textAlign:'center'}}>{o.quantity}</td>
+            <td className="td mono" style={{fontSize:11}}>{(()=>{const cp=catalogLookup[o.materialNo];const price=cp?cp.tp:o.listPrice;return price>0?fmt(price):'—';})()}</td>
+            <td className="td mono" style={{fontSize:11,fontWeight:600}}>{(()=>{const cp=catalogLookup[o.materialNo];const price=cp?cp.tp:o.listPrice;const total=price>0?price*o.quantity:o.totalCost;return total>0?fmt(total):'—';})()}</td>
             <td className="td"><Pill bg="#DBEAFE" color="#2563EB"><User size={10}/> {o.orderBy||'—'}</Pill></td>
             <td className="td" style={{color:'#64748B',fontSize:11}}>{fmtDate(o.orderDate)}</td>
             <td className="td"><Pill bg={o.status==='Received'?'#E6F4ED':o.status==='Back Order'?'#FEF3C7':'#FEE2E2'} color={o.status==='Received'?'#0B7A3E':o.status==='Back Order'?'#D97706':'#DC2626'}>{o.status}</Pill></td>
-            <td className="td mono" style={{fontWeight:600,fontSize:11}}>{fmt(o.totalCost)}</td>
             <td className="td">
               <div style={{display:'flex',gap:4}}>
               {(hasPermission('editAllOrders')||o.orderBy===currentUser?.name)&&<button onClick={(e)=>{e.stopPropagation();setEditingOrder({...o});}} style={{background:'#2563EB',color:'#fff',border:'none',borderRadius:6,padding:'4px 8px',fontSize:10,cursor:'pointer',display:'flex',alignItems:'center',gap:3}}><Edit3 size={11}/> Edit</button>}
@@ -2598,7 +2599,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
       <div style={{marginTop:12,padding:12,background:'#F8FAFB',borderRadius:8,fontSize:12}}>
         <strong>Summary:</strong> {orders.filter(o=>o.bulkGroupId&&(o.month===expandedMonth||o.month===expandedMonth.replace(/ /g,'_')||o.month.replace(/_/g,' ')===expandedMonth)).length} orders |
         Total Qty: {orders.filter(o=>o.bulkGroupId&&(o.month===expandedMonth||o.month===expandedMonth.replace(/ /g,'_')||o.month.replace(/_/g,' ')===expandedMonth)).reduce((s,o)=>s+o.quantity,0)} |
-        Total Cost: <strong className="mono">{fmt(orders.filter(o=>o.bulkGroupId&&(o.month===expandedMonth||o.month===expandedMonth.replace(/ /g,'_')||o.month.replace(/_/g,' ')===expandedMonth)).reduce((s,o)=>s+o.totalCost,0))}</strong>
+        Total Cost: <strong className="mono">{fmt(orders.filter(o=>o.bulkGroupId&&(o.month===expandedMonth||o.month===expandedMonth.replace(/ /g,'_')||o.month.replace(/_/g,' ')===expandedMonth)).reduce((s,o)=>{const cp=catalogLookup[o.materialNo];const price=cp?cp.tp:o.listPrice;return s+(price>0?price*o.quantity:o.totalCost);},0))}</strong>
       </div>
     </div>
   )}
