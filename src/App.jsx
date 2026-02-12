@@ -43,6 +43,7 @@ const STATUS_CFG = {
   Rejected: { color: '#DC2626', bg: '#FEE2E2', icon: X },
 };
 const Badge = ({ status }) => { const c = STATUS_CFG[status]||STATUS_CFG['Pending Approval']; const I=c.icon; return <span style={{ display:'inline-flex',alignItems:'center',gap:4,padding:'3px 10px',borderRadius:20,fontSize:11,fontWeight:600,color:c.color,background:c.bg }}><I size={12}/> {status}</span>; };
+const ArrivalBadge = ({ order }) => { if (!order) return <span style={{color:'#CBD5E1',fontSize:11}}>—</span>; if (order.arrivalDate && (order.qtyReceived||0) >= order.quantity && order.quantity > 0) return <span style={{display:'inline-flex',alignItems:'center',gap:4,padding:'3px 10px',borderRadius:20,fontSize:10,fontWeight:600,color:'#0B7A3E',background:'#D1FAE5'}}><CheckCircle size={11}/> Arrived</span>; if (order.arrivalDate && (order.qtyReceived||0) > 0 && (order.qtyReceived||0) < order.quantity) return <span style={{display:'inline-flex',alignItems:'center',gap:4,padding:'3px 10px',borderRadius:20,fontSize:10,fontWeight:600,color:'#D97706',background:'#FEF3C7'}}><AlertTriangle size={11}/> Partial</span>; if (order.status === 'Back Order') return <span style={{display:'inline-flex',alignItems:'center',gap:4,padding:'3px 10px',borderRadius:20,fontSize:10,fontWeight:600,color:'#C53030',background:'#FEE2E2'}}><AlertTriangle size={11}/> Back Order</span>; if (order.approvalStatus === 'approved') return <span style={{display:'inline-flex',alignItems:'center',gap:4,padding:'3px 10px',borderRadius:20,fontSize:10,fontWeight:600,color:'#64748B',background:'#F1F5F9'}}><Truck size={11}/> Pending</span>; return <span style={{color:'#CBD5E1',fontSize:11}}>—</span>; };
 const Pill = ({ bg, color, children }) => <span className="pill" style={{ background: bg, color }}>{children}</span>;
 const Toggle = ({ active, onClick, color }) => <div onClick={onClick} style={{ width:40,height:22,borderRadius:11,background:active?(color||'#0B7A3E'):'#E2E8F0',cursor:'pointer',position:'relative',transition:'background 0.2s' }}><div style={{ width:18,height:18,borderRadius:'50%',background:'#fff',position:'absolute',top:2,left:active?20:2,transition:'left 0.2s',boxShadow:'0 1px 3px rgba(0,0,0,0.15)' }}/></div>;
 const Toast = ({ items, onDismiss }) => <div style={{ position:'fixed',top:80,right:24,zIndex:9999,display:'flex',flexDirection:'column',gap:8,maxWidth:380 }}>{items.map((n,i) => <div key={i} style={{ background:n.type==='success'?'#0B7A3E':n.type==='warning'?'#D97706':'#2563EB',color:'#fff',padding:'12px 16px',borderRadius:10,boxShadow:'0 8px 24px rgba(0,0,0,0.18)',display:'flex',alignItems:'center',gap:10,animation:'slideIn 0.3s' }}>{n.type==='success'?<CheckCircle size={18}/>:n.type==='warning'?<AlertTriangle size={18}/>:<Bell size={18}/>}<div style={{flex:1}}><div style={{fontWeight:600,fontSize:13}}>{n.title}</div><div style={{fontSize:11,opacity:0.9}}>{n.message}</div></div><button onClick={()=>onDismiss(i)} style={{background:'none',border:'none',color:'#fff',cursor:'pointer'}}><X size={14}/></button></div>)}</div>;
@@ -2407,8 +2408,8 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
       <span style={{fontSize:11,color:'#94A3B8'}}>{allOrdersCombined.length} results</span>
     </div>
     <div className="table-wrap" style={{overflowX:'auto'}}><table style={{width:'100%',borderCollapse:'collapse',fontSize:12.5}}>
-      <thead><tr style={{background:'#F8FAFB'}}>{['Type','ID','Material / Items','Description','Qty','Unit Price','Total','By','Date','Status'].map(h=><th key={h} className="th" style={{whiteSpace:'nowrap'}}>{h}</th>)}</tr></thead>
-      <tbody>{allOrdersCombined.length===0?<tr><td colSpan={10} style={{textAlign:'center',padding:40,color:'#94A3B8',fontSize:13}}>No orders match the selected filters</td></tr>:allOrdersCombined.map((o,i)=>(
+      <thead><tr style={{background:'#F8FAFB'}}>{['Type','ID','Material / Items','Description','Qty','Unit Price','Total','By','Date','Status','Arrival'].map(h=><th key={h} className="th" style={{whiteSpace:'nowrap'}}>{h}</th>)}</tr></thead>
+      <tbody>{allOrdersCombined.length===0?<tr><td colSpan={11} style={{textAlign:'center',padding:40,color:'#94A3B8',fontSize:13}}>No orders match the selected filters</td></tr>:allOrdersCombined.map((o,i)=>(
         <tr key={o.id} className="tr" style={{borderBottom:'1px solid #F7FAFC',background:i%2===0?'#fff':'#FCFCFD',cursor:'pointer'}} onClick={()=>openOrderInNewTab(o)}>
           <td className="td"><Pill bg={o.orderType==='Single'?'#DBEAFE':'#EDE9FE'} color={o.orderType==='Single'?'#2563EB':'#7C3AED'}>{o.orderType==='Single'?'Single':'Bulk'}</Pill></td>
           <td className="td mono" style={{fontSize:11,fontWeight:600,color:o.orderType==='Single'?'#0B7A3E':'#4338CA'}}>{o.id}</td>
@@ -2420,6 +2421,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
           <td className="td" style={{fontSize:11}}>{o.orderBy||'—'}</td>
           <td className="td" style={{color:'#94A3B8',fontSize:11}}>{fmtDate(o.orderDate)}</td>
           <td className="td"><Badge status={o.status}/></td>
+          <td className="td"><ArrivalBadge order={o}/></td>
         </tr>
       ))}</tbody>
     </table></div>
@@ -2477,7 +2479,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
     <BatchBtn onClick={batchDeleteOrders} bg="#DC2626" icon={Trash2}>Delete</BatchBtn>
   </BatchBar>}
   <div className="card" style={{overflow:'hidden'}}><div className="table-wrap" style={{overflowX:'auto'}}><table style={{width:'100%',borderCollapse:'collapse',fontSize:12.5}}>
-    <thead><tr style={{background:'#F8FAFB'}}>{hasPermission('deleteOrders')&&<th className="th" style={{width:36}}><SelBox checked={selOrders.size===filteredOrders.length&&filteredOrders.length>0} onChange={()=>toggleAll(selOrders,setSelOrders,filteredOrders.map(o=>o.id))}/></th>}{['Material No.','Description','Qty','Unit Price','Total','Ordered','By','Status','Actions'].map(h=><th key={h} className="th">{h}</th>)}</tr></thead>
+    <thead><tr style={{background:'#F8FAFB'}}>{hasPermission('deleteOrders')&&<th className="th" style={{width:36}}><SelBox checked={selOrders.size===filteredOrders.length&&filteredOrders.length>0} onChange={()=>toggleAll(selOrders,setSelOrders,filteredOrders.map(o=>o.id))}/></th>}{['Material No.','Description','Qty','Unit Price','Total','Ordered','By','Status','Arrival','Actions'].map(h=><th key={h} className="th">{h}</th>)}</tr></thead>
     <tbody>{filteredOrders.map((o,i)=>(
       <tr key={o.id} className="tr" style={{borderBottom:'1px solid #F7FAFC',background:selOrders.has(o.id)?'#E6F4ED':i%2===0?'#fff':'#FCFCFD',cursor:'pointer'}} onClick={()=>openOrderInNewTab(o)}>
         {hasPermission('deleteOrders')&&<td className="td" onClick={e=>e.stopPropagation()}><SelBox checked={selOrders.has(o.id)} onChange={()=>toggleSel(selOrders,setSelOrders,o.id)}/></td>}
@@ -2489,6 +2491,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
         <td className="td" style={{color:'#94A3B8',fontSize:11}}>{fmtDate(o.orderDate)}</td>
         <td className="td" style={{fontSize:11}}>{o.orderBy||'—'}</td>
         <td className="td"><Badge status={o.status}/></td>
+        <td className="td"><ArrivalBadge order={o}/></td>
         <td className="td">
           <div style={{display:'flex',gap:4}}>
             {(hasPermission('editAllOrders')||o.orderBy===currentUser?.name)&&<button onClick={(e)=>{e.stopPropagation();setEditingOrder({...o});}} style={{background:'#2563EB',color:'#fff',border:'none',borderRadius:6,padding:'4px 8px',fontSize:10,cursor:'pointer',display:'flex',alignItems:'center',gap:3}}><Edit3 size={11}/> Edit</button>}
@@ -2592,7 +2595,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
         <BatchBtn onClick={batchDeleteOrders} bg="#DC2626" icon={Trash2}>Delete</BatchBtn>
       </BatchBar> : null; })()}
       <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
-        <thead><tr style={{background:'#F8FAFB'}}>{hasPermission('deleteOrders')&&<th className="th" style={{width:36}}>{(()=>{return <SelBox checked={bgOrders.length>0&&bgOrders.every(o=>selOrders.has(o.id))} onChange={()=>{const ids=bgOrders.map(o=>o.id);setSelOrders(prev=>{const n=new Set(prev);const allSel=ids.every(id=>prev.has(id));ids.forEach(id=>allSel?n.delete(id):n.add(id));return n;});}}/>;})()}</th>}{['Order ID','Material No','Description','Qty','Unit Price','Total','Ordered By','Order Date','Status','Actions'].map(h=><th key={h} className="th">{h}</th>)}</tr></thead>
+        <thead><tr style={{background:'#F8FAFB'}}>{hasPermission('deleteOrders')&&<th className="th" style={{width:36}}>{(()=>{return <SelBox checked={bgOrders.length>0&&bgOrders.every(o=>selOrders.has(o.id))} onChange={()=>{const ids=bgOrders.map(o=>o.id);setSelOrders(prev=>{const n=new Set(prev);const allSel=ids.every(id=>prev.has(id));ids.forEach(id=>allSel?n.delete(id):n.add(id));return n;});}}/>;})()}</th>}{['Order ID','Material No','Description','Qty','Unit Price','Total','Ordered By','Order Date','Status','Arrival','Actions'].map(h=><th key={h} className="th">{h}</th>)}</tr></thead>
         <tbody>{bgOrders.map(o=>(
           <tr key={o.id} className="tr" onClick={()=>openOrderInNewTab(o)} style={{borderBottom:'1px solid #F7FAFC',cursor:'pointer',background:selOrders.has(o.id)?'#E6F4ED':'#fff'}}>
             {hasPermission('deleteOrders')&&<td className="td" onClick={e=>e.stopPropagation()}><SelBox checked={selOrders.has(o.id)} onChange={()=>toggleSel(selOrders,setSelOrders,o.id)}/></td>}
@@ -2605,6 +2608,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
             <td className="td"><Pill bg="#DBEAFE" color="#2563EB"><User size={10}/> {o.orderBy||'—'}</Pill></td>
             <td className="td" style={{color:'#64748B',fontSize:11}}>{fmtDate(o.orderDate)}</td>
             <td className="td"><Pill bg={o.status==='Received'?'#E6F4ED':o.status==='Back Order'?'#FEF3C7':'#FEE2E2'} color={o.status==='Received'?'#0B7A3E':o.status==='Back Order'?'#D97706':'#DC2626'}>{o.status}</Pill></td>
+            <td className="td"><ArrivalBadge order={o}/></td>
             <td className="td">
               <div style={{display:'flex',gap:4}}>
               {(hasPermission('editAllOrders')||o.orderBy===currentUser?.name)&&<button onClick={(e)=>{e.stopPropagation();setEditingOrder({...o});}} style={{background:'#2563EB',color:'#fff',border:'none',borderRadius:6,padding:'4px 8px',fontSize:10,cursor:'pointer',display:'flex',alignItems:'center',gap:3}}><Edit3 size={11}/> Edit</button>}
