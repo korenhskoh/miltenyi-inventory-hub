@@ -759,7 +759,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
   // ── New Order ──
   const [newOrder, setNewOrder] = useState({ materialNo:'', description:'', quantity:1, listPrice:0, orderBy:'', remark:'', bulkGroupId:'' });
   const [newBulkMonth, setNewBulkMonth] = useState(''); // for "+ Create New Bulk Batch" inline picker
-  const handleMaterialLookup = (matNo) => { const p=catalogLookup[matNo]; if(p) { setNewOrder(prev=>({...prev,materialNo:matNo,description:p.d,listPrice:p.tp})); notify('Part Found',`${p.d}`, 'success'); }};
+  const handleMaterialLookup = (matNo) => { const p=catalogLookup[matNo]; if(p) { setNewOrder(prev=>({...prev,materialNo:matNo,description:p.d,listPrice:p.sg||p.tp||p.dist||0})); notify('Part Found',`${p.d}`, 'success'); }};
   const handleSubmitOrder = async () => {
     if (!newOrder.materialNo?.trim()) { notify('Missing Field','Material No. is required','warning'); return; }
     if (!newOrder.description?.trim()) { notify('Missing Field','Description is required','warning'); return; }
@@ -1300,7 +1300,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
       const updated = {...item,[field]:val};
       if(field==='materialNo' && val.length>=10) {
         const p=catalogLookup[val];
-        if(p) return {...updated, description:p.d, listPrice:p.tp};
+        if(p) return {...updated, description:p.d, listPrice:p.sg||p.tp||p.dist||0};
       }
       return updated;
     }));
@@ -1476,7 +1476,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
         const qty = placeOrderMatch[1] || placeOrderMatch[2] || 1;
         if (catalogLookupLocal[matNo]) {
           const p = catalogLookupLocal[matNo];
-          return { type: "order_confirm", text: `🛒 **Ready to order:**\n\n• Part: ${p.d}\n• Material: ${matNo}\n• Quantity: ${qty}\n• Unit Price: ${fmt(p.tp)}\n• Total: ${fmt(p.tp * parseInt(qty))}\n\nType "confirm" to place this order or "cancel" to abort.`, pendingOrder: { materialNo: matNo, description: p.d, quantity: parseInt(qty), listPrice: p.tp } };
+          return { type: "order_confirm", text: `🛒 **Ready to order:**\n\n• Part: ${p.d}\n• Material: ${matNo}\n• Quantity: ${qty}\n• Unit Price: ${fmt(p.sg||p.tp||p.dist||0)}\n• Total: ${fmt((p.sg||p.tp||p.dist||0) * parseInt(qty))}\n\nType "confirm" to place this order or "cancel" to abort.`, pendingOrder: { materialNo: matNo, description: p.d, quantity: parseInt(qty), listPrice: p.sg||p.tp||p.dist||0 } };
         }
       }
       return { type: "prompt", text: "To place an order, tell me the part number and quantity.\nExample: \"Order 2x 130-095-005\"" };
@@ -2473,8 +2473,8 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
         <td className="td mono" style={{fontSize:11,color:'#0B7A3E',fontWeight:500}}>{o.materialNo||'—'}</td>
         <td className="td" style={{maxWidth:200,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{o.description}</td>
         <td className="td" style={{fontWeight:600,textAlign:'center'}}>{o.quantity}</td>
-        <td className="td mono" style={{fontSize:11}}>{(()=>{const cp=catalogLookup[o.materialNo];const price=cp?cp.tp:o.listPrice;return price>0?fmt(price):'—';})()}</td>
-        <td className="td mono" style={{fontSize:11,fontWeight:600}}>{(()=>{const cp=catalogLookup[o.materialNo];const price=cp?cp.tp:o.listPrice;const total=price>0?price*o.quantity:o.totalCost;return total>0?fmt(total):'—';})()}</td>
+        <td className="td mono" style={{fontSize:11}}>{(()=>{const cp=catalogLookup[o.materialNo];const price=cp?(cp.sg||cp.tp||cp.dist||0):o.listPrice;return price>0?fmt(price):'—';})()}</td>
+        <td className="td mono" style={{fontSize:11,fontWeight:600}}>{(()=>{const cp=catalogLookup[o.materialNo];const price=cp?(cp.sg||cp.tp||cp.dist||0):o.listPrice;const total=price>0?price*o.quantity:o.totalCost;return total>0?fmt(total):'—';})()}</td>
         <td className="td" style={{color:'#94A3B8',fontSize:11}}>{fmtDate(o.orderDate)}</td>
         <td className="td" style={{fontSize:11}}>{o.orderBy||'—'}</td>
         <td className="td"><Badge status={o.status}/></td>
@@ -2582,8 +2582,8 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
             <td className="td mono" style={{fontSize:10}}>{o.materialNo||'—'}</td>
             <td className="td" style={{fontSize:11,maxWidth:200}}>{o.description}</td>
             <td className="td" style={{fontWeight:600,textAlign:'center'}}>{o.quantity}</td>
-            <td className="td mono" style={{fontSize:11}}>{(()=>{const cp=catalogLookup[o.materialNo];const price=cp?cp.tp:o.listPrice;return price>0?fmt(price):'—';})()}</td>
-            <td className="td mono" style={{fontSize:11,fontWeight:600}}>{(()=>{const cp=catalogLookup[o.materialNo];const price=cp?cp.tp:o.listPrice;const total=price>0?price*o.quantity:o.totalCost;return total>0?fmt(total):'—';})()}</td>
+            <td className="td mono" style={{fontSize:11}}>{(()=>{const cp=catalogLookup[o.materialNo];const price=cp?(cp.sg||cp.tp||cp.dist||0):o.listPrice;return price>0?fmt(price):'—';})()}</td>
+            <td className="td mono" style={{fontSize:11,fontWeight:600}}>{(()=>{const cp=catalogLookup[o.materialNo];const price=cp?(cp.sg||cp.tp||cp.dist||0):o.listPrice;const total=price>0?price*o.quantity:o.totalCost;return total>0?fmt(total):'—';})()}</td>
             <td className="td"><Pill bg="#DBEAFE" color="#2563EB"><User size={10}/> {o.orderBy||'—'}</Pill></td>
             <td className="td" style={{color:'#64748B',fontSize:11}}>{fmtDate(o.orderDate)}</td>
             <td className="td"><Pill bg={o.status==='Received'?'#E6F4ED':o.status==='Back Order'?'#FEF3C7':'#FEE2E2'} color={o.status==='Received'?'#0B7A3E':o.status==='Back Order'?'#D97706':'#DC2626'}>{o.status}</Pill></td>
@@ -2599,7 +2599,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
       <div style={{marginTop:12,padding:12,background:'#F8FAFB',borderRadius:8,fontSize:12}}>
         <strong>Summary:</strong> {orders.filter(o=>o.bulkGroupId&&(o.month===expandedMonth||o.month===expandedMonth.replace(/ /g,'_')||o.month.replace(/_/g,' ')===expandedMonth)).length} orders |
         Total Qty: {orders.filter(o=>o.bulkGroupId&&(o.month===expandedMonth||o.month===expandedMonth.replace(/ /g,'_')||o.month.replace(/_/g,' ')===expandedMonth)).reduce((s,o)=>s+o.quantity,0)} |
-        Total Cost: <strong className="mono">{fmt(orders.filter(o=>o.bulkGroupId&&(o.month===expandedMonth||o.month===expandedMonth.replace(/ /g,'_')||o.month.replace(/_/g,' ')===expandedMonth)).reduce((s,o)=>{const cp=catalogLookup[o.materialNo];const price=cp?cp.tp:o.listPrice;return s+(price>0?price*o.quantity:o.totalCost);},0))}</strong>
+        Total Cost: <strong className="mono">{fmt(orders.filter(o=>o.bulkGroupId&&(o.month===expandedMonth||o.month===expandedMonth.replace(/ /g,'_')||o.month.replace(/_/g,' ')===expandedMonth)).reduce((s,o)=>{const cp=catalogLookup[o.materialNo];const price=cp?(cp.sg||cp.tp||cp.dist||0):o.listPrice;return s+(price>0?price*o.quantity:o.totalCost);},0))}</strong>
       </div>
     </div>
   )}
@@ -3987,7 +3987,7 @@ if(scheduledNotifs.emailEnabled){                    addNotifEntry({id:'N-'+Date
       <div className="grid-2" style={{display:'grid',gridTemplateColumns:'1fr 2fr',gap:12}}>
         <div>
           <label style={{display:'block',fontSize:12,fontWeight:600,color:'#4A5568',marginBottom:6}}>Material No</label>
-          <input value={editingOrder.materialNo||''} onChange={e=>setEditingOrder(prev=>({...prev,materialNo:e.target.value}))} style={{width:'100%',padding:'10px 12px',borderRadius:8,border:'1.5px solid #E2E8F0',fontSize:13,boxSizing:'border-box'}} placeholder="130-XXX-XXX"/>
+          <input value={editingOrder.materialNo||''} onChange={e=>{const v=e.target.value;setEditingOrder(prev=>({...prev,materialNo:v}));if(v.length>=10){const p=catalogLookup[v];if(p){const price=p.sg||p.tp||p.dist||0;setEditingOrder(prev=>({...prev,description:p.d,listPrice:price,totalCost:price*(prev.quantity||1)}));}}}} style={{width:'100%',padding:'10px 12px',borderRadius:8,border:'1.5px solid #E2E8F0',fontSize:13,boxSizing:'border-box'}} placeholder="130-XXX-XXX"/>
         </div>
         <div>
           <label style={{display:'block',fontSize:12,fontWeight:600,color:'#4A5568',marginBottom:6}}>Description</label>
@@ -4671,11 +4671,12 @@ if(scheduledNotifs.emailEnabled){                    addNotifEntry({id:'N-'+Date
         <div style={{display:'flex',flexDirection:'column',gap:14}}>
           <div><label style={{display:'block',fontSize:12,fontWeight:600,color:'#4A5568',marginBottom:6}}>Material No. *</label><input value={newOrder.materialNo} onChange={e=>{setNewOrder(p=>({...p,materialNo:e.target.value}));if(e.target.value.length>=10)handleMaterialLookup(e.target.value);}} placeholder="e.g. 130-097-866" style={{width:'100%'}}/></div>
           <div><label style={{display:'block',fontSize:12,fontWeight:600,color:'#4A5568',marginBottom:6}}>Description</label><input value={newOrder.description} onChange={e=>setNewOrder(p=>({...p,description:e.target.value}))} style={{width:'100%'}}/></div>
-          <div className="grid-2" style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
+          <div className="grid-3" style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:12}}>
             <div><label style={{display:'block',fontSize:12,fontWeight:600,color:'#4A5568',marginBottom:6}}>Quantity</label><input type="number" min="1" value={newOrder.quantity} onChange={e=>setNewOrder(p=>({...p,quantity:e.target.value}))} style={{width:'100%'}}/></div>
-            <div><label style={{display:'block',fontSize:12,fontWeight:600,color:'#4A5568',marginBottom:6}}>Transfer Price</label><input type="number" step=".01" value={newOrder.listPrice} onChange={e=>setNewOrder(p=>({...p,listPrice:e.target.value}))} style={{width:'100%'}}/></div>
+            <div><label style={{display:'block',fontSize:12,fontWeight:600,color:'#4A5568',marginBottom:6}}>Unit Price (S$)</label><div className="mono" style={{padding:'8px 12px',borderRadius:8,background:newOrder.listPrice>0?'#E6F4ED':'#F8FAFB',border:'1.5px solid #E2E8F0',fontSize:13,fontWeight:600,color:newOrder.listPrice>0?'#0B7A3E':'#94A3B8'}}>{newOrder.listPrice>0?fmt(newOrder.listPrice):'Auto from catalog'}</div></div>
+            <div><label style={{display:'block',fontSize:12,fontWeight:600,color:'#4A5568',marginBottom:6}}>Total Cost</label><div className="mono" style={{padding:'8px 12px',borderRadius:8,background:newOrder.listPrice>0?'#E6F4ED':'#F8FAFB',border:'1.5px solid #E2E8F0',fontSize:13,fontWeight:600,color:newOrder.listPrice>0?'#0B7A3E':'#94A3B8'}}>{newOrder.listPrice>0?fmt((parseFloat(newOrder.listPrice)||0)*(parseInt(newOrder.quantity)||1)):'—'}</div></div>
           </div>
-          {newOrder.materialNo&&catalogLookup[newOrder.materialNo]&&<div style={{padding:12,borderRadius:8,background:'#F0FDF4',border:'1px solid #BBF7D0',fontSize:12}}><strong style={{color:'#0B7A3E'}}>✓ Catalog Match</strong><div className="grid-3" style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:8,marginTop:6}}>
+          {newOrder.materialNo&&catalogLookup[newOrder.materialNo]&&<div style={{padding:12,borderRadius:8,background:'#F0FDF4',border:'1px solid #BBF7D0',fontSize:12}}><strong style={{color:'#0B7A3E'}}>Catalog Match</strong><div className="grid-3" style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:8,marginTop:6}}>
             <div>SG: <strong className="mono">{fmt(catalogLookup[newOrder.materialNo].sg)}</strong></div><div>Dist: <strong className="mono">{fmt(catalogLookup[newOrder.materialNo].dist)}</strong></div><div>TP: <strong className="mono">{fmt(catalogLookup[newOrder.materialNo].tp)}</strong></div></div></div>}
           <div><label style={{display:'block',fontSize:12,fontWeight:600,color:'#4A5568',marginBottom:6}}>Order By</label><select value={newOrder.orderBy} onChange={e=>setNewOrder(p=>({...p,orderBy:e.target.value}))} style={{width:'100%'}}><option value="">— Select —</option>{users.filter(u=>u.status==='active').map(u=><option key={u.id} value={u.name}>{u.name}</option>)}</select></div>
           <div>
@@ -4719,20 +4720,20 @@ if(scheduledNotifs.emailEnabled){                    addNotifEntry({id:'N-'+Date
           </div>
           <div style={{maxHeight:340,overflow:'auto',border:'1px solid #E2E8F0',borderRadius:10}}>
             <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
-              <thead><tr style={{background:'#F8FAFB',position:'sticky',top:0}}><th className="th" style={{padding:'8px 10px'}}>Material No.</th><th className="th" style={{padding:'8px 10px'}}>Description</th><th className="th" style={{padding:'8px 10px',width:70}}>Qty</th><th className="th" style={{padding:'8px 10px',width:100}}>TP Price</th><th className="th" style={{padding:'8px 10px',width:100}}>Total</th><th className="th" style={{padding:'8px 10px',width:40}}></th></tr></thead>
+              <thead><tr style={{background:'#F8FAFB',position:'sticky',top:0}}><th className="th" style={{padding:'8px 10px'}}>Material No.</th><th className="th" style={{padding:'8px 10px'}}>Description</th><th className="th" style={{padding:'8px 10px',width:70}}>Qty</th><th className="th" style={{padding:'8px 10px',width:100}}>Unit Price</th><th className="th" style={{padding:'8px 10px',width:100}}>Total</th><th className="th" style={{padding:'8px 10px',width:40}}></th></tr></thead>
               <tbody>{bulkItems.map((item,idx)=>(
                 <tr key={idx} style={{borderBottom:'1px solid #F0F2F5'}}>
                   <td style={{padding:'8px 10px'}}><input value={item.materialNo} onChange={e=>updateBulkItem(idx,'materialNo',e.target.value)} placeholder="130-XXX-XXX" style={{width:'100%',padding:'6px 8px',fontSize:11}}/></td>
                   <td style={{padding:'8px 10px'}}><input value={item.description} onChange={e=>updateBulkItem(idx,'description',e.target.value)} placeholder="Auto-fills from catalog" style={{width:'100%',padding:'6px 8px',fontSize:11}}/></td>
                   <td style={{padding:'8px 10px'}}><input type="number" min="1" value={item.quantity} onChange={e=>updateBulkItem(idx,'quantity',e.target.value)} style={{width:'100%',padding:'6px 8px',fontSize:11,textAlign:'center'}}/></td>
-                  <td style={{padding:'8px 10px'}}><input type="number" step=".01" value={item.listPrice} onChange={e=>updateBulkItem(idx,'listPrice',e.target.value)} style={{width:'100%',padding:'6px 8px',fontSize:11}}/></td>
-                  <td className="mono" style={{padding:'8px 10px',textAlign:'right',fontSize:11,fontWeight:600}}>{fmt((parseFloat(item.listPrice)||0)*(parseInt(item.quantity)||0))}</td>
+                  <td className="mono" style={{padding:'8px 10px',textAlign:'right',fontSize:11,fontWeight:600,color:item.listPrice>0?'#0B7A3E':'#94A3B8'}}>{item.listPrice>0?fmt(item.listPrice):'—'}</td>
+                  <td className="mono" style={{padding:'8px 10px',textAlign:'right',fontSize:11,fontWeight:600,color:item.listPrice>0?'#0B7A3E':'#94A3B8'}}>{item.listPrice>0?fmt((parseFloat(item.listPrice)||0)*(parseInt(item.quantity)||0)):'—'}</td>
                   <td style={{padding:'8px 10px'}}>{bulkItems.length>1&&<button onClick={()=>removeBulkItem(idx)} style={{background:'none',border:'none',cursor:'pointer',color:'#DC2626'}}><Trash2 size={13}/></button>}</td>
                 </tr>))}</tbody>
             </table>
           </div>
-          <div style={{display:'flex',justifyContent:'flex-end',padding:'10px 0',fontSize:13,fontWeight:600}}>
-            Batch Total: <span className="mono" style={{color:'#0B7A3E',marginLeft:8}}>{fmt(bulkItems.reduce((s,i)=>(s+(parseFloat(i.listPrice)||0)*(parseInt(i.quantity)||0)),0))}</span>
+          <div style={{display:'flex',justifyContent:'flex-end',alignItems:'center',padding:'10px 0',fontSize:13,fontWeight:600}}>
+            Grand Total: <span className="mono" style={{color:'#0B7A3E',marginLeft:8,fontSize:15}}>{fmt(bulkItems.reduce((s,i)=>(s+(parseFloat(i.listPrice)||0)*(parseInt(i.quantity)||0)),0))}</span>
           </div>
         </div>
 

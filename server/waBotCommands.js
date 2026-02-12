@@ -110,11 +110,12 @@ async function handleCreateOrder(params, session) {
   if (!r.rows.length) return `❌ Part *${materialNo}* not found in catalog.`;
 
   const p = r.rows[0];
-  const total = Number(p.transfer_price || 0) * qty;
+  const unitPrice = Number(p.sg_price || p.transfer_price || p.dist_price || 0);
+  const total = unitPrice * qty;
   session.state = 'order_confirm';
-  session.data = { materialNo, description: p.description, qty, price: Number(p.transfer_price || 0), total };
+  session.data = { materialNo, description: p.description, qty, price: unitPrice, total };
 
-  return `🛒 *Ready to order:*\n\n• Part: ${p.description}\n• Material: ${materialNo}\n• Qty: ${qty}\n• Unit: ${fmtPrice(p.transfer_price)}\n• Total: ${fmtPrice(total)}\n\nReply *confirm* to place or *cancel* to abort.`;
+  return `🛒 *Ready to order:*\n\n• Part: ${p.description}\n• Material: ${materialNo}\n• Qty: ${qty}\n• Unit: ${fmtPrice(unitPrice)}\n• Total: ${fmtPrice(total)}\n\nReply *confirm* to place or *cancel* to abort.`;
 }
 
 async function handleCreateOrderMaterial(text, session) {
@@ -127,10 +128,10 @@ async function handleCreateOrderMaterial(text, session) {
 
   session.data.materialNo = materialNo;
   session.data.description = r.rows[0].description;
-  session.data.price = Number(r.rows[0].transfer_price || 0);
+  session.data.price = Number(r.rows[0].sg_price || r.rows[0].transfer_price || r.rows[0].dist_price || 0);
   session.state = 'create_order_qty';
 
-  return `✅ *${r.rows[0].description}*\nTransfer price: ${fmtPrice(r.rows[0].transfer_price)}\n\nHow many do you need? Enter quantity:`;
+  return `✅ *${r.rows[0].description}*\nUnit price: ${fmtPrice(r.rows[0].sg_price || r.rows[0].transfer_price || r.rows[0].dist_price)}\n\nHow many do you need? Enter quantity:`;
 }
 
 async function handleCreateOrderQty(text, session) {
