@@ -39,12 +39,11 @@ const STATUS_CFG = {
   Received: { color: '#0B7A3E', bg: '#E6F4ED', icon: CheckCircle },
   'Back Order': { color: '#C53030', bg: '#FEE2E2', icon: AlertTriangle },
   'Pending Approval': { color: '#7C3AED', bg: '#EDE9FE', icon: Clock },
-  Approved: { color: '#0B7A3E', bg: '#D1FAE5', icon: CheckCircle },
-  Ordered: { color: '#2563EB', bg: '#DBEAFE', icon: ShoppingCart },
+  Approved: { color: '#059669', bg: '#D1FAE5', icon: CheckCircle },
   Rejected: { color: '#DC2626', bg: '#FEE2E2', icon: X },
 };
 const Badge = ({ status }) => { const c = STATUS_CFG[status]||STATUS_CFG['Pending Approval']; const I=c.icon; return <span style={{ display:'inline-flex',alignItems:'center',gap:4,padding:'3px 10px',borderRadius:20,fontSize:11,fontWeight:600,color:c.color,background:c.bg }}><I size={12}/> {status}</span>; };
-const ArrivalBadge = ({ order }) => { if (!order) return <span style={{color:'#CBD5E1',fontSize:11}}>—</span>; if (order.arrivalDate && (order.qtyReceived||0) >= order.quantity && order.quantity > 0) return <span style={{display:'inline-flex',alignItems:'center',gap:4,padding:'3px 10px',borderRadius:20,fontSize:10,fontWeight:600,color:'#0B7A3E',background:'#D1FAE5'}}><CheckCircle size={11}/> Arrived</span>; if (order.arrivalDate && (order.qtyReceived||0) > 0 && (order.qtyReceived||0) < order.quantity) return <span style={{display:'inline-flex',alignItems:'center',gap:4,padding:'3px 10px',borderRadius:20,fontSize:10,fontWeight:600,color:'#D97706',background:'#FEF3C7'}}><AlertTriangle size={11}/> Partial</span>; if (order.status === 'Back Order') return <span style={{display:'inline-flex',alignItems:'center',gap:4,padding:'3px 10px',borderRadius:20,fontSize:10,fontWeight:600,color:'#C53030',background:'#FEE2E2'}}><AlertTriangle size={11}/> Back Order</span>; if (order.approvalStatus === 'approved' || order.status === 'Ordered') return <span style={{display:'inline-flex',alignItems:'center',gap:4,padding:'3px 10px',borderRadius:20,fontSize:10,fontWeight:600,color:'#64748B',background:'#F1F5F9'}}><Truck size={11}/> Pending</span>; return <span style={{color:'#CBD5E1',fontSize:11}}>—</span>; };
+const ArrivalBadge = ({ order }) => { if (!order) return <span style={{color:'#CBD5E1',fontSize:11}}>—</span>; if (order.status === 'Received' || (order.arrivalDate && (order.qtyReceived||0) >= order.quantity && order.quantity > 0)) return <span style={{display:'inline-flex',alignItems:'center',gap:4,padding:'3px 10px',borderRadius:20,fontSize:10,fontWeight:600,color:'#0B7A3E',background:'#D1FAE5'}}><CheckCircle size={11}/> Arrived</span>; if (order.status === 'Back Order') return <span style={{display:'inline-flex',alignItems:'center',gap:4,padding:'3px 10px',borderRadius:20,fontSize:10,fontWeight:600,color:'#C53030',background:'#FEE2E2'}}><AlertTriangle size={11}/> Back Order</span>; if (order.approvalStatus === 'approved' && order.status === 'Approved') return <span style={{display:'inline-flex',alignItems:'center',gap:4,padding:'3px 10px',borderRadius:20,fontSize:10,fontWeight:600,color:'#64748B',background:'#F1F5F9'}}><Truck size={11}/> Awaiting</span>; return <span style={{color:'#CBD5E1',fontSize:11}}>—</span>; };
 const Pill = ({ bg, color, children }) => <span className="pill" style={{ background: bg, color }}>{children}</span>;
 const Toggle = ({ active, onClick, color }) => <div onClick={onClick} style={{ width:40,height:22,borderRadius:11,background:active?(color||'#0B7A3E'):'#E2E8F0',cursor:'pointer',position:'relative',transition:'background 0.2s' }}><div style={{ width:18,height:18,borderRadius:'50%',background:'#fff',position:'absolute',top:2,left:active?20:2,transition:'left 0.2s',boxShadow:'0 1px 3px rgba(0,0,0,0.15)' }}/></div>;
 const Toast = ({ items, onDismiss }) => <div style={{ position:'fixed',top:80,right:24,zIndex:9999,display:'flex',flexDirection:'column',gap:8,maxWidth:380 }}>{items.map((n,i) => <div key={i} style={{ background:n.type==='success'?'#0B7A3E':n.type==='warning'?'#D97706':'#2563EB',color:'#fff',padding:'12px 16px',borderRadius:10,boxShadow:'0 8px 24px rgba(0,0,0,0.18)',display:'flex',alignItems:'center',gap:10,animation:'slideIn 0.3s' }}>{n.type==='success'?<CheckCircle size={18}/>:n.type==='warning'?<AlertTriangle size={18}/>:<Bell size={18}/>}<div style={{flex:1}}><div style={{fontWeight:600,fontSize:13}}>{n.title}</div><div style={{fontSize:11,opacity:0.9}}>{n.message}</div></div><button onClick={()=>onDismiss(i)} style={{background:'none',border:'none',color:'#fff',cursor:'pointer'}}><X size={14}/></button></div>)}</div>;
@@ -397,11 +396,10 @@ const [selectedUser, setSelectedUser] = useState(null);
   const stats = useMemo(() => {
     const t=orders.length, r=orders.filter(o=>o.status==='Received').length, b=orders.filter(o=>o.status==='Back Order').length;
     const pa=orders.filter(o=>o.status==='Pending Approval').length, ap=orders.filter(o=>o.status==='Approved').length;
-    const ord=orders.filter(o=>o.status==='Ordered').length;
     const rej=orders.filter(o=>o.status==='Rejected').length;
     const tc=orders.reduce((s,o)=>{const cp=catalogLookup[o.materialNo];const price=cp?(cp.sg||cp.tp||cp.dist||0):Number(o.listPrice)||0;return s+(price>0?price*o.quantity:(Number(o.totalCost)||0));},0);
     const tq=orders.reduce((s,o)=>s+(Number(o.quantity)||0),0), tr=orders.reduce((s,o)=>s+(Number(o.qtyReceived)||0),0);
-    return { total:t, received:r, backOrder:b, pendingApproval:pa, approved:ap, ordered:ord, rejected:rej, pending:pa+ap+ord, totalCost:tc, fulfillmentRate: tq>0?((tr/tq)*100).toFixed(1):0 };
+    return { total:t, received:r, backOrder:b, pendingApproval:pa, approved:ap, rejected:rej, pending:pa+ap, totalCost:tc, fulfillmentRate: tq>0?((tr/tq)*100).toFixed(1):0 };
   }, [orders, catalogLookup]);
   const singleOrderMonths = useMemo(() => [...new Set(orders.filter(o=>!o.bulkGroupId).map(o=>o.month).filter(Boolean))].sort(), [orders]);
   const filteredOrders = useMemo(() => orders.filter(o => {
@@ -417,7 +415,7 @@ const [selectedUser, setSelectedUser] = useState(null);
       const norm = o.month.replace(/^\d+_/,'').replace(/_/g,' ');
       const parts = norm.split(' ');
       const shortLabel = parts.length >= 2 ? `${parts[0].slice(0,3)} '${parts[1].slice(2)}` : norm;
-      if (!monthMap[shortLabel]) monthMap[shortLabel] = {name:shortLabel, orders:0, cost:0, received:0, backOrder:0, pending:0, approved:0, ordered:0, _sortKey:norm};
+      if (!monthMap[shortLabel]) monthMap[shortLabel] = {name:shortLabel, orders:0, cost:0, received:0, backOrder:0, pending:0, approved:0, _sortKey:norm};
       monthMap[shortLabel].orders++;
       const cp=catalogLookup[o.materialNo];const price=cp?(cp.sg||cp.tp||cp.dist||0):Number(o.listPrice)||0;
       monthMap[shortLabel].cost += (price>0?price*(Number(o.quantity)||0):(Number(o.totalCost)||0));
@@ -425,7 +423,6 @@ const [selectedUser, setSelectedUser] = useState(null);
       if (o.status==='Back Order') monthMap[shortLabel].backOrder++;
       if (o.status==='Pending Approval') monthMap[shortLabel].pending++;
       if (o.status==='Approved') monthMap[shortLabel].approved++;
-      if (o.status==='Ordered') monthMap[shortLabel].ordered++;
     });
     // Sort chronologically
     const monthOrder = {jan:0,feb:1,mar:2,apr:3,may:4,jun:5,jul:6,aug:7,sep:8,oct:9,nov:10,dec:11};
@@ -435,7 +432,7 @@ const [selectedUser, setSelectedUser] = useState(null);
       return (parseInt(ay)||0) - (parseInt(by)||0) || (monthOrder[am?.slice(0,3)]||0) - (monthOrder[bm?.slice(0,3)]||0);
     });
   }, [orders, catalogLookup]);
-  const statusPieData = useMemo(() => [{name:'Received',value:stats.received,color:'#0B7A3E'},{name:'Back Order',value:stats.backOrder,color:'#DC2626'},{name:'Ordered',value:stats.ordered,color:'#2563EB'},{name:'Approved',value:stats.approved,color:'#059669'},{name:'Pending Approval',value:stats.pendingApproval,color:'#D97706'},{name:'Rejected',value:stats.rejected,color:'#991B1B'}].filter(s=>s.value>0), [stats]);
+  const statusPieData = useMemo(() => [{name:'Received',value:stats.received,color:'#0B7A3E'},{name:'Back Order',value:stats.backOrder,color:'#DC2626'},{name:'Approved',value:stats.approved,color:'#059669'},{name:'Pending Approval',value:stats.pendingApproval,color:'#D97706'},{name:'Rejected',value:stats.rejected,color:'#991B1B'}].filter(s=>s.value>0), [stats]);
   const allOrdersMonths = useMemo(() => [...new Set([...orders.map(o=>o.month),...bulkGroups.map(g=>g.month)].filter(Boolean))].sort(), [orders, bulkGroups]);
   const allOrdersCombined = useMemo(() => {
     let combined = orders.map(o=>({...o, orderType: o.bulkGroupId ? 'Bulk' : 'Single'}));
@@ -885,7 +882,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
   const batchStatusOrders = (status) => {
     if (!selOrders.size) return;
     const ids = [...selOrders];
-    const approvalStatus = (status === 'Approved' || status === 'Ordered') ? 'approved' : status === 'Rejected' ? 'rejected' : undefined;
+    const approvalStatus = status === 'Approved' ? 'approved' : status === 'Rejected' ? 'rejected' : undefined;
     setOrders(prev => prev.map(o => selOrders.has(o.id) ? { ...o, status, ...(approvalStatus ? { approvalStatus } : {}) } : o));
     dbSync(api.bulkUpdateOrderStatus(ids, status, approvalStatus), 'Order status update not saved');
     notify('Batch Update', `${ids.length} orders → ${status}`, 'success');
@@ -2400,7 +2397,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
     <div style={{width:1,height:24,background:'#E2E8F0'}}/>
     <div style={{display:'flex',alignItems:'center',gap:6}}>
       <span style={{fontSize:11,fontWeight:600,color:'#64748B',textTransform:'uppercase',letterSpacing:.5}}>Status</span>
-      {['All','Pending Approval','Approved','Ordered','Received','Back Order','Rejected'].map(s=><button key={s} onClick={()=>setAllOrdersStatus(s)} style={{padding:'5px 12px',borderRadius:20,border:allOrdersStatus===s?'none':'1px solid #E2E8F0',background:allOrdersStatus===s?'#0B7A3E':'#fff',color:allOrdersStatus===s?'#fff':'#64748B',fontSize:11,fontWeight:500,cursor:'pointer',fontFamily:'inherit'}}>{s}</button>)}
+      {['All','Pending Approval','Approved','Received','Back Order','Rejected'].map(s=><button key={s} onClick={()=>setAllOrdersStatus(s)} style={{padding:'5px 12px',borderRadius:20,border:allOrdersStatus===s?'none':'1px solid #E2E8F0',background:allOrdersStatus===s?'#0B7A3E':'#fff',color:allOrdersStatus===s?'#fff':'#64748B',fontSize:11,fontWeight:500,cursor:'pointer',fontFamily:'inherit'}}>{s}</button>)}
     </div>
   </div>
 
@@ -2460,7 +2457,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
 {page==='orders'&&(<div>
   <div style={{display:'flex',justifyContent:'space-between',marginBottom:20,flexWrap:'wrap',gap:10}}>
     <div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap'}}>
-      {['All','Pending Approval','Approved','Ordered','Received','Back Order','Rejected'].map(s=><button key={s} onClick={()=>setStatusFilter(s)} style={{padding:'6px 14px',borderRadius:20,border:statusFilter===s?'none':'1px solid #E2E8F0',background:statusFilter===s?'#0B7A3E':'#fff',color:statusFilter===s?'#fff':'#64748B',fontSize:12,fontWeight:500,cursor:'pointer',fontFamily:'inherit'}}>{s} ({s==='All'?orders.filter(o=>!o.bulkGroupId).length:orders.filter(o=>!o.bulkGroupId&&o.status===s).length})</button>)}
+      {['All','Pending Approval','Approved','Received','Back Order','Rejected'].map(s=><button key={s} onClick={()=>setStatusFilter(s)} style={{padding:'6px 14px',borderRadius:20,border:statusFilter===s?'none':'1px solid #E2E8F0',background:statusFilter===s?'#0B7A3E':'#fff',color:statusFilter===s?'#fff':'#64748B',fontSize:12,fontWeight:500,cursor:'pointer',fontFamily:'inherit'}}>{s} ({s==='All'?orders.filter(o=>!o.bulkGroupId).length:orders.filter(o=>!o.bulkGroupId&&o.status===s).length})</button>)}
       <div style={{width:1,height:24,background:'#E2E8F0'}}/>
       <select value={singleOrderMonth} onChange={e=>setSingleOrderMonth(e.target.value)} style={{padding:'6px 10px',borderRadius:8,border:'1px solid #E2E8F0',fontSize:12,fontFamily:'inherit',cursor:'pointer',color:'#1A202C'}}>
         <option value="All">All Months</option>
@@ -2476,7 +2473,6 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
     <BatchBtn onClick={batchApprovalNotifyOrders} bg="#7C3AED" icon={Send}>Order Approval & Notify</BatchBtn>
     <BatchBtn onClick={()=>batchStatusOrders('Pending Approval')} bg="#D97706" icon={Clock}>Pending Approval</BatchBtn>
     <BatchBtn onClick={()=>batchStatusOrders('Approved')} bg="#059669" icon={Check}>Approved</BatchBtn>
-    <BatchBtn onClick={()=>batchStatusOrders('Ordered')} bg="#2563EB" icon={ShoppingCart}>Ordered</BatchBtn>
     <BatchBtn onClick={()=>batchStatusOrders('Rejected')} bg="#991B1B" icon={X}>Rejected</BatchBtn>
     <BatchBtn onClick={batchDeleteOrders} bg="#DC2626" icon={Trash2}>Delete</BatchBtn>
   </BatchBar>}
@@ -2591,7 +2587,6 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
         <BatchBtn onClick={batchApprovalNotifyOrders} bg="#7C3AED" icon={Send}>Order Approval & Notify</BatchBtn>
         <BatchBtn onClick={()=>batchStatusOrders('Pending Approval')} bg="#D97706" icon={Clock}>Pending Approval</BatchBtn>
         <BatchBtn onClick={()=>batchStatusOrders('Approved')} bg="#059669" icon={Check}>Approved</BatchBtn>
-        <BatchBtn onClick={()=>batchStatusOrders('Ordered')} bg="#2563EB" icon={ShoppingCart}>Ordered</BatchBtn>
         <BatchBtn onClick={()=>batchStatusOrders('Rejected')} bg="#991B1B" icon={X}>Rejected</BatchBtn>
         <BatchBtn onClick={batchDeleteOrders} bg="#DC2626" icon={Trash2}>Delete</BatchBtn>
       </BatchBar> : null; })()}
@@ -2631,10 +2626,10 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
 {/* ═══════════ ANALYTICS ═══════════ */}
 {page==='analytics'&&(<div>
   {/* Summary Cards */}
-  {(()=>{const avgOrderVal=stats.total>0?stats.totalCost/stats.total:0;const approvalRate=stats.total>0?((stats.received+stats.approved+stats.ordered)/(stats.total)*100).toFixed(1):0;const avgLead=leadTimeData.length>0?Math.round(leadTimeData.reduce((s,d)=>s+d.avgDays,0)/leadTimeData.length):null;return(
+  {(()=>{const avgOrderVal=stats.total>0?stats.totalCost/stats.total:0;const approvalRate=stats.total>0?((stats.received+stats.approved)/(stats.total)*100).toFixed(1):0;const avgLead=leadTimeData.length>0?Math.round(leadTimeData.reduce((s,d)=>s+d.avgDays,0)/leadTimeData.length):null;return(
   <div style={{display:'grid',gridTemplateColumns:'repeat(5,1fr)',gap:14,marginBottom:24}}>
     {[
-      {l:'Total Orders',v:fmtNum(stats.total),sub:`${stats.ordered} ordered, ${stats.received} received`,bg:'linear-gradient(135deg,#006837,#0B9A4E)',i:Package},
+      {l:'Total Orders',v:fmtNum(stats.total),sub:`${stats.received} received`,bg:'linear-gradient(135deg,#006837,#0B9A4E)',i:Package},
       {l:'Total Spend',v:fmt(stats.totalCost),sub:`Avg ${fmt(avgOrderVal)}/order`,bg:'linear-gradient(135deg,#1E40AF,#3B82F6)',i:DollarSign},
       {l:'Fulfillment',v:`${stats.fulfillmentRate}%`,sub:`${stats.backOrder} back orders`,bg:'linear-gradient(135deg,#5B21B6,#7C3AED)',i:TrendingUp},
       {l:'Approval Rate',v:`${approvalRate}%`,sub:`${stats.pendingApproval} pending`,bg:'linear-gradient(135deg,#047857,#10B981)',i:CheckCircle},
@@ -3102,7 +3097,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
     const ao = orders.filter(o=>o.approvalStatus==='approved'&&(arrivalMonthFilter==='All'||o.month===arrivalMonthFilter));
     return <div className="grid-4" style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:14,marginBottom:24}}>
     {[
-      {l:'Awaiting Arrival',v:ao.filter(o=>o.status==='Back Order'||o.status==='Approved'||o.status==='Ordered').length,c:'#D97706'},
+      {l:'Awaiting Arrival',v:ao.filter(o=>o.status==='Approved').length,c:'#D97706'},
       {l:'Fully Received',v:ao.filter(o=>(o.qtyReceived||0)>=o.quantity&&o.quantity>0).length,c:'#0B7A3E'},
       {l:'Partial Received',v:ao.filter(o=>(o.qtyReceived||0)>0&&(o.qtyReceived||0)<o.quantity).length,c:'#2563EB'},
       {l:'Back Orders',v:ao.filter(o=>o.status==='Back Order').length,c:'#DC2626'}
@@ -3300,13 +3295,13 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
 
   {/* All Orders - Arrival Status (approved orders only) */}
   {(()=>{
-    const statusTabs = ['All','Ordered','Approved','Back Order','Received'];
+    const statusTabs = ['All','Approved','Back Order','Received'];
     const typeTabs = ['All','Bulk','Single'];
     const approvedAll = orders.filter(o=>o.approvalStatus==='approved'&&(arrivalMonthFilter==='All'||o.month===arrivalMonthFilter));
     const approvedOrders = arrivalTypeFilter==='Bulk' ? approvedAll.filter(o=>o.bulkGroupId) : arrivalTypeFilter==='Single' ? approvedAll.filter(o=>!o.bulkGroupId) : approvedAll;
     const arrivalFiltered = arrivalStatusFilter==='All' ? approvedOrders : approvedOrders.filter(o=>o.status===arrivalStatusFilter);
     // Sort: Back Order first, then Ordered, then others
-    const statusPriority = {'Back Order':0,'Ordered':1,'Approved':2,'Pending Approval':3,'Rejected':4,'Received':5};
+    const statusPriority = {'Back Order':0,'Approved':1,'Pending Approval':2,'Rejected':3,'Received':4};
     const arrivalSorted = [...arrivalFiltered].sort((a,b)=>(statusPriority[a.status]??9)-(statusPriority[b.status]??9));
     return (
     <div className="card" style={{overflow:'hidden'}}>
