@@ -5,7 +5,7 @@ import { query } from './db.js';
 const PAGE_SIZE = 5;
 const fmtPrice = (n) => n != null && Number(n) > 0 ? `S$${Number(n).toFixed(2)}` : '—';
 const fmtDate = (d) => d ? new Date(d).toLocaleDateString('en-SG') : '—';
-const ALLOWED_STATUSES = ['Pending', 'Pending Approval', 'Approved', 'Ordered', 'Received', 'Back Order', 'Cancelled'];
+const ALLOWED_STATUSES = ['Pending', 'Pending Approval', 'Approved', 'Received', 'Rejected', 'Cancelled'];
 
 async function logBotAudit(action, entityType, entityId, details) {
   try {
