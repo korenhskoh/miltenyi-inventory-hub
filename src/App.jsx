@@ -160,6 +160,8 @@ export default function App() {
   const [orders, setOrders] = useState([]);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('All');
+  const [singleOrderMonth, setSingleOrderMonth] = useState('All');
+  const [arrivalMonthFilter, setArrivalMonthFilter] = useState('All');
   const [allOrdersTypeFilter, setAllOrdersTypeFilter] = useState('All');
   const [allOrdersMonth, setAllOrdersMonth] = useState('All');
   const [allOrdersStatus, setAllOrdersStatus] = useState('All');
@@ -395,11 +397,13 @@ const [selectedUser, setSelectedUser] = useState(null);
     const tc=orders.reduce((s,o)=>s+(Number(o.totalCost)||0),0), tq=orders.reduce((s,o)=>s+(Number(o.quantity)||0),0), tr=orders.reduce((s,o)=>s+(Number(o.qtyReceived)||0),0);
     return { total:t, received:r, backOrder:b, pending:p, totalCost:tc, fulfillmentRate: tq>0?((tr/tq)*100).toFixed(1):0 };
   }, [orders]);
+  const singleOrderMonths = useMemo(() => [...new Set(orders.filter(o=>!o.bulkGroupId).map(o=>o.month).filter(Boolean))].sort(), [orders]);
   const filteredOrders = useMemo(() => orders.filter(o => {
     if (o.bulkGroupId) return false;
     const ms = !search || o.materialNo.toLowerCase().includes(search.toLowerCase()) || o.description.toLowerCase().includes(search.toLowerCase()) || o.orderBy.toLowerCase().includes(search.toLowerCase());
-    return ms && (statusFilter==='All'||o.status===statusFilter);
-  }), [orders, search, statusFilter]);
+    const mm = singleOrderMonth==='All' || o.month===singleOrderMonth;
+    return ms && mm && (statusFilter==='All'||o.status===statusFilter);
+  }), [orders, search, statusFilter, singleOrderMonth]);
   const monthlyData = useMemo(() => {
     const monthMap = {};
     orders.forEach(o => {
@@ -2438,8 +2442,15 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
 
 {/* ═══════════ SINGLE ORDERS ═══════════ */}
 {page==='orders'&&(<div>
-  <div style={{display:'flex',justifyContent:'space-between',marginBottom:20}}>
-    <div style={{display:'flex',gap:8}}>{['All','Pending Approval','Approved','Received','Back Order','Rejected'].map(s=><button key={s} onClick={()=>setStatusFilter(s)} style={{padding:'6px 14px',borderRadius:20,border:statusFilter===s?'none':'1px solid #E2E8F0',background:statusFilter===s?'#0B7A3E':'#fff',color:statusFilter===s?'#fff':'#64748B',fontSize:12,fontWeight:500,cursor:'pointer',fontFamily:'inherit'}}>{s} ({s==='All'?orders.filter(o=>!o.bulkGroupId).length:orders.filter(o=>!o.bulkGroupId&&o.status===s).length})</button>)}</div>
+  <div style={{display:'flex',justifyContent:'space-between',marginBottom:20,flexWrap:'wrap',gap:10}}>
+    <div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap'}}>
+      {['All','Pending Approval','Approved','Received','Back Order','Rejected'].map(s=><button key={s} onClick={()=>setStatusFilter(s)} style={{padding:'6px 14px',borderRadius:20,border:statusFilter===s?'none':'1px solid #E2E8F0',background:statusFilter===s?'#0B7A3E':'#fff',color:statusFilter===s?'#fff':'#64748B',fontSize:12,fontWeight:500,cursor:'pointer',fontFamily:'inherit'}}>{s} ({s==='All'?orders.filter(o=>!o.bulkGroupId).length:orders.filter(o=>!o.bulkGroupId&&o.status===s).length})</button>)}
+      <div style={{width:1,height:24,background:'#E2E8F0'}}/>
+      <select value={singleOrderMonth} onChange={e=>setSingleOrderMonth(e.target.value)} style={{padding:'6px 10px',borderRadius:8,border:'1px solid #E2E8F0',fontSize:12,fontFamily:'inherit',cursor:'pointer',color:'#1A202C'}}>
+        <option value="All">All Months</option>
+        {singleOrderMonths.map(m=><option key={m} value={m}>{m}</option>)}
+      </select>
+    </div>
     <div style={{display:'flex',gap:8}}>
       <ExportDropdown data={filteredOrders} columns={[{key:'id',label:'Order ID'},{key:'materialNo',label:'Material No'},{key:'description',label:'Description'},{key:'quantity',label:'Qty'},{key:'listPrice',label:'List Price',fmt:v=>v>0?fmt(v):''},{key:'totalCost',label:'Total Cost',fmt:v=>v>0?fmt(v):''},{key:'orderDate',label:'Order Date',fmt:v=>fmtDate(v)},{key:'orderBy',label:'Ordered By'},{key:'engineer',label:'Engineer'},{key:'status',label:'Status'}]} filename="single-orders" title="Single Orders Export"/>
       <button className="bp" onClick={()=>setShowNewOrder(true)}><Plus size={14}/> New Order</button>
@@ -3060,22 +3071,40 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
     <p style={{fontSize:13,color:'#64748B'}}>Check and verify material arrivals from single orders and bulk batches</p>
   </div>
 
-  {/* Stats Cards */}
-  <div className="grid-4" style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:14,marginBottom:24}}>
+  {/* Stats Cards — approved orders only, respects month filter */}
+  {(()=>{
+    const ao = orders.filter(o=>o.approvalStatus==='approved'&&(arrivalMonthFilter==='All'||o.month===arrivalMonthFilter));
+    return <div className="grid-4" style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:14,marginBottom:24}}>
     {[
-      {l:'Awaiting Arrival',v:orders.filter(o=>o.status==='Back Order'||o.status==='Approved').length,c:'#D97706'},
-      {l:'Fully Received',v:orders.filter(o=>(o.qtyReceived||0)>=o.quantity&&o.quantity>0).length,c:'#0B7A3E'},
-      {l:'Partial Received',v:orders.filter(o=>(o.qtyReceived||0)>0&&(o.qtyReceived||0)<o.quantity).length,c:'#2563EB'},
-      {l:'Back Orders',v:orders.filter(o=>o.status==='Back Order').length,c:'#DC2626'}
+      {l:'Awaiting Arrival',v:ao.filter(o=>o.status==='Back Order'||o.status==='Approved').length,c:'#D97706'},
+      {l:'Fully Received',v:ao.filter(o=>(o.qtyReceived||0)>=o.quantity&&o.quantity>0).length,c:'#0B7A3E'},
+      {l:'Partial Received',v:ao.filter(o=>(o.qtyReceived||0)>0&&(o.qtyReceived||0)<o.quantity).length,c:'#2563EB'},
+      {l:'Back Orders',v:ao.filter(o=>o.status==='Back Order').length,c:'#DC2626'}
     ].map((s,i)=><div key={i} className="card" style={{padding:'18px 22px',borderLeft:`3px solid ${s.c}`}}><div style={{fontSize:11,color:'#94A3B8',textTransform:'uppercase',letterSpacing:.5,marginBottom:4}}>{s.l}</div><div className="mono" style={{fontSize:28,fontWeight:700,color:s.c}}>{s.v}</div></div>)}
+  </div>;
+  })()}
+
+  {/* Month Filter for Part Arrival */}
+  <div style={{display:'flex',gap:10,alignItems:'center',marginBottom:16}}>
+    <span style={{fontSize:12,fontWeight:600,color:'#64748B'}}>Month</span>
+    <select value={arrivalMonthFilter} onChange={e=>setArrivalMonthFilter(e.target.value)} style={{padding:'6px 10px',borderRadius:8,border:'1px solid #E2E8F0',fontSize:12,fontFamily:'inherit',cursor:'pointer',color:'#1A202C'}}>
+      <option value="All">All Months</option>
+      {[...new Set([...orders.filter(o=>o.approvalStatus==='approved').map(o=>o.month),...bulkGroups.filter(g=>g.status==='Approved'||orders.some(o=>o.bulkGroupId===g.id&&o.approvalStatus==='approved')).map(g=>g.month)].filter(Boolean))].sort().map(m=><option key={m} value={m}>{m}</option>)}
+    </select>
   </div>
 
-  {/* Bulk Orders to Check */}
+  {/* Bulk Orders to Check — only approved */}
   <div className="card" style={{padding:'20px 24px',marginBottom:20}}>
     <h3 style={{fontSize:15,fontWeight:700,marginBottom:16}}>Bulk Orders - Arrival Verification</h3>
     <div style={{display:'grid',gap:12}}>
-      {bulkGroups.map(bg=>{
-        const bgOrders = orders.filter(o=>o.bulkGroupId===bg.id);
+      {bulkGroups.filter(bg=>{
+        const bgOrds = orders.filter(o=>o.bulkGroupId===bg.id);
+        const hasApproved = bgOrds.some(o=>o.approvalStatus==='approved');
+        if (!hasApproved) return false;
+        if (arrivalMonthFilter!=='All' && bg.month!==arrivalMonthFilter) return false;
+        return true;
+      }).map(bg=>{
+        const bgOrders = orders.filter(o=>o.bulkGroupId===bg.id&&o.approvalStatus==='approved');
         const fullyReceived = bgOrders.filter(o=>o.qtyReceived>=o.quantity&&o.quantity>0).length;
         const pending = bgOrders.filter(o=>o.qtyReceived<o.quantity).length;
         const hasBackOrder = bgOrders.some(o=>o.backOrder<0);
@@ -3200,7 +3229,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
 
   {/* Single Orders - Arrival Verification */}
   {(()=>{
-    const indivOrders = orders.filter(o=>!o.bulkGroupId&&o.approvalStatus==='approved'&&o.quantity>0);
+    const indivOrders = orders.filter(o=>!o.bulkGroupId&&o.approvalStatus==='approved'&&o.quantity>0&&(arrivalMonthFilter==='All'||o.month===arrivalMonthFilter));
     if (!indivOrders.length) return null;
     return (
       <div className="card" style={{padding:'20px 24px',marginBottom:20}}>
@@ -3243,10 +3272,11 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
     );
   })()}
 
-  {/* All Orders - Arrival Status */}
+  {/* All Orders - Arrival Status (approved orders only) */}
   {(()=>{
-    const statusTabs = ['All','Pending Approval','Approved','Back Order','Received','Rejected'];
-    const arrivalFiltered = arrivalStatusFilter==='All' ? orders : orders.filter(o=>o.status===arrivalStatusFilter);
+    const statusTabs = ['All','Approved','Back Order','Received'];
+    const approvedOrders = orders.filter(o=>o.approvalStatus==='approved'&&(arrivalMonthFilter==='All'||o.month===arrivalMonthFilter));
+    const arrivalFiltered = arrivalStatusFilter==='All' ? approvedOrders : approvedOrders.filter(o=>o.status===arrivalStatusFilter);
     // Sort: Back Order first, then Pending, then others
     const statusPriority = {'Back Order':0,'Pending Approval':1,'Approved':2,'Rejected':3,'Received':4};
     const arrivalSorted = [...arrivalFiltered].sort((a,b)=>(statusPriority[a.status]??9)-(statusPriority[b.status]??9));
@@ -3257,13 +3287,13 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
           <span style={{fontWeight:600,fontSize:14}}>All Orders - Arrival Status</span>
           <div style={{display:'flex',alignItems:'center',gap:10}}>
             <ExportDropdown data={arrivalSorted} columns={[{key:'id',label:'Order ID'},{key:'materialNo',label:'Material No'},{key:'description',label:'Description'},{key:'quantity',label:'Qty Ordered'},{key:'qtyReceived',label:'Qty Received',fmt:v=>v||0},{key:'backOrder',label:'Back Order',fmt:(v,row)=>(row.qtyReceived||0)-row.quantity},{key:'arrivalDate',label:'Arrival Date',fmt:v=>fmtDate(v)},{key:'status',label:'Status'}]} filename="part-arrival" title="Part Arrival - Arrival Status"/>
-            <span style={{fontSize:11,color:'#94A3B8'}}>{arrivalSorted.length} of {orders.length} orders</span>
+            <span style={{fontSize:11,color:'#94A3B8'}}>{arrivalSorted.length} of {approvedOrders.length} approved orders</span>
           </div>
         </div>
         <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
           {statusTabs.map(s=>{
-            const cnt = s==='All'?orders.length:orders.filter(o=>o.status===s).length;
-            return <button key={s} onClick={()=>setArrivalStatusFilter(s)} style={{padding:'5px 12px',borderRadius:20,border:arrivalStatusFilter===s?'none':'1px solid #E2E8F0',background:arrivalStatusFilter===s?(s==='Back Order'?'#FEE2E2':s==='Received'?'#D1FAE5':s==='Approved'?'#D1FAE5':s==='Pending Approval'?'#EDE9FE':s==='Rejected'?'#FEE2E2':'#1E293B'):'#fff',color:arrivalStatusFilter===s?(s==='Back Order'?'#C53030':s==='Received'?'#059669':s==='Approved'?'#059669':s==='Pending Approval'?'#7C3AED':s==='Rejected'?'#DC2626':'#fff'):'#64748B',fontSize:11,fontWeight:600,cursor:'pointer'}}>{s} ({cnt})</button>;
+            const cnt = s==='All'?approvedOrders.length:approvedOrders.filter(o=>o.status===s).length;
+            return <button key={s} onClick={()=>setArrivalStatusFilter(s)} style={{padding:'5px 12px',borderRadius:20,border:arrivalStatusFilter===s?'none':'1px solid #E2E8F0',background:arrivalStatusFilter===s?(s==='Back Order'?'#FEE2E2':s==='Received'?'#D1FAE5':s==='Approved'?'#D1FAE5':'#1E293B'):'#fff',color:arrivalStatusFilter===s?(s==='Back Order'?'#C53030':s==='Received'?'#059669':s==='Approved'?'#059669':'#fff'):'#64748B',fontSize:11,fontWeight:600,cursor:'pointer'}}>{s} ({cnt})</button>;
           })}
         </div>
       </div>
