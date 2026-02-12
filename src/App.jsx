@@ -3317,8 +3317,8 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
         </div>
         <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
           {statusTabs.map(s=>{
-            const cnt = s==='All'?approvedOrders.length:approvedOrders.filter(o=>o.status===s).length;
-            return <button key={s} onClick={()=>setArrivalStatusFilter(s)} style={{padding:'5px 12px',borderRadius:20,border:arrivalStatusFilter===s?'none':'1px solid #E2E8F0',background:arrivalStatusFilter===s?(s==='Back Order'?'#FEE2E2':s==='Received'?'#D1FAE5':s==='Approved'?'#D1FAE5':'#1E293B'):'#fff',color:arrivalStatusFilter===s?(s==='Back Order'?'#C53030':s==='Received'?'#059669':s==='Approved'?'#059669':'#fff'):'#64748B',fontSize:11,fontWeight:600,cursor:'pointer'}}>{s} ({cnt})</button>;
+            const cnt = s==='All'?approvedOrders.length:approvedOrders.filter(o=>getArrivalCond(o)===s).length;
+            return <button key={s} onClick={()=>setArrivalStatusFilter(s)} style={{padding:'5px 12px',borderRadius:20,border:arrivalStatusFilter===s?'none':'1px solid #E2E8F0',background:arrivalStatusFilter===s?(s==='Back Order'?'#FEE2E2':s==='Arrived'?'#D1FAE5':s==='Awaiting'?'#FEF3C7':'#1E293B'):'#fff',color:arrivalStatusFilter===s?(s==='Back Order'?'#C53030':s==='Arrived'?'#059669':s==='Awaiting'?'#D97706':'#fff'):'#64748B',fontSize:11,fontWeight:600,cursor:'pointer'}}>{s} ({cnt})</button>;
           })}
         </div>
       </div>
@@ -3334,7 +3334,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
             <td className="td" style={{fontWeight:600,textAlign:'center',color:(o.qtyReceived||0)>=o.quantity?'#0B7A3E':'#D97706'}}>{o.qtyReceived||0}</td>
             <td className="td" style={{fontWeight:600,textAlign:'center',color:(o.backOrder||0)<0?'#DC2626':'#0B7A3E'}}>{(o.backOrder||0)<0?o.backOrder:'—'}</td>
             <td className="td" style={{color:o.arrivalDate?'#1A202C':'#94A3B8',fontSize:11}}>{o.arrivalDate?fmtDate(o.arrivalDate):'—'}</td>
-            <td className="td"><Badge status={o.status}/></td>
+            <td className="td"><ArrivalBadge order={o}/></td>
           </tr>)}</tbody>
         </table>
       </div>
