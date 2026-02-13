@@ -1,5 +1,5 @@
 CREATE TABLE IF NOT EXISTS users (
-  id VARCHAR(20) PRIMARY KEY,
+  id VARCHAR(50) PRIMARY KEY,
   username VARCHAR(50) UNIQUE NOT NULL,
   password_hash VARCHAR(255) NOT NULL,
   name VARCHAR(100) NOT NULL,
@@ -12,7 +12,7 @@ CREATE TABLE IF NOT EXISTS users (
 );
 
 CREATE TABLE IF NOT EXISTS orders (
-  id VARCHAR(20) PRIMARY KEY,
+  id VARCHAR(50) PRIMARY KEY,
   material_no VARCHAR(30),
   description TEXT,
   quantity INTEGER DEFAULT 1,
@@ -32,12 +32,12 @@ CREATE TABLE IF NOT EXISTS orders (
   approval_sent_date DATE,
   month VARCHAR(30),
   year VARCHAR(4),
-  bulk_group_id VARCHAR(20),
+  bulk_group_id VARCHAR(50),
   created_at TIMESTAMP DEFAULT NOW()
 );
 
 CREATE TABLE IF NOT EXISTS bulk_groups (
-  id VARCHAR(20) PRIMARY KEY,
+  id VARCHAR(50) PRIMARY KEY,
   month VARCHAR(30),
   created_by VARCHAR(100),
   items INTEGER DEFAULT 0,
@@ -47,7 +47,7 @@ CREATE TABLE IF NOT EXISTS bulk_groups (
 );
 
 CREATE TABLE IF NOT EXISTS stock_checks (
-  id VARCHAR(20) PRIMARY KEY,
+  id VARCHAR(50) PRIMARY KEY,
   date DATE,
   checked_by VARCHAR(100),
   items INTEGER DEFAULT 0,
@@ -57,7 +57,7 @@ CREATE TABLE IF NOT EXISTS stock_checks (
 );
 
 CREATE TABLE IF NOT EXISTS notif_log (
-  id VARCHAR(20) PRIMARY KEY,
+  id VARCHAR(50) PRIMARY KEY,
   type VARCHAR(20),
   recipient VARCHAR(255),
   subject TEXT,
@@ -66,8 +66,8 @@ CREATE TABLE IF NOT EXISTS notif_log (
 );
 
 CREATE TABLE IF NOT EXISTS pending_approvals (
-  id VARCHAR(30) PRIMARY KEY,
-  order_id VARCHAR(20),
+  id VARCHAR(50) PRIMARY KEY,
+  order_id VARCHAR(50),
   order_type VARCHAR(20),
   description TEXT,
   requested_by VARCHAR(100),
@@ -154,8 +154,18 @@ CREATE TABLE IF NOT EXISTS machines (
 );
 
 -- Migration: Add bulk_group_id for explicit bulk group linking
-ALTER TABLE orders ADD COLUMN IF NOT EXISTS bulk_group_id VARCHAR(20);
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS bulk_group_id VARCHAR(50);
 -- NOTE: Backfill migration removed — it ran on every server start and
 -- incorrectly linked single orders to bulk groups by month match.
 -- Orders are now linked to bulk groups only via explicit user action.
 CREATE INDEX IF NOT EXISTS idx_orders_bulk_group_id ON orders(bulk_group_id);
+
+-- Migration: Widen VARCHAR ID columns for timestamp-based IDs (ORD-<13digits>-<4chars> = 22+ chars)
+ALTER TABLE users ALTER COLUMN id TYPE VARCHAR(50);
+ALTER TABLE orders ALTER COLUMN id TYPE VARCHAR(50);
+ALTER TABLE orders ALTER COLUMN bulk_group_id TYPE VARCHAR(50);
+ALTER TABLE bulk_groups ALTER COLUMN id TYPE VARCHAR(50);
+ALTER TABLE stock_checks ALTER COLUMN id TYPE VARCHAR(50);
+ALTER TABLE notif_log ALTER COLUMN id TYPE VARCHAR(50);
+ALTER TABLE pending_approvals ALTER COLUMN id TYPE VARCHAR(50);
+ALTER TABLE pending_approvals ALTER COLUMN order_id TYPE VARCHAR(50);
