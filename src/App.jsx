@@ -705,9 +705,32 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
         if (saved.customLogo) setCustomLogo(saved.customLogo);
         if (saved.stockChecks?.length) setStockChecks(saved.stockChecks);
       } catch (e) { console.warn('Failed to load saved data:', e); }
+
+      // 4. Check WhatsApp connection status on load
+      try {
+        const waRes = await fetch('/api/whatsapp/status');
+        const waData = await waRes.json();
+        if (waData.status === 'connected') {
+          setWaConnected(true);
+          setWaSessionInfo(waData.sessionInfo);
+        }
+      } catch {}
     }
     loadOnMount().finally(() => setIsLoading(false));
   }, []);
+
+  // Periodic WhatsApp status sync (every 30s) — keeps sidebar indicator accurate
+  useEffect(() => {
+    const iv = setInterval(async () => {
+      try {
+        const r = await fetch('/api/whatsapp/status');
+        const d = await r.json();
+        if (d.status === 'connected' && !waConnected) { setWaConnected(true); setWaSessionInfo(d.sessionInfo); }
+        else if (d.status !== 'connected' && waConnected) { setWaConnected(false); setWaSessionInfo(null); }
+      } catch {}
+    }, 30000);
+    return () => clearInterval(iv);
+  }, [waConnected]);
 
   // Targeted data refresh when switching tabs
   const refreshPageData = useCallback(async (pageId) => {

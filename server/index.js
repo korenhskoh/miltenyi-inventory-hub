@@ -55,7 +55,7 @@ let qrCode = null;
 let connectionStatus = 'disconnected';
 let sessionInfo = null;
 let waReconnectAttempts = 0;
-const WA_MAX_RECONNECTS = 5;
+const WA_MAX_RECONNECTS = 10;
 
 // Logger (silent for cleaner output)
 const logger = pino({ level: 'silent' });
@@ -103,10 +103,15 @@ async function connectWhatsApp() {
 
         if (shouldReconnect && waReconnectAttempts < WA_MAX_RECONNECTS) {
           waReconnectAttempts++;
-          console.log(`WhatsApp reconnecting (attempt ${waReconnectAttempts}/${WA_MAX_RECONNECTS})...`);
-          setTimeout(connectWhatsApp, 5000);
+          const delay = Math.min(3000 * waReconnectAttempts, 30000); // 3s, 6s, 9s... max 30s
+          console.log(`WhatsApp reconnecting in ${delay/1000}s (attempt ${waReconnectAttempts}/${WA_MAX_RECONNECTS})...`);
+          setTimeout(connectWhatsApp, delay);
+        } else if (!shouldReconnect) {
+          console.log('WhatsApp logged out by user — clearing auth');
+          try { await dbQuery('DELETE FROM wa_auth'); } catch (_) {}
+          connectionStatus = 'disconnected';
         } else {
-          console.log('WhatsApp reconnection stopped — max attempts reached or logged out');
+          console.log('WhatsApp reconnection stopped — max attempts reached');
           connectionStatus = 'disconnected';
         }
       } else if (connection === 'open') {
@@ -186,8 +191,10 @@ app.get('/api/whatsapp/status', (req, res) => {
   });
 });
 
-// Connect WhatsApp (generate QR)
+// Connect WhatsApp (generate QR or restore session)
 app.post('/api/whatsapp/connect', async (req, res) => {
+  const forceNew = req.body?.forceNew === true;
+
   if (connectionStatus === 'connected') {
     return res.json({ success: true, message: 'Already connected', status: 'connected', sessionInfo });
   }
@@ -198,23 +205,30 @@ app.post('/api/whatsapp/connect', async (req, res) => {
   }
 
   try {
-    // Clear stale auth to force fresh QR generation (avoids slow reconnect attempts)
-    if (connectionStatus === 'disconnected') {
+    // Only clear auth if explicitly forced (user wants fresh QR)
+    if (forceNew && connectionStatus === 'disconnected') {
       try { await dbQuery('DELETE FROM wa_auth'); } catch (e) { /* ignore */ }
-      qrCode = null;
-      sock = null;
+      console.log('Auth cleared — forcing fresh QR');
     }
 
-    connectWhatsApp(); // fire and forget — don't await (QR comes via event)
+    // Reset state for reconnect
+    qrCode = null;
+    if (sock) {
+      try { sock.ev.removeAllListeners(); } catch (_) {}
+      sock = null;
+    }
+    waReconnectAttempts = 0;
 
-    // Wait up to 15s for QR code to be generated
+    connectWhatsApp(); // fire and forget — uses saved auth if available
+
+    // Wait up to 15s for QR code or auto-connect via saved session
     const start = Date.now();
     while (Date.now() - start < 15000) {
       if (qrCode && connectionStatus === 'awaiting_scan') {
         return res.json({ success: true, message: 'QR ready', status: 'awaiting_scan', qrCode });
       }
       if (connectionStatus === 'connected') {
-        return res.json({ success: true, message: 'Already connected', status: 'connected', sessionInfo });
+        return res.json({ success: true, message: 'Connected via saved session', status: 'connected', sessionInfo });
       }
       if (connectionStatus === 'error') {
         return res.status(500).json({ success: false, error: 'Connection failed' });
@@ -223,7 +237,7 @@ app.post('/api/whatsapp/connect', async (req, res) => {
     }
 
     // Timeout but connection initiated — frontend can poll
-    res.json({ success: true, message: 'Connection initiated. Polling for QR.', status: connectionStatus, qrCode: qrCode || null });
+    res.json({ success: true, message: 'Connection initiated. Polling for status.', status: connectionStatus, qrCode: qrCode || null });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
