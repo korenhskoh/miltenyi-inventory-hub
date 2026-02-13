@@ -178,6 +178,11 @@ const [selectedUser, setSelectedUser] = useState(null);
   const [historyImportData, setHistoryImportData] = useState([]);
   const [historyImportPreview, setHistoryImportPreview] = useState(false);
   const [catalogSearch, setCatalogSearch] = useState('');
+  const [machineSearch, setMachineSearch] = useState('');
+  const [notifSearch, setNotifSearch] = useState('');
+  const [auditSearch, setAuditSearch] = useState('');
+  const [userSearch, setUserSearch] = useState('');
+  const [stockCheckSearch, setStockCheckSearch] = useState('');
   const [catalogSort, setCatalogSort] = useState({ key: 'sg', dir: 'desc' });
   const [partsCatalog, setPartsCatalog] = useState([]);
   const [priceConfig, setPriceConfig] = useState(PRICE_CONFIG_DEFAULT);
@@ -2802,9 +2807,12 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
 
     {/* Machine Fleet Management */}
     {forecastTab==='machines'&&(<div>
-      <div style={{display:'flex',justifyContent:'space-between',marginBottom:16}}>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:16}}>
         <p style={{fontSize:13,color:'#64748B',margin:0}}>Manage your local machine fleet. Machine count affects forecast predictions.</p>
-        <button className="bp" onClick={()=>setShowAddMachine(true)}><Plus size={14}/> Add Machine</button>
+        <div style={{display:'flex',gap:10,alignItems:'center'}}>
+          <div style={{position:'relative'}}><Search size={15} style={{position:'absolute',left:10,top:10,color:'#94A3B8'}}/><input className="header-search" type="text" placeholder="Search machines..." value={machineSearch} onChange={e=>setMachineSearch(e.target.value)} style={{paddingLeft:32,width:200,height:36}}/></div>
+          <button className="bp" onClick={()=>setShowAddMachine(true)}><Plus size={14}/> Add Machine</button>
+        </div>
       </div>
 
       <div className="grid-3" style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:14,marginBottom:20}}>
@@ -2841,7 +2849,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
       <div className="card" style={{overflow:'hidden'}}>
         <table style={{width:'100%',borderCollapse:'collapse',fontSize:12.5}}>
           <thead><tr style={{background:'#F8FAFB'}}>{['Name','Modality','Location','Install Date','Status','Actions'].map(h=><th key={h} className="th">{h}</th>)}</tr></thead>
-          <tbody>{machines.length===0?<tr><td colSpan={6} style={{padding:24,textAlign:'center',color:'#94A3B8',fontSize:13}}>No machines added yet. Add machines to improve forecast accuracy.</td></tr>:machines.map(m=>(
+          <tbody>{(()=>{const fm=machines.filter(m=>!machineSearch||[m.name,m.modality,m.location,m.status].join(' ').toLowerCase().includes(machineSearch.toLowerCase()));return fm.length===0?<tr><td colSpan={6} style={{padding:24,textAlign:'center',color:'#94A3B8',fontSize:13}}>{machines.length===0?'No machines added yet. Add machines to improve forecast accuracy.':'No machines match your search.'}</td></tr>:fm.map(m=>(
             <tr key={m.id} className="tr" style={{borderBottom:'1px solid #F7FAFC'}}>
               <td className="td" style={{fontWeight:600}}>{m.name}</td>
               <td className="td"><Pill bg="#EDE9FE" color="#7C3AED">{m.modality}</Pill></td>
@@ -2850,7 +2858,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
               <td className="td"><Pill bg={m.status==='Active'?'#D1FAE5':m.status==='Inactive'?'#FEF3C7':'#F3F4F6'} color={m.status==='Active'?'#059669':m.status==='Inactive'?'#D97706':'#64748B'}>{m.status}</Pill></td>
               <td className="td"><button onClick={()=>{if(window.confirm(`Delete machine "${m.name}"?`)){setMachines(prev=>prev.filter(x=>x.id!==m.id));dbSync(api.deleteMachine(m.id),'Machine delete failed');logAction('delete','machine',String(m.id),{name:m.name});notify('Deleted',m.name,'success');}}} style={{background:'#DC2626',color:'#fff',border:'none',borderRadius:6,padding:'4px 8px',fontSize:10,cursor:'pointer',display:'flex',alignItems:'center',gap:3}}><Trash2 size={11}/> Delete</button></td>
             </tr>
-          ))}</tbody>
+          ));})()}</tbody>
         </table>
       </div>
     </div>)}
@@ -3057,10 +3065,10 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
     <BatchBtn onClick={batchDeleteStockChecks} bg="#DC2626" icon={Trash2}>Delete Selected</BatchBtn>
   </BatchBar>}
   <div className="card" style={{overflow:'hidden'}}>
-    <div style={{padding:'16px 20px',borderBottom:'1px solid #E8ECF0',display:'flex',justifyContent:'space-between'}}><span style={{fontWeight:600,fontSize:14}}>Stock Check History</span>{selStockChecks.size>0&&<span style={{fontSize:11,color:'#DC2626',fontWeight:600}}>{selStockChecks.size} selected</span>}</div>
+    <div style={{padding:'16px 20px',borderBottom:'1px solid #E8ECF0',display:'flex',justifyContent:'space-between',alignItems:'center'}}><span style={{fontWeight:600,fontSize:14}}>Stock Check History</span><div style={{display:'flex',alignItems:'center',gap:12}}><div style={{position:'relative'}}><Search size={15} style={{position:'absolute',left:10,top:10,color:'#94A3B8'}}/><input className="header-search" type="text" placeholder="Search..." value={stockCheckSearch} onChange={e=>setStockCheckSearch(e.target.value)} style={{paddingLeft:32,width:180,height:36}}/></div>{selStockChecks.size>0&&<span style={{fontSize:11,color:'#DC2626',fontWeight:600}}>{selStockChecks.size} selected</span>}</div></div>
     <table style={{width:'100%',borderCollapse:'collapse',fontSize:12.5}}>
       <thead><tr style={{background:'#F8FAFB'}}>{hasPermission('deleteStockChecks')&&<th className="th" style={{width:36}}><SelBox checked={selStockChecks.size===stockChecks.length&&stockChecks.length>0} onChange={()=>toggleAll(selStockChecks,setSelStockChecks,stockChecks.map(r=>r.id))}/></th>}{['ID','Date','Checked By','Items','Discrepancies','Status','Notes','Action'].map(h=><th key={h} className="th">{h}</th>)}</tr></thead>
-      <tbody>{stockChecks.map(r=><tr key={r.id} className="tr" style={{borderBottom:'1px solid #F7FAFC',background:selStockChecks.has(r.id)?'#FEF3C7':'#fff'}}>
+      <tbody>{(()=>{const fs=stockChecks.filter(r=>!stockCheckSearch||[r.id,r.checkedBy,r.notes||'',r.status].join(' ').toLowerCase().includes(stockCheckSearch.toLowerCase()));return fs.length===0?<tr><td colSpan={hasPermission('deleteStockChecks')?9:8} style={{padding:24,textAlign:'center',color:'#94A3B8',fontSize:13}}>{stockChecks.length===0?'No stock checks recorded yet':'No stock checks match your search.'}</td></tr>:fs.map(r=><tr key={r.id} className="tr" style={{borderBottom:'1px solid #F7FAFC',background:selStockChecks.has(r.id)?'#FEF3C7':'#fff'}}>
         {hasPermission('deleteStockChecks')&&<td className="td"><SelBox checked={selStockChecks.has(r.id)} onChange={()=>toggleSel(selStockChecks,setSelStockChecks,r.id)}/></td>}
         <td className="td mono" style={{fontSize:11,fontWeight:600,color:'#0B7A3E'}}>{r.id}</td>
         <td className="td">{fmtDate(r.date)}</td>
@@ -3077,7 +3085,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
           {hasPermission('deleteStockChecks')&&<button onClick={()=>{if(window.confirm(`Delete stock check ${r.id}?`)){setStockChecks(prev=>prev.filter(x=>x.id!==r.id));dbSync(api.deleteStockCheck(r.id),'Stock check delete not saved');notify('Deleted',r.id,'success');}}} style={{background:'#DC2626',color:'#fff',border:'none',borderRadius:6,padding:'4px 8px',fontSize:10,cursor:'pointer'}}><Trash2 size={11}/></button>}
           </div>
         </td>
-      </tr>)}</tbody>
+      </tr>);})()}</tbody>
     </table>
   </div>
 </div>)}
@@ -3645,10 +3653,10 @@ if(scheduledNotifs.emailEnabled){                    addNotifEntry({id:'N-'+Date
   {hasPermission('deleteNotifications')&&<BatchBar count={selNotifs.size} onClear={()=>setSelNotifs(new Set())}>
     <BatchBtn onClick={batchDeleteNotifs} bg="#DC2626" icon={Trash2}>Delete Selected</BatchBtn>
   </BatchBar>}
-  <div className="card" style={{overflow:'hidden'}}>
-    <div style={{padding:'16px 20px',borderBottom:'1px solid #E8ECF0',display:'flex',justifyContent:'space-between'}}><span style={{fontWeight:600,fontSize:14}}>All Notification History</span><span style={{fontSize:11,color:'#94A3B8'}}>{notifLog.length} records{selNotifs.size>0&&` • ${selNotifs.size} selected`}</span></div>
-    <table style={{width:'100%',borderCollapse:'collapse',fontSize:12.5}}><thead><tr style={{background:'#F8FAFB'}}>{hasPermission('deleteNotifications')&&<th className="th" style={{width:36}}><SelBox checked={selNotifs.size===notifLog.length&&notifLog.length>0} onChange={()=>toggleAll(selNotifs,setSelNotifs,notifLog.map(n=>n.id))}/></th>}{['ID','Channel','To','Subject','Date','Status'].map(h=><th key={h} className="th">{h}</th>)}</tr></thead><tbody>{notifLog.map(n=><tr key={n.id} className="tr" style={{borderBottom:'1px solid #F7FAFC',background:selNotifs.has(n.id)?'#EDE9FE':'#fff'}}>{hasPermission('deleteNotifications')&&<td className="td"><SelBox checked={selNotifs.has(n.id)} onChange={()=>toggleSel(selNotifs,setSelNotifs,n.id)}/></td>}<td className="td mono" style={{fontSize:11,fontWeight:500}}>{n.id}</td><td className="td"><Pill bg={n.type==='email'?'#DBEAFE':'#D1FAE5'} color={n.type==='email'?'#2563EB':'#059669'}>{n.type==='email'?<Mail size={11}/>:<MessageSquare size={11}/>} {n.type==='email'?'Email':'WhatsApp'}</Pill></td><td className="td" style={{fontSize:12,color:'#64748B'}}>{n.to}</td><td className="td" style={{maxWidth:250,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{n.subject}</td><td className="td" style={{color:'#94A3B8',fontSize:11}}>{fmtDate(n.date)}</td><td className="td"><Pill bg="#E6F4ED" color="#0B7A3E"><Check size={11}/> {n.status}</Pill></td></tr>)}</tbody></table>
-  </div>
+  {(()=>{const fn=notifLog.filter(n=>!notifSearch||[n.id,n.type,n.to,n.subject,n.status].join(' ').toLowerCase().includes(notifSearch.toLowerCase()));return <div className="card" style={{overflow:'hidden'}}>
+    <div style={{padding:'16px 20px',borderBottom:'1px solid #E8ECF0',display:'flex',justifyContent:'space-between',alignItems:'center'}}><span style={{fontWeight:600,fontSize:14}}>All Notification History</span><div style={{display:'flex',alignItems:'center',gap:12}}><div style={{position:'relative'}}><Search size={15} style={{position:'absolute',left:10,top:10,color:'#94A3B8'}}/><input className="header-search" type="text" placeholder="Search notifications..." value={notifSearch} onChange={e=>setNotifSearch(e.target.value)} style={{paddingLeft:32,width:200,height:36}}/></div><span style={{fontSize:11,color:'#94A3B8'}}>{fn.length} records{selNotifs.size>0&&` • ${selNotifs.size} selected`}</span></div></div>
+    <table style={{width:'100%',borderCollapse:'collapse',fontSize:12.5}}><thead><tr style={{background:'#F8FAFB'}}>{hasPermission('deleteNotifications')&&<th className="th" style={{width:36}}><SelBox checked={selNotifs.size===fn.length&&fn.length>0} onChange={()=>toggleAll(selNotifs,setSelNotifs,fn.map(n=>n.id))}/></th>}{['ID','Channel','To','Subject','Date','Status',hasPermission('deleteNotifications')?'Actions':null].filter(Boolean).map(h=><th key={h} className="th">{h}</th>)}</tr></thead><tbody>{fn.length===0?<tr><td colSpan={hasPermission('deleteNotifications')?8:7} style={{padding:24,textAlign:'center',color:'#94A3B8',fontSize:13}}>{notifLog.length===0?'No notifications yet':'No notifications match your search.'}</td></tr>:fn.map(n=><tr key={n.id} className="tr" style={{borderBottom:'1px solid #F7FAFC',background:selNotifs.has(n.id)?'#EDE9FE':'#fff'}}>{hasPermission('deleteNotifications')&&<td className="td"><SelBox checked={selNotifs.has(n.id)} onChange={()=>toggleSel(selNotifs,setSelNotifs,n.id)}/></td>}<td className="td mono" style={{fontSize:11,fontWeight:500}}>{n.id}</td><td className="td"><Pill bg={n.type==='email'?'#DBEAFE':'#D1FAE5'} color={n.type==='email'?'#2563EB':'#059669'}>{n.type==='email'?<Mail size={11}/>:<MessageSquare size={11}/>} {n.type==='email'?'Email':'WhatsApp'}</Pill></td><td className="td" style={{fontSize:12,color:'#64748B'}}>{n.to}</td><td className="td" style={{maxWidth:250,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{n.subject}</td><td className="td" style={{color:'#94A3B8',fontSize:11}}>{fmtDate(n.date)}</td><td className="td"><Pill bg="#E6F4ED" color="#0B7A3E"><Check size={11}/> {n.status}</Pill></td>{hasPermission('deleteNotifications')&&<td className="td"><button onClick={()=>{if(window.confirm('Delete this notification?')){setNotifLog(prev=>prev.filter(x=>x.id!==n.id));dbSync(api.deleteNotifEntry(n.id),'Notification delete not saved');notify('Deleted',n.id,'success');}}} style={{background:'#DC2626',color:'#fff',border:'none',borderRadius:6,padding:'4px 8px',fontSize:10,cursor:'pointer'}}><Trash2 size={11}/></button></td>}</tr>)}</tbody></table>
+  </div>;})()}
 </div>)}
 
 {/* ═══════════ AUDIT TRAIL ═══════════ */}
@@ -3661,6 +3669,7 @@ if(scheduledNotifs.emailEnabled){                    addNotifEntry({id:'N-'+Date
     if (auditFilter.action !== 'All' && a.action !== auditFilter.action) return false;
     if (auditFilter.user !== 'All' && a.userName !== auditFilter.user) return false;
     if (auditFilter.entityType !== 'All' && a.entityType !== auditFilter.entityType) return false;
+    if (auditSearch) { const q=auditSearch.toLowerCase(); if (![a.userName,a.action,a.entityType,a.entityId,a.details?JSON.stringify(a.details):''].join(' ').toLowerCase().includes(q)) return false; }
     return true;
   });
   return (<div>
@@ -3697,6 +3706,7 @@ if(scheduledNotifs.emailEnabled){                    addNotifEntry({id:'N-'+Date
           {entityTypes.map(t=><option key={t} value={t}>{t}</option>)}
         </select>
       </div>
+      <div style={{position:'relative'}}><Search size={15} style={{position:'absolute',left:10,top:10,color:'#94A3B8'}}/><input className="header-search" type="text" placeholder="Search..." value={auditSearch} onChange={e=>setAuditSearch(e.target.value)} style={{paddingLeft:32,width:180,height:36}}/></div>
       <div style={{flex:1}}/>
       <ExportDropdown data={filtered} columns={[{key:'createdAt',label:'Timestamp',fmt:v=>v?new Date(v).toLocaleString('en-SG'):''},{key:'userName',label:'User'},{key:'action',label:'Action'},{key:'entityType',label:'Entity Type'},{key:'entityId',label:'Entity ID'},{key:'details',label:'Details',fmt:v=>v?JSON.stringify(v):''}]} filename="audit-trail" title="Audit Trail Export"/>
       <span style={{fontSize:12,color:'#94A3B8'}}>{filtered.length} events</span>
@@ -3745,14 +3755,17 @@ if(scheduledNotifs.emailEnabled){                    addNotifEntry({id:'N-'+Date
   )}
 
   {/* Active Users */}
-  <div style={{display:'flex',justifyContent:'space-between',marginBottom:20}}>
+  <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:20}}>
     <h3 style={{fontSize:15,fontWeight:600}}>All Users</h3>
-    <button className="bp" onClick={()=>{
-      const name=prompt('Full Name:'); if(!name)return;
-      const username=prompt('Username:'); if(!username)return;
-      const email=prompt('Email:'); const role=prompt('Role (admin/user):','user');
-      handleCreateUser({name,username,password:'temp123',email:email||'',role:role||'user',phone:''});
-    }}><UserPlus size={14}/> Create User</button>
+    <div style={{display:'flex',gap:10,alignItems:'center'}}>
+      <div style={{position:'relative'}}><Search size={15} style={{position:'absolute',left:10,top:10,color:'#94A3B8'}}/><input className="header-search" type="text" placeholder="Search users..." value={userSearch} onChange={e=>setUserSearch(e.target.value)} style={{paddingLeft:32,width:200,height:36}}/></div>
+      <button className="bp" onClick={()=>{
+        const name=prompt('Full Name:'); if(!name)return;
+        const username=prompt('Username:'); if(!username)return;
+        const email=prompt('Email:'); const role=prompt('Role (admin/user):','user');
+        handleCreateUser({name,username,password:'temp123',email:email||'',role:role||'user',phone:''});
+      }}><UserPlus size={14}/> Create User</button>
+    </div>
   </div>
   <BatchBar count={selUsers.size} onClear={()=>setSelUsers(new Set())}>
     <BatchBtn onClick={()=>batchRoleUsers('admin')} bg="#2563EB" icon={Shield}>Set Admin</BatchBtn>
@@ -3764,7 +3777,7 @@ if(scheduledNotifs.emailEnabled){                    addNotifEntry({id:'N-'+Date
   <div className="card" style={{overflow:'hidden'}}>
     <table style={{width:'100%',borderCollapse:'collapse',fontSize:12.5}}>
       <thead><tr style={{background:'#F8FAFB'}}><th className="th" style={{width:36}}><SelBox checked={selUsers.size===users.length&&users.length>0} onChange={()=>toggleAll(selUsers,setSelUsers,users.map(u=>u.id))}/></th>{['ID','Name','Username','Email','Role','Status','Created','Phone','Actions'].map(h=><th key={h} className="th">{h}</th>)}</tr></thead>
-      <tbody>{users.map(u=>(
+      <tbody>{(()=>{const fu=users.filter(u=>!userSearch||[u.name,u.username,u.email,u.role,u.phone||''].join(' ').toLowerCase().includes(userSearch.toLowerCase()));return fu.length===0?<tr><td colSpan={10} style={{padding:24,textAlign:'center',color:'#94A3B8',fontSize:13}}>{users.length===0?'No users found':'No users match your search.'}</td></tr>:fu.map(u=>(
         <tr key={u.id} className="tr" style={{borderBottom:'1px solid #F7FAFC',background:selUsers.has(u.id)?'#DBEAFE':'#fff'}}>
           <td className="td"><SelBox checked={selUsers.has(u.id)} onChange={()=>toggleSel(selUsers,setSelUsers,u.id)}/></td>
           <td className="td mono" style={{fontSize:11,fontWeight:500}}>{u.id}</td>
@@ -3784,7 +3797,7 @@ if(scheduledNotifs.emailEnabled){                    addNotifEntry({id:'N-'+Date
               <button onClick={()=>{if(window.confirm(`Delete user ${u.name}?`)){setUsers(prev=>prev.filter(x=>x.id!==u.id));dbSync(api.deleteUser(u.id),'User delete not saved');notify('Deleted',u.name,'success');}}} style={{background:'#DC2626',color:'#fff',border:'none',borderRadius:6,padding:'4px 8px',fontSize:10,cursor:'pointer'}}><Trash2 size={11}/></button>
             </div>
           </td>
-        </tr>))}</tbody>
+        </tr>));})()}</tbody>
     </table>
   </div>
 </div>)}
