@@ -59,6 +59,27 @@ const BatchBtn = ({ onClick, bg, icon: I, children }) => (
   <button onClick={onClick} style={{display:'flex',alignItems:'center',gap:4,padding:'5px 12px',background:bg||'rgba(255,255,255,0.15)',border:'none',color:'#fff',borderRadius:6,fontSize:11,fontWeight:600,cursor:'pointer',whiteSpace:'nowrap'}}>{I&&<I size={12}/>}{children}</button>
 );
 
+// ════════════════════════════ SORT HELPERS ══════════════════════════
+const applySortData = (arr, sortCfg) => {
+  if (!sortCfg.key) return arr;
+  const sorted = [...arr];
+  sorted.sort((a, b) => {
+    let va = a[sortCfg.key], vb = b[sortCfg.key];
+    if (va == null) va = '';
+    if (vb == null) vb = '';
+    if (typeof va === 'number' && typeof vb === 'number') return sortCfg.dir === 'asc' ? va - vb : vb - va;
+    va = String(va).toLowerCase(); vb = String(vb).toLowerCase();
+    return sortCfg.dir === 'asc' ? (va > vb ? 1 : va < vb ? -1 : 0) : (va < vb ? 1 : va > vb ? -1 : 0);
+  });
+  return sorted;
+};
+const toggleSort = (setter, key) => setter(s => ({ key, dir: s.key === key && s.dir === 'asc' ? 'desc' : 'asc' }));
+const SortTh = ({ label, sortKey, sortCfg, onSort, style }) => (
+  <th className="th" style={{ cursor: 'pointer', userSelect: 'none', ...style }} onClick={() => onSort(sortKey)}>
+    {label} {sortCfg.key === sortKey ? (sortCfg.dir === 'asc' ? '↑' : '↓') : ''}
+  </th>
+);
+
 // ════════════════════════════ EXPORT HELPERS ══════════════════════════
 const exportToFile = (data, columns, filename, format) => {
   const rows = data.map(row => {
@@ -187,6 +208,9 @@ const [selectedUser, setSelectedUser] = useState(null);
   const [userSearch, setUserSearch] = useState('');
   const [stockCheckSearch, setStockCheckSearch] = useState('');
   const [catalogSort, setCatalogSort] = useState({ key: 'sg', dir: 'desc' });
+  const [orderSort, setOrderSort] = useState({ key: null, dir: 'asc' });
+  const [bulkSort, setBulkSort] = useState({ key: null, dir: 'asc' });
+  const [arrivalSort, setArrivalSort] = useState({ key: null, dir: 'asc' });
   const [partsCatalog, setPartsCatalog] = useState([]);
   const [priceConfig, setPriceConfig] = useState(PRICE_CONFIG_DEFAULT);
   const [catalogPage, setCatalogPage] = useState(0);
@@ -2624,8 +2648,8 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
     <BatchBtn onClick={batchDeleteOrders} bg="#DC2626" icon={Trash2}>Delete</BatchBtn>
   </BatchBar>}
   <div className="card" style={{overflow:'hidden'}}><div className="table-wrap" style={{overflowX:'auto'}}><table style={{width:'100%',borderCollapse:'collapse',fontSize:12.5}}>
-    <thead><tr style={{background:'#F8FAFB'}}>{hasPermission('deleteOrders')&&<th className="th" style={{width:36}}><SelBox checked={selOrders.size===filteredOrders.length&&filteredOrders.length>0} onChange={()=>toggleAll(selOrders,setSelOrders,filteredOrders.map(o=>o.id))}/></th>}{['Material No.','Description','Qty','Unit Price','Total','Ordered','By','Status','Arrival','Actions'].map(h=><th key={h} className="th">{h}</th>)}</tr></thead>
-    <tbody>{filteredOrders.map((o,i)=>(
+    <thead><tr style={{background:'#F8FAFB'}}>{hasPermission('deleteOrders')&&<th className="th" style={{width:36}}><SelBox checked={selOrders.size===filteredOrders.length&&filteredOrders.length>0} onChange={()=>toggleAll(selOrders,setSelOrders,filteredOrders.map(o=>o.id))}/></th>}{[{l:'Material No.',k:'materialNo'},{l:'Description',k:'description'},{l:'Qty',k:'quantity'},{l:'Unit Price',k:'listPrice'},{l:'Total',k:'totalCost'},{l:'Ordered',k:'orderDate'},{l:'By',k:'orderBy'},{l:'Status',k:'status'},{l:'Arrival',k:'arrivalDate'}].map(h=><SortTh key={h.k} label={h.l} sortKey={h.k} sortCfg={orderSort} onSort={k=>toggleSort(setOrderSort,k)}/>)}<th className="th">Actions</th></tr></thead>
+    <tbody>{applySortData(filteredOrders,orderSort).map((o,i)=>(
       <tr key={o.id} className="tr" style={{borderBottom:'1px solid #F7FAFC',background:selOrders.has(o.id)?'#E6F4ED':i%2===0?'#fff':'#FCFCFD',cursor:'pointer'}} onClick={()=>openOrderInNewTab(o)}>
         {hasPermission('deleteOrders')&&<td className="td" onClick={e=>e.stopPropagation()}><SelBox checked={selOrders.has(o.id)} onChange={()=>toggleSel(selOrders,setSelOrders,o.id)}/></td>}
         <td className="td mono" style={{fontSize:11,color:'#0B7A3E',fontWeight:500}}>{o.materialNo||'—'}</td>
@@ -2680,8 +2704,8 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
       </select>
     </div>
     <table style={{width:'100%',borderCollapse:'collapse',fontSize:12.5}}>
-      <thead><tr style={{background:'#F8FAFB'}}>{hasPermission('deleteBulkOrders')&&<th className="th" style={{width:36}}><SelBox checked={selBulk.size===bulkGroups.length&&bulkGroups.length>0} onChange={()=>toggleAll(selBulk,setSelBulk,bulkGroups.map(g=>g.id))}/></th>}{['Batch ID','Month','Created By','Items','Total Cost','Status','Date','Actions'].map(h=><th key={h} className="th">{h}</th>)}</tr></thead>
-      <tbody>{bulkGroups.filter(g=>bulkCreatedByFilter==='All'||g.createdBy===bulkCreatedByFilter).map(g=>(
+      <thead><tr style={{background:'#F8FAFB'}}>{hasPermission('deleteBulkOrders')&&<th className="th" style={{width:36}}><SelBox checked={selBulk.size===bulkGroups.length&&bulkGroups.length>0} onChange={()=>toggleAll(selBulk,setSelBulk,bulkGroups.map(g=>g.id))}/></th>}{[{l:'Batch ID',k:'id'},{l:'Month',k:'month'},{l:'Created By',k:'createdBy'},{l:'Items',k:'items'},{l:'Total Cost',k:'totalCost'},{l:'Status',k:'status'},{l:'Date',k:'date'}].map(h=><SortTh key={h.k} label={h.l} sortKey={h.k} sortCfg={bulkSort} onSort={k=>toggleSort(setBulkSort,k)}/>)}<th className="th">Actions</th></tr></thead>
+      <tbody>{applySortData(bulkGroups.filter(g=>bulkCreatedByFilter==='All'||g.createdBy===bulkCreatedByFilter),bulkSort).map(g=>(
         <tr key={g.id} className="tr" style={{borderBottom:'1px solid #F7FAFC',background:selBulk.has(g.id)?'#EDE9FE':'#fff'}}>
           {hasPermission('deleteBulkOrders')&&<td className="td"><SelBox checked={selBulk.has(g.id)} onChange={()=>toggleSel(selBulk,setSelBulk,g.id)}/></td>}
           <td className="td mono" style={{fontSize:11,fontWeight:600,color:'#4338CA'}}>{g.id}</td>
@@ -3413,7 +3437,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
 
   {/* Single Orders - Arrival Verification */}
   {(()=>{
-    const indivOrders = orders.filter(o=>!o.bulkGroupId&&o.approvalStatus==='approved'&&o.quantity>0&&(arrivalMonthFilter==='All'||o.month===arrivalMonthFilter));
+    const indivOrders = orders.filter(o=>!o.bulkGroupId&&o.approvalStatus==='approved'&&o.quantity>0&&(arrivalMonthFilter==='All'||o.month===arrivalMonthFilter)&&(arrivalOrderByFilter==='All'||o.orderBy===arrivalOrderByFilter));
     if (!indivOrders.length) return null;
     return (
       <div className="card" style={{padding:'20px 24px',marginBottom:20}}>
@@ -3466,7 +3490,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
     const arrivalFiltered = arrivalStatusFilter==='All' ? approvedOrders : approvedOrders.filter(o=>getArrivalCond(o)===arrivalStatusFilter);
     // Sort: Back Order first, then Awaiting, then Arrived
     const arrivalPriority = {'Back Order':0,'Awaiting':1,'Arrived':2};
-    const arrivalSorted = [...arrivalFiltered].sort((a,b)=>(arrivalPriority[getArrivalCond(a)]??9)-(arrivalPriority[getArrivalCond(b)]??9));
+    const arrivalSorted = arrivalSort.key ? applySortData(arrivalFiltered, arrivalSort) : [...arrivalFiltered].sort((a,b)=>(arrivalPriority[getArrivalCond(a)]??9)-(arrivalPriority[getArrivalCond(b)]??9));
     return (
     <div className="card" style={{overflow:'hidden'}}>
       <div style={{padding:'16px 20px',borderBottom:'1px solid #E8ECF0'}}>
@@ -3492,7 +3516,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
       </div>
       <div style={{maxHeight:500,overflowY:'auto'}}>
         <table style={{width:'100%',borderCollapse:'collapse',fontSize:12.5}}>
-          <thead><tr style={{background:'#F8FAFB',position:'sticky',top:0,zIndex:1}}>{['Order ID','Type','Material','Description','Ordered','Recv','B/O','Arrival Date','Status'].map(h=><th key={h} className="th">{h}</th>)}</tr></thead>
+          <thead><tr style={{background:'#F8FAFB',position:'sticky',top:0,zIndex:1}}>{[{l:'Order ID',k:'id'},{l:'Type',k:'bulkGroupId'},{l:'Material',k:'materialNo'},{l:'Description',k:'description'},{l:'Ordered',k:'quantity'},{l:'Recv',k:'qtyReceived'},{l:'B/O',k:'backOrder'},{l:'Arrival Date',k:'arrivalDate'},{l:'Status',k:'status'}].map(h=><SortTh key={h.k} label={h.l} sortKey={h.k} sortCfg={arrivalSort} onSort={k=>toggleSort(setArrivalSort,k)} style={{position:'sticky',top:0,zIndex:1}}/>)}</tr></thead>
           <tbody>{arrivalSorted.length===0?<tr><td colSpan={9} style={{padding:24,textAlign:'center',color:'#94A3B8',fontSize:13}}>No orders with status "{arrivalStatusFilter}"</td></tr>:arrivalSorted.map((o,i)=><tr key={o.id} className="tr" style={{borderBottom:'1px solid #F7FAFC',background:i%2===0?'#fff':'#FCFCFD'}}>
             <td className="td mono" style={{fontSize:11,fontWeight:500,color:'#475569'}}>{o.id}</td>
             <td className="td">{o.bulkGroupId?<Pill bg="#DBEAFE" color="#2563EB" style={{fontSize:10}}>{o.bulkGroupId}</Pill>:<Pill bg="#FEF3C7" color="#D97706" style={{fontSize:10}}>Single</Pill>}</td>
