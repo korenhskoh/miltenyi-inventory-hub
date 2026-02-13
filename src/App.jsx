@@ -161,6 +161,9 @@ export default function App() {
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('All');
   const [singleOrderMonth, setSingleOrderMonth] = useState('All');
+  const [orderByFilter, setOrderByFilter] = useState('All');
+  const [bulkCreatedByFilter, setBulkCreatedByFilter] = useState('All');
+  const [arrivalOrderByFilter, setArrivalOrderByFilter] = useState('All');
   const [arrivalMonthFilter, setArrivalMonthFilter] = useState('All');
   const [allOrdersTypeFilter, setAllOrdersTypeFilter] = useState('All');
   const [allOrdersMonth, setAllOrdersMonth] = useState('All');
@@ -405,12 +408,16 @@ const [selectedUser, setSelectedUser] = useState(null);
     return { total:t, received:r, backOrder:b, pendingApproval:pa, approved:ap, rejected:rej, pending:pa+ap, totalCost:tc, fulfillmentRate: tq>0?((tr/tq)*100).toFixed(1):0 };
   }, [orders, catalogLookup]);
   const singleOrderMonths = useMemo(() => [...new Set(orders.filter(o=>!o.bulkGroupId).map(o=>o.month).filter(Boolean))].sort(), [orders]);
+  const orderByUsers = useMemo(() => [...new Set(orders.filter(o=>!o.bulkGroupId).map(o=>o.orderBy).filter(Boolean))].sort(), [orders]);
+  const bulkCreatedByUsers = useMemo(() => [...new Set(bulkGroups.map(g=>g.createdBy).filter(Boolean))].sort(), [bulkGroups]);
+  const arrivalOrderByUsers = useMemo(() => [...new Set(orders.filter(o=>o.approvalStatus==='approved').map(o=>o.orderBy).filter(Boolean))].sort(), [orders]);
   const filteredOrders = useMemo(() => orders.filter(o => {
     if (o.bulkGroupId) return false;
     const ms = !search || o.materialNo.toLowerCase().includes(search.toLowerCase()) || o.description.toLowerCase().includes(search.toLowerCase()) || o.orderBy.toLowerCase().includes(search.toLowerCase());
     const mm = singleOrderMonth==='All' || o.month===singleOrderMonth;
-    return ms && mm && (statusFilter==='All'||o.status===statusFilter);
-  }), [orders, search, statusFilter, singleOrderMonth]);
+    const mu = orderByFilter==='All' || o.orderBy===orderByFilter;
+    return ms && mm && mu && (statusFilter==='All'||o.status===statusFilter);
+  }), [orders, search, statusFilter, singleOrderMonth, orderByFilter]);
   const monthlyData = useMemo(() => {
     const monthMap = {};
     orders.forEach(o => {
@@ -1514,7 +1521,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
   };
   const handleApproveUser = async (pending) => {
     const newUser = {
-      id: `U${String(users.length+1).padStart(3,'0')}`,
+      id: `U-${Date.now()}-${Math.random().toString(36).slice(2,6)}`,
       username: pending.username,
       name: pending.name,
       email: pending.email,
@@ -1537,7 +1544,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
   const handleCreateUser = async (form) => {
     const perms = form.role==='admin' ? Object.fromEntries(Object.keys(DEFAULT_USER_PERMS).map(k=>[k,true])) : {...DEFAULT_USER_PERMS};
     const newUser = {
-      id: `U${String(users.length+1).padStart(3,'0')}`,
+      id: `U-${Date.now()}-${Math.random().toString(36).slice(2,6)}`,
       username: form.username,
       name: form.name,
       email: form.email,
@@ -2598,6 +2605,11 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
         <option value="All">All Months</option>
         {singleOrderMonths.map(m=><option key={m} value={m}>{m}</option>)}
       </select>
+      <select value={orderByFilter} onChange={e=>setOrderByFilter(e.target.value)} style={{padding:'6px 10px',borderRadius:8,border:'1px solid #E2E8F0',fontSize:12,fontFamily:'inherit',cursor:'pointer',color:'#1A202C'}}>
+        <option value="All">All Users</option>
+        {currentUser?.name && <option value={currentUser.name}>My Orders ({orders.filter(o=>!o.bulkGroupId&&o.orderBy===currentUser.name).length})</option>}
+        {orderByUsers.filter(u=>u!==currentUser?.name).map(u=><option key={u} value={u}>{u}</option>)}
+      </select>
     </div>
     <div style={{display:'flex',gap:8}}>
       <ExportDropdown data={filteredOrders} columns={[{key:'id',label:'Order ID'},{key:'materialNo',label:'Material No'},{key:'description',label:'Description'},{key:'quantity',label:'Qty'},{key:'listPrice',label:'List Price',fmt:v=>v>0?fmt(v):''},{key:'totalCost',label:'Total Cost',fmt:v=>v>0?fmt(v):''},{key:'orderDate',label:'Order Date',fmt:v=>fmtDate(v)},{key:'orderBy',label:'Ordered By'},{key:'engineer',label:'Engineer'},{key:'status',label:'Status'}]} filename="single-orders" title="Single Orders Export"/>
@@ -2659,10 +2671,17 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
     <BatchBtn onClick={batchDeleteBulk} bg="#DC2626" icon={Trash2}>Delete</BatchBtn>
   </BatchBar>}
   <div className="card" style={{overflow:'hidden'}}>
-    <div style={{padding:'16px 20px',borderBottom:'1px solid #E8ECF0',fontWeight:600,fontSize:14}}>Monthly Bulk Order Batches</div>
+    <div style={{padding:'16px 20px',borderBottom:'1px solid #E8ECF0',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+      <span style={{fontWeight:600,fontSize:14}}>Monthly Bulk Order Batches</span>
+      <select value={bulkCreatedByFilter} onChange={e=>setBulkCreatedByFilter(e.target.value)} style={{padding:'6px 10px',borderRadius:8,border:'1px solid #E2E8F0',fontSize:12,fontFamily:'inherit',cursor:'pointer',color:'#1A202C'}}>
+        <option value="All">All Users</option>
+        {currentUser?.name && <option value={currentUser.name}>My Batches ({bulkGroups.filter(g=>g.createdBy===currentUser.name).length})</option>}
+        {bulkCreatedByUsers.filter(u=>u!==currentUser?.name).map(u=><option key={u} value={u}>{u}</option>)}
+      </select>
+    </div>
     <table style={{width:'100%',borderCollapse:'collapse',fontSize:12.5}}>
       <thead><tr style={{background:'#F8FAFB'}}>{hasPermission('deleteBulkOrders')&&<th className="th" style={{width:36}}><SelBox checked={selBulk.size===bulkGroups.length&&bulkGroups.length>0} onChange={()=>toggleAll(selBulk,setSelBulk,bulkGroups.map(g=>g.id))}/></th>}{['Batch ID','Month','Created By','Items','Total Cost','Status','Date','Actions'].map(h=><th key={h} className="th">{h}</th>)}</tr></thead>
-      <tbody>{bulkGroups.map(g=>(
+      <tbody>{bulkGroups.filter(g=>bulkCreatedByFilter==='All'||g.createdBy===bulkCreatedByFilter).map(g=>(
         <tr key={g.id} className="tr" style={{borderBottom:'1px solid #F7FAFC',background:selBulk.has(g.id)?'#EDE9FE':'#fff'}}>
           {hasPermission('deleteBulkOrders')&&<td className="td"><SelBox checked={selBulk.has(g.id)} onChange={()=>toggleSel(selBulk,setSelBulk,g.id)}/></td>}
           <td className="td mono" style={{fontSize:11,fontWeight:600,color:'#4338CA'}}>{g.id}</td>
@@ -3230,7 +3249,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
 
   {/* Stats Cards — approved orders only, respects month filter */}
   {(()=>{
-    const ao = orders.filter(o=>o.approvalStatus==='approved'&&(arrivalMonthFilter==='All'||o.month===arrivalMonthFilter));
+    const ao = orders.filter(o=>o.approvalStatus==='approved'&&(arrivalMonthFilter==='All'||o.month===arrivalMonthFilter)&&(arrivalOrderByFilter==='All'||o.orderBy===arrivalOrderByFilter));
     return <div className="grid-4" style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:14,marginBottom:24}}>
     {[
       {l:'Awaiting Arrival',v:ao.filter(o=>!o.arrivalDate&&(o.qtyReceived||0)===0).length,c:'#D97706'},
@@ -3241,12 +3260,19 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
   </div>;
   })()}
 
-  {/* Month Filter for Part Arrival */}
-  <div style={{display:'flex',gap:10,alignItems:'center',marginBottom:16}}>
+  {/* Month & User Filter for Part Arrival */}
+  <div style={{display:'flex',gap:10,alignItems:'center',marginBottom:16,flexWrap:'wrap'}}>
     <span style={{fontSize:12,fontWeight:600,color:'#64748B'}}>Month</span>
     <select value={arrivalMonthFilter} onChange={e=>setArrivalMonthFilter(e.target.value)} style={{padding:'6px 10px',borderRadius:8,border:'1px solid #E2E8F0',fontSize:12,fontFamily:'inherit',cursor:'pointer',color:'#1A202C'}}>
       <option value="All">All Months</option>
       {[...new Set([...orders.filter(o=>o.approvalStatus==='approved').map(o=>o.month),...bulkGroups.filter(g=>g.status==='Approved'||orders.some(o=>o.bulkGroupId===g.id&&o.approvalStatus==='approved')).map(g=>g.month)].filter(Boolean))].sort().map(m=><option key={m} value={m}>{m}</option>)}
+    </select>
+    <div style={{width:1,height:24,background:'#E2E8F0'}}/>
+    <span style={{fontSize:12,fontWeight:600,color:'#64748B'}}>Order By</span>
+    <select value={arrivalOrderByFilter} onChange={e=>setArrivalOrderByFilter(e.target.value)} style={{padding:'6px 10px',borderRadius:8,border:'1px solid #E2E8F0',fontSize:12,fontFamily:'inherit',cursor:'pointer',color:'#1A202C'}}>
+      <option value="All">All Users</option>
+      {currentUser?.name && <option value={currentUser.name}>My Orders ({orders.filter(o=>o.approvalStatus==='approved'&&o.orderBy===currentUser.name).length})</option>}
+      {arrivalOrderByUsers.filter(u=>u!==currentUser?.name).map(u=><option key={u} value={u}>{u}</option>)}
     </select>
   </div>
 
@@ -3259,9 +3285,10 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
         const hasApproved = bgOrds.some(o=>o.approvalStatus==='approved');
         if (!hasApproved) return false;
         if (arrivalMonthFilter!=='All' && bg.month!==arrivalMonthFilter) return false;
+        if (arrivalOrderByFilter!=='All' && !bgOrds.some(o=>o.orderBy===arrivalOrderByFilter)) return false;
         return true;
       }).map(bg=>{
-        const bgOrders = orders.filter(o=>o.bulkGroupId===bg.id&&o.approvalStatus==='approved');
+        const bgOrders = orders.filter(o=>o.bulkGroupId===bg.id&&o.approvalStatus==='approved'&&(arrivalOrderByFilter==='All'||o.orderBy===arrivalOrderByFilter));
         const fullyReceived = bgOrders.filter(o=>o.qtyReceived>=o.quantity&&o.quantity>0).length;
         const pending = bgOrders.filter(o=>o.qtyReceived<o.quantity).length;
         const hasBackOrder = bgOrders.some(o=>o.backOrder<0);
@@ -3433,7 +3460,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
   {(()=>{
     const statusTabs = ['All','Awaiting','Back Order','Arrived'];
     const typeTabs = ['All','Bulk','Single'];
-    const approvedAll = orders.filter(o=>o.approvalStatus==='approved'&&(arrivalMonthFilter==='All'||o.month===arrivalMonthFilter));
+    const approvedAll = orders.filter(o=>o.approvalStatus==='approved'&&(arrivalMonthFilter==='All'||o.month===arrivalMonthFilter)&&(arrivalOrderByFilter==='All'||o.orderBy===arrivalOrderByFilter));
     const approvedOrders = arrivalTypeFilter==='Bulk' ? approvedAll.filter(o=>o.bulkGroupId) : arrivalTypeFilter==='Single' ? approvedAll.filter(o=>!o.bulkGroupId) : approvedAll;
     const getArrivalCond = o => (o.qtyReceived||0)>=o.quantity&&o.quantity>0?'Arrived':o.arrivalDate&&(o.qtyReceived||0)<o.quantity?'Back Order':'Awaiting';
     const arrivalFiltered = arrivalStatusFilter==='All' ? approvedOrders : approvedOrders.filter(o=>getArrivalCond(o)===arrivalStatusFilter);
