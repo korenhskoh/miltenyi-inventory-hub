@@ -189,6 +189,8 @@ export default function App() {
   const [allOrdersTypeFilter, setAllOrdersTypeFilter] = useState('All');
   const [allOrdersMonth, setAllOrdersMonth] = useState('All');
   const [allOrdersStatus, setAllOrdersStatus] = useState('All');
+  const [allOrdersUserFilter, setAllOrdersUserFilter] = useState('All');
+  const [allOrdersSort, setAllOrdersSort] = useState({ key: null, dir: 'asc' });
   const [catFilter, setCatFilter] = useState('All');
   const [notifs, setNotifs] = useState([]);
   const [showNewOrder, setShowNewOrder] = useState(false);
@@ -468,13 +470,15 @@ const [selectedUser, setSelectedUser] = useState(null);
   }, [orders, catalogLookup]);
   const statusPieData = useMemo(() => [{name:'Received',value:stats.received,color:'#0B7A3E'},{name:'Approved',value:stats.approved,color:'#059669'},{name:'Pending Approval',value:stats.pendingApproval,color:'#D97706'},{name:'Rejected',value:stats.rejected,color:'#991B1B'}].filter(s=>s.value>0), [stats]);
   const allOrdersMonths = useMemo(() => [...new Set([...orders.map(o=>o.month),...bulkGroups.map(g=>g.month)].filter(Boolean))].sort(), [orders, bulkGroups]);
+  const allOrdersUsers = useMemo(() => [...new Set(orders.map(o=>o.orderBy).filter(Boolean))].sort(), [orders]);
   const allOrdersCombined = useMemo(() => {
     let combined = orders.map(o=>({...o, orderType: o.bulkGroupId ? 'Bulk' : 'Single'}));
     if (allOrdersTypeFilter!=='All') combined = combined.filter(o=>o.orderType===(allOrdersTypeFilter==='Single Orders'?'Single':'Bulk'));
     if (allOrdersMonth!=='All') combined = combined.filter(o=>o.month===allOrdersMonth);
     if (allOrdersStatus!=='All') combined = combined.filter(o=>o.status===allOrdersStatus);
+    if (allOrdersUserFilter!=='All') combined = combined.filter(o=>o.orderBy===allOrdersUserFilter);
     return combined;
-  }, [orders, allOrdersTypeFilter, allOrdersMonth, allOrdersStatus]);
+  }, [orders, allOrdersTypeFilter, allOrdersMonth, allOrdersStatus, allOrdersUserFilter]);
   const topItems = useMemo(() => {
     const m={}; orders.forEach(o=>{if(!m[o.description])m[o.description]={name:o.description.length>30?o.description.slice(0,30)+'...':o.description,qty:0,cost:0};const cp=catalogLookup[o.materialNo];const price=cp?(cp.sg||cp.tp||cp.dist||0):Number(o.listPrice)||0;m[o.description].qty+=(Number(o.quantity)||0);m[o.description].cost+=(price>0?price*(Number(o.quantity)||0):(Number(o.totalCost)||0));});
     return Object.values(m).sort((a,b)=>b.cost-a.cost).slice(0,8);
@@ -2565,6 +2569,15 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
       <span style={{fontSize:11,fontWeight:600,color:'#64748B',textTransform:'uppercase',letterSpacing:.5}}>Status</span>
       {['All','Pending Approval','Approved','Received','Rejected'].map(s=><button key={s} onClick={()=>setAllOrdersStatus(s)} style={{padding:'5px 12px',borderRadius:20,border:allOrdersStatus===s?'none':'1px solid #E2E8F0',background:allOrdersStatus===s?'#0B7A3E':'#fff',color:allOrdersStatus===s?'#fff':'#64748B',fontSize:11,fontWeight:500,cursor:'pointer',fontFamily:'inherit'}}>{s}</button>)}
     </div>
+    <div style={{width:1,height:24,background:'#E2E8F0'}}/>
+    <div style={{display:'flex',alignItems:'center',gap:6}}>
+      <span style={{fontSize:11,fontWeight:600,color:'#64748B',textTransform:'uppercase',letterSpacing:.5}}>By</span>
+      <select value={allOrdersUserFilter} onChange={e=>setAllOrdersUserFilter(e.target.value)} style={{padding:'5px 10px',borderRadius:8,border:'1px solid #E2E8F0',fontSize:11,fontFamily:'inherit',cursor:'pointer',color:'#1A202C'}}>
+        <option value="All">All Users</option>
+        {currentUser?.name && <option value={currentUser.name}>My Orders ({orders.filter(o=>o.orderBy===currentUser.name).length})</option>}
+        {allOrdersUsers.filter(u=>u!==currentUser?.name).map(u=><option key={u} value={u}>{u}</option>)}
+      </select>
+    </div>
   </div>
 
   {/* All Orders Table */}
@@ -2574,8 +2587,8 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
       <span style={{fontSize:11,color:'#94A3B8'}}>{allOrdersCombined.length} results</span>
     </div>
     <div className="table-wrap" style={{overflowX:'auto'}}><table style={{width:'100%',borderCollapse:'collapse',fontSize:12.5}}>
-      <thead><tr style={{background:'#F8FAFB'}}>{['Type','ID','Material / Items','Description','Qty','Unit Price','Total','By','Date','Status','Arrival'].map(h=><th key={h} className="th" style={{whiteSpace:'nowrap'}}>{h}</th>)}</tr></thead>
-      <tbody>{allOrdersCombined.length===0?<tr><td colSpan={11} style={{textAlign:'center',padding:40,color:'#94A3B8',fontSize:13}}>No orders match the selected filters</td></tr>:allOrdersCombined.map((o,i)=>(
+      <thead><tr style={{background:'#F8FAFB'}}>{[{l:'Type',k:'orderType'},{l:'ID',k:'id'},{l:'Material / Items',k:'materialNo'},{l:'Description',k:'description'},{l:'Qty',k:'quantity'},{l:'Unit Price',k:'listPrice'},{l:'Total',k:'totalCost'},{l:'By',k:'orderBy'},{l:'Date',k:'orderDate'},{l:'Status',k:'status'},{l:'Arrival',k:'arrivalDate'}].map(h=><SortTh key={h.k} label={h.l} sortKey={h.k} sortCfg={allOrdersSort} onSort={k=>toggleSort(setAllOrdersSort,k)} style={{whiteSpace:'nowrap'}}/>)}</tr></thead>
+      <tbody>{allOrdersCombined.length===0?<tr><td colSpan={11} style={{textAlign:'center',padding:40,color:'#94A3B8',fontSize:13}}>No orders match the selected filters</td></tr>:applySortData(allOrdersCombined,allOrdersSort).map((o,i)=>(
         <tr key={o.id} className="tr" style={{borderBottom:'1px solid #F7FAFC',background:i%2===0?'#fff':'#FCFCFD',cursor:'pointer'}} onClick={()=>openOrderInNewTab(o)}>
           <td className="td"><Pill bg={o.orderType==='Single'?'#DBEAFE':'#EDE9FE'} color={o.orderType==='Single'?'#2563EB':'#7C3AED'}>{o.orderType==='Single'?'Single':'Bulk'}</Pill></td>
           <td className="td mono" style={{fontSize:11,fontWeight:600,color:o.orderType==='Single'?'#0B7A3E':'#4338CA'}}>{o.id}</td>
@@ -2592,7 +2605,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
       ))}</tbody>
     </table></div>
     <div style={{padding:'12px 16px',borderTop:'1px solid #F0F2F5',display:'flex',justifyContent:'space-between',background:'#FCFCFD'}}>
-      <span style={{fontSize:12,color:'#94A3B8'}}>{allOrdersCombined.length} orders{allOrdersTypeFilter!=='All'||allOrdersMonth!=='All'||allOrdersStatus!=='All'?' (filtered)':''}</span>
+      <span style={{fontSize:12,color:'#94A3B8'}}>{allOrdersCombined.length} orders{allOrdersTypeFilter!=='All'||allOrdersMonth!=='All'||allOrdersStatus!=='All'||allOrdersUserFilter!=='All'?' (filtered)':''}</span>
       <span style={{fontSize:12,fontWeight:500}}>{fmt(allOrdersCombined.reduce((s,o)=>{const cp=catalogLookup[o.materialNo];const price=cp?(cp.sg||cp.tp||cp.dist||0):Number(o.listPrice)||0;return s+(price>0?price*o.quantity:(Number(o.totalCost)||0));},0))}</span>
     </div>
   </div>
