@@ -11,6 +11,7 @@ import QRCode from 'qrcode';
 import pino from 'pino';
 import { initDatabase } from './initDb.js';
 import { query as dbQuery } from './db.js';
+import nodemailer from 'nodemailer';
 import { verifyToken, requireAdmin } from './middleware/auth.js';
 
 // API Routes
@@ -182,12 +183,41 @@ app.get('/api/whatsapp/status', (req, res) => {
 // Connect WhatsApp (generate QR)
 app.post('/api/whatsapp/connect', async (req, res) => {
   if (connectionStatus === 'connected') {
-    return res.json({ success: true, message: 'Already connected', sessionInfo });
+    return res.json({ success: true, message: 'Already connected', status: 'connected', sessionInfo });
+  }
+
+  // If already awaiting scan with a QR, return it immediately
+  if (connectionStatus === 'awaiting_scan' && qrCode) {
+    return res.json({ success: true, message: 'QR ready', status: 'awaiting_scan', qrCode });
   }
 
   try {
-    await connectWhatsApp();
-    res.json({ success: true, message: 'Connection initiated. Scan QR code.' });
+    // Clear stale auth to force fresh QR generation (avoids slow reconnect attempts)
+    if (connectionStatus === 'disconnected') {
+      try { await dbQuery('DELETE FROM wa_auth'); } catch (e) { /* ignore */ }
+      qrCode = null;
+      sock = null;
+    }
+
+    connectWhatsApp(); // fire and forget — don't await (QR comes via event)
+
+    // Wait up to 15s for QR code to be generated
+    const start = Date.now();
+    while (Date.now() - start < 15000) {
+      if (qrCode && connectionStatus === 'awaiting_scan') {
+        return res.json({ success: true, message: 'QR ready', status: 'awaiting_scan', qrCode });
+      }
+      if (connectionStatus === 'connected') {
+        return res.json({ success: true, message: 'Already connected', status: 'connected', sessionInfo });
+      }
+      if (connectionStatus === 'error') {
+        return res.status(500).json({ success: false, error: 'Connection failed' });
+      }
+      await new Promise(r => setTimeout(r, 300));
+    }
+
+    // Timeout but connection initiated — frontend can poll
+    res.json({ success: true, message: 'Connection initiated. Polling for QR.', status: connectionStatus, qrCode: qrCode || null });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -355,6 +385,33 @@ app.use('/api/machines', verifyToken, machinesRouter);
 app.use('/api/users', verifyToken, requireAdmin, usersRouter);
 app.use('/api/config', verifyToken, configRouter);
 app.use('/api/migrate', verifyToken, requireAdmin, migrateRouter);
+
+// Send HTML email via SMTP
+app.post('/api/send-email', verifyToken, async (req, res) => {
+  try {
+    const { to, subject, html, smtp } = req.body;
+    if (!to || !subject || !html || !smtp?.host) {
+      return res.status(400).json({ error: 'Missing required fields: to, subject, html, smtp.host' });
+    }
+    const transporter = nodemailer.createTransport({
+      host: smtp.host,
+      port: smtp.port || 587,
+      secure: (smtp.port || 587) === 465,
+      auth: smtp.user ? { user: smtp.user, pass: smtp.pass } : undefined,
+      tls: { rejectUnauthorized: false }
+    });
+    await transporter.sendMail({
+      from: smtp.from || `"Miltenyi Inventory Hub" <${smtp.user || 'noreply@miltenyibiotec.com'}>`,
+      to,
+      subject,
+      html
+    });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('Email send error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
 
 // Health check
 app.get('/api/health', async (req, res) => {

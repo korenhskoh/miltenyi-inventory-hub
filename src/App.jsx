@@ -537,8 +537,8 @@ const [customLogo, setCustomLogo] = useState(() => {
   const [scheduledNotifs, setScheduledNotifs] = useState({ enabled: true, frequency: 'weekly', dayOfWeek: 1, dayOfMonth: 1, time: '09:00', lastRun: null, recipients: [], emailEnabled: true, whatsappEnabled: true, reports: { monthlySummary: true, backOrderReport: true, lowStockAlert: true, pendingApprovals: true, orderStats: true } });
 const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@miltenyibiotec.com', senderName: 'Miltenyi Inventory Hub', smtpHost: '', smtpPort: 587, enabled: true, approverEmail: '', approvalEnabled: true, approvalKeywords: ['approve', 'approved', 'yes', 'confirm', 'confirmed', 'ok', 'accept', 'accepted'] });
   const [emailTemplates, setEmailTemplates] = useState({
-    orderApproval: { subject: '[APPROVAL] Order {orderId} - {description}', body: 'Order Approval Request\n\nOrder ID: {orderId}\nDescription: {description}\nMaterial No: {materialNo}\nQuantity: {quantity}\nTotal: S${totalCost}\nRequested By: {orderBy}\n\nReply APPROVE to approve or REJECT to decline.\n\n-Miltenyi Inventory Hub SG' },
-    bulkApproval: { subject: '[APPROVAL] Bulk Order {batchId} - {month}', body: 'Bulk Order Approval Request\n\nBatch ID: {batchId}\nMonth: {month}\nItems: {itemCount}\nTotal Cost: S${totalCost}\nRequested By: {orderBy}\n\nReply APPROVE to approve or REJECT to decline.\n\n-Miltenyi Inventory Hub SG' },
+    orderApproval: { subject: '[APPROVAL] Batch Order Request - {orderCount} Orders (S${totalCost})', body: 'Order Approval Request\n\nRequested By: {orderBy}\nDate: {date}\nTotal Orders: {orderCount}\nTotal Quantity: {totalQty}\nTotal Cost: S${totalCost}\n\n{orderTable}\n\nReply APPROVE to approve all orders or REJECT to decline.\n\n-Miltenyi Inventory Hub SG' },
+    bulkApproval: { subject: '[APPROVAL] Bulk Order Batch - {batchCount} Batches (S${totalCost})', body: 'Bulk Order Approval Request\n\nRequested By: {orderBy}\nDate: {date}\nBatches: {batchCount}\nTotal Items: {itemCount}\nTotal Cost: S${totalCost}\n\n{orderTable}\n\nReply APPROVE to approve or REJECT to decline.\n\n-Miltenyi Inventory Hub SG' },
     orderNotification: { subject: 'New Order: {orderId} - {description}', body: 'A new order has been created.\n\nOrder ID: {orderId}\nItem: {description}\nMaterial: {materialNo}\nQuantity: {quantity}\nTotal: S${totalCost}\nOrdered By: {orderBy}\nDate: {date}\n\n-Miltenyi Inventory Hub SG' },
     backOrderAlert: { subject: 'Back Order Alert: {description}', body: 'Back Order Alert\n\nThe following item is on back order:\n\nOrder ID: {orderId}\nItem: {description}\nOrdered: {quantity}\nReceived: {received}\nPending: {pending}\n\nPlease follow up with HQ.\n\n-Miltenyi Inventory Hub SG' },
     monthlySummary: { subject: 'Monthly Summary - {month}', body: 'Monthly Inventory Summary\n\nMonth: {month}\nTotal Orders: {totalOrders}\nReceived: {received}\nPending: {pending}\nBack Orders: {backOrders}\nTotal Value: S${totalValue}\n\n-Miltenyi Inventory Hub SG' },
@@ -924,6 +924,48 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
     setSelBulk(new Set());
   };
 
+  // ── HTML Email Builder ──
+  const buildApprovalHtml = ({ title, headerFields, sections, footer }) => {
+    const thStyle = 'padding:10px 14px;text-align:left;font-size:12px;font-weight:600;color:#4A5568;background:#F8FAFB;border-bottom:2px solid #E2E8F0;white-space:nowrap;';
+    const tdStyle = 'padding:9px 14px;font-size:12px;color:#1A202C;border-bottom:1px solid #F0F2F5;';
+    const tdMono = tdStyle + 'font-family:Consolas,monospace;font-weight:600;color:#0B7A3E;';
+    const tdRight = tdStyle + 'text-align:right;font-weight:600;';
+    const renderTable = (cols, rows, totals) => {
+      let html = '<table cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse;border:1px solid #E2E8F0;border-radius:8px;overflow:hidden;margin:16px 0;">';
+      html += '<thead><tr>' + cols.map(c => `<th style="${thStyle}">${c}</th>`).join('') + '</tr></thead><tbody>';
+      rows.forEach((r, i) => {
+        const bg = i % 2 === 0 ? '#fff' : '#FCFCFD';
+        html += `<tr style="background:${bg}">` + r.map((v, ci) => `<td style="${ci === 0 ? tdMono : ci === r.length - 1 ? tdRight : tdStyle}">${v}</td>`).join('') + '</tr>';
+      });
+      if (totals) {
+        html += `<tr style="background:#F0FDF4;font-weight:700;">` + totals.map((v, ci) => `<td style="${ci === totals.length - 1 ? tdRight + 'color:#0B7A3E;' : tdStyle + 'font-weight:700;'}">${v}</td>`).join('') + '</tr>';
+      }
+      html += '</tbody></table>';
+      return html;
+    };
+    let body = `<div style="max-width:700px;margin:0 auto;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#1A202C;">`;
+    body += `<div style="background:linear-gradient(135deg,#006837,#00A550);padding:28px 32px;border-radius:12px 12px 0 0;"><h1 style="margin:0;font-size:20px;color:#fff;font-weight:700;">${title}</h1></div>`;
+    body += `<div style="padding:28px 32px;background:#fff;border:1px solid #E8ECF0;border-top:none;">`;
+    body += `<table style="margin-bottom:20px;">` + headerFields.map(([l, v]) => `<tr><td style="padding:4px 16px 4px 0;font-size:12px;color:#64748B;font-weight:600;">${l}</td><td style="padding:4px 0;font-size:13px;font-weight:600;">${v}</td></tr>`).join('') + `</table>`;
+    sections.forEach(s => {
+      if (s.heading) body += `<h3 style="font-size:14px;font-weight:700;color:#1E293B;margin:24px 0 8px;border-bottom:2px solid #E2E8F0;padding-bottom:6px;">${s.heading}</h3>`;
+      body += renderTable(s.cols, s.rows, s.totals);
+    });
+    body += `<div style="margin-top:28px;padding:20px;background:#FEF3C7;border-radius:10px;border-left:4px solid #D97706;">`;
+    body += `<p style="margin:0;font-size:13px;color:#92400E;font-weight:600;">Reply <strong>APPROVE</strong> to approve or <strong>REJECT</strong> to decline.</p></div>`;
+    body += `</div><div style="padding:16px 32px;background:#F8FAFB;border:1px solid #E8ECF0;border-top:none;border-radius:0 0 12px 12px;text-align:center;">`;
+    body += `<p style="margin:0;font-size:11px;color:#94A3B8;">${footer || 'Miltenyi Inventory Hub SG'}</p></div></div>`;
+    return body;
+  };
+
+  const trySendHtmlEmail = async (to, subject, html) => {
+    if (!emailConfig.smtpHost) return false;
+    try {
+      const ok = await api.sendEmail({ to, subject, html, smtp: { host: emailConfig.smtpHost, port: emailConfig.smtpPort, user: emailConfig.smtpUser || '', pass: emailConfig.smtpPass || '', from: `"${emailConfig.senderName}" <${emailConfig.senderEmail}>` } });
+      return ok;
+    } catch { return false; }
+  };
+
   // ── Batch Approval & Notify — Single Orders ──
   const batchApprovalNotifyOrders = async () => {
     if (!selOrders.size) return;
@@ -954,15 +996,27 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
     );
     const table = [hdr, sep, ...rows, sep, `TOTAL: ${selected.length} orders | ${totalQty} units | S$${totalCost.toFixed(2)}`].join('\n');
 
-    // Compose mailto
-    const subject = `[APPROVAL] Batch Order Request - ${selected.length} Orders (S$${totalCost.toFixed(2)})`;
-    const body = `Order Approval Request\n\nRequested By: ${currentUser?.name || 'System'}\nDate: ${now}\nTotal Orders: ${selected.length}\nTotal Quantity: ${totalQty}\nTotal Cost: S$${totalCost.toFixed(2)}\n\n${table}\n\nReply APPROVE to approve all orders or REJECT to decline.\n\n-Miltenyi Inventory Hub SG`;
-    const mailtoUrl = `mailto:${emailConfig.approverEmail}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
-    if (mailtoUrl.length > 2000) {
-      const short = body.substring(0, 1400) + '\n\n[... see full details in Inventory Hub or WhatsApp]';
-      window.open(`mailto:${emailConfig.approverEmail}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(short)}`, '_blank');
+    // Compose email
+    const tmpl = emailTemplates.orderApproval || {};
+    const replacePlaceholders = (s) => (s||'').replace(/\{orderBy\}/g, currentUser?.name||'System').replace(/\{date\}/g, now).replace(/\{orderCount\}/g, selected.length).replace(/\{totalQty\}/g, totalQty).replace(/\{totalCost\}/g, totalCost.toFixed(2)).replace(/\{orderTable\}/g, table);
+    const subject = replacePlaceholders(tmpl.subject || '[APPROVAL] Batch Order Request - {orderCount} Orders (S${totalCost})');
+
+    // Try HTML email via SMTP first
+    const htmlEmail = buildApprovalHtml({
+      title: '📋 Order Approval Request',
+      headerFields: [['Requested By', currentUser?.name||'System'], ['Date', now], ['Total Orders', selected.length], ['Total Quantity', totalQty], ['Total Cost', `S$${totalCost.toFixed(2)}`]],
+      sections: [{ cols: ['No.', 'Order ID', 'Material No.', 'Description', 'Qty', 'Total (SGD)'], rows: selected.map((o, i) => [i+1, o.id||'', o.materialNo||'N/A', (o.description||'').slice(0,40), o.quantity||0, `S$${(Number(o.totalCost)||0).toFixed(2)}`]), totals: ['', '', '', `${selected.length} orders`, `${totalQty} units`, `S$${totalCost.toFixed(2)}`] }]
+    });
+    const htmlSent = await trySendHtmlEmail(emailConfig.approverEmail, subject, htmlEmail);
+    if (!htmlSent) {
+      // Fallback to mailto plain text
+      const body = replacePlaceholders(tmpl.body || 'Order Approval Request\n\n{orderTable}');
+      const mailtoUrl = `mailto:${emailConfig.approverEmail}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+      if (mailtoUrl.length > 2000) {
+        window.open(`mailto:${emailConfig.approverEmail}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body.substring(0, 1400) + '\n\n[... see full details in Inventory Hub]')}`, '_blank');
+      } else { window.open(mailtoUrl, '_blank'); }
     } else {
-      window.open(mailtoUrl, '_blank');
+      notify('HTML Email Sent', `Approval email sent via SMTP to ${emailConfig.approverEmail}`, 'success');
     }
 
     // Notification log
@@ -971,9 +1025,17 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
     // WhatsApp
     if (waConnected) {
       try {
-        const waMsg = `*Order Approval Request*\n\nRequested By: ${currentUser?.name || 'System'}\nDate: ${now}\nOrders: ${selected.length}\nTotal: S$${totalCost.toFixed(2)}\n\n` +
-          selected.map((o, i) => `${i + 1}. ${o.id} | ${o.materialNo || 'N/A'} | ${(o.description || '').slice(0, 30)} | Qty: ${o.quantity} | S$${(Number(o.totalCost) || 0).toFixed(2)}`).join('\n') +
-          `\n\n_Reply APPROVE or REJECT_\n_Miltenyi Inventory Hub SG_`;
+        const waTable = selected.map((o, i) =>
+          `${String(i+1).padEnd(3)}│ ${(o.materialNo||'N/A').padEnd(16)}│ ${(o.description||'').slice(0,22).padEnd(22)}│ ${String(o.quantity||0).padStart(3)} │ S$${(Number(o.totalCost)||0).toFixed(2)}`
+        ).join('\n');
+        const waMsg = `*📋 Order Approval Request*\n\nRequested By: ${currentUser?.name||'System'}\nDate: ${now}\nOrders: ${selected.length}\nTotal: *S$${totalCost.toFixed(2)}*\n\n` +
+          '```\n' +
+          `No │ Material No.    │ Description            │ Qty │ Total\n` +
+          `───┼─────────────────┼────────────────────────┼─────┼──────────\n` +
+          waTable + '\n' +
+          `───┼─────────────────┼────────────────────────┼─────┼──────────\n` +
+          `   │ TOTAL: ${String(selected.length).padEnd(8)}│ ${String(totalQty+' units').padEnd(22)}│     │ S$${totalCost.toFixed(2)}\n` +
+          '```\n\n_Reply *APPROVE* or *REJECT*_\n_Miltenyi Inventory Hub SG_';
         const approverUser = users.find(u => u.email === emailConfig.approverEmail);
         if (approverUser?.phone) {
           await fetch(`${WA_API_URL}/send`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ phone: approverUser.phone, template: 'custom', data: { message: waMsg } }) });
@@ -1028,14 +1090,32 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
     lines.push(`\nGRAND TOTAL: ${selectedGroups.length} batches | ${linkedOrders.length} items | S$${totalCost.toFixed(2)}`);
     const table = lines.join('\n');
 
-    const subject = `[APPROVAL] Bulk Order Batch - ${selectedGroups.length} Batches (S$${totalCost.toFixed(2)})`;
-    const body = `Bulk Order Approval Request\n\nRequested By: ${currentUser?.name || 'System'}\nDate: ${now}\nBatches: ${selectedGroups.length}\nTotal Items: ${linkedOrders.length}\nTotal Cost: S$${totalCost.toFixed(2)}\n\n${table}\n\nReply APPROVE to approve or REJECT to decline.\n\n-Miltenyi Inventory Hub SG`;
-    const mailtoUrl = `mailto:${emailConfig.approverEmail}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
-    if (mailtoUrl.length > 2000) {
-      const short = body.substring(0, 1400) + '\n\n[... see full details in Inventory Hub or WhatsApp]';
-      window.open(`mailto:${emailConfig.approverEmail}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(short)}`, '_blank');
+    // Compose email
+    const tmplB = emailTemplates.bulkApproval || {};
+    const replaceBulk = (s) => (s||'').replace(/\{orderBy\}/g, currentUser?.name||'System').replace(/\{date\}/g, now).replace(/\{batchCount\}/g, selectedGroups.length).replace(/\{itemCount\}/g, linkedOrders.length).replace(/\{totalCost\}/g, totalCost.toFixed(2)).replace(/\{orderTable\}/g, table);
+    const subject = replaceBulk(tmplB.subject || '[APPROVAL] Bulk Order Batch - {batchCount} Batches (S${totalCost})');
+
+    // Try HTML email via SMTP first
+    const bulkSections = selectedGroups.map(bg => {
+      const bgOrders = orders.filter(o => o.bulkGroupId === bg.id);
+      const bgCost = bgOrders.reduce((s, o) => s + (Number(o.totalCost) || 0), 0);
+      return { heading: `${bg.id} — ${bg.month} (By: ${bg.createdBy || 'N/A'})`, cols: ['No.', 'Material No.', 'Description', 'Qty', 'Total (SGD)'], rows: bgOrders.map((o, i) => [i+1, o.materialNo||'N/A', (o.description||'').slice(0,40), o.quantity||0, `S$${(Number(o.totalCost)||0).toFixed(2)}`]), totals: ['', '', `${bgOrders.length} items`, '', `S$${bgCost.toFixed(2)}`] };
+    });
+    const htmlEmail = buildApprovalHtml({
+      title: '📋 Bulk Order Approval Request',
+      headerFields: [['Requested By', currentUser?.name||'System'], ['Date', now], ['Batches', selectedGroups.length], ['Total Items', linkedOrders.length], ['Total Cost', `S$${totalCost.toFixed(2)}`]],
+      sections: bulkSections,
+      footer: `Grand Total: ${selectedGroups.length} batches | ${linkedOrders.length} items | S$${totalCost.toFixed(2)} — Miltenyi Inventory Hub SG`
+    });
+    const htmlSent = await trySendHtmlEmail(emailConfig.approverEmail, subject, htmlEmail);
+    if (!htmlSent) {
+      const body = replaceBulk(tmplB.body || 'Bulk Order Approval Request\n\n{orderTable}');
+      const mailtoUrl = `mailto:${emailConfig.approverEmail}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+      if (mailtoUrl.length > 2000) {
+        window.open(`mailto:${emailConfig.approverEmail}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body.substring(0, 1400) + '\n\n[... see full details in Inventory Hub]')}`, '_blank');
+      } else { window.open(mailtoUrl, '_blank'); }
     } else {
-      window.open(mailtoUrl, '_blank');
+      notify('HTML Email Sent', `Bulk approval email sent via SMTP to ${emailConfig.approverEmail}`, 'success');
     }
 
     addNotifEntry({ id: `N-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, type: 'approval', to: emailConfig.approverEmail, subject, date: now, status: 'Pending' });
@@ -1043,12 +1123,24 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
     // WhatsApp
     if (waConnected) {
       try {
-        const waMsg = `*Bulk Order Approval Request*\n\nRequested By: ${currentUser?.name || 'System'}\nDate: ${now}\nBatches: ${selectedGroups.length}\nItems: ${linkedOrders.length}\nTotal: S$${totalCost.toFixed(2)}\n\n` +
-          selectedGroups.map(bg => {
-            const bgOrders = orders.filter(o => o.bulkGroupId === bg.id);
-            return `*${bg.id} - ${bg.month}*\n` + bgOrders.map((o, i) => `  ${i + 1}. ${o.materialNo || 'N/A'} | ${(o.description || '').slice(0, 30)} | Qty: ${o.quantity} | S$${(Number(o.totalCost) || 0).toFixed(2)}`).join('\n');
-          }).join('\n\n') +
-          `\n\n_Reply APPROVE or REJECT_\n_Miltenyi Inventory Hub SG_`;
+        const waSections = selectedGroups.map(bg => {
+          const bgOrders = orders.filter(o => o.bulkGroupId === bg.id);
+          const bgCost = bgOrders.reduce((s, o) => s + (Number(o.totalCost) || 0), 0);
+          const bgRows = bgOrders.map((o, i) =>
+            `${String(i+1).padEnd(3)}│ ${(o.materialNo||'N/A').padEnd(16)}│ ${(o.description||'').slice(0,22).padEnd(22)}│ ${String(o.quantity||0).padStart(3)} │ S$${(Number(o.totalCost)||0).toFixed(2)}`
+          ).join('\n');
+          return `*${bg.id} — ${bg.month}*\n` +
+            '```\n' +
+            `No │ Material No.    │ Description            │ Qty │ Total\n` +
+            `───┼─────────────────┼────────────────────────┼─────┼──────────\n` +
+            bgRows + '\n' +
+            `───┼─────────────────┼────────────────────────┼─────┼──────────\n` +
+            `   │ Subtotal: ${String(bgOrders.length+' items').padEnd(22)}              │ S$${bgCost.toFixed(2)}\n` +
+            '```';
+        }).join('\n\n');
+        const waMsg = `*📋 Bulk Order Approval Request*\n\nRequested By: ${currentUser?.name||'System'}\nDate: ${now}\nBatches: ${selectedGroups.length}\nItems: ${linkedOrders.length}\nTotal: *S$${totalCost.toFixed(2)}*\n\n` +
+          waSections +
+          `\n\n*Grand Total: ${selectedGroups.length} batches │ ${linkedOrders.length} items │ S$${totalCost.toFixed(2)}*\n\n_Reply *APPROVE* or *REJECT*_\n_Miltenyi Inventory Hub SG_`;
         const approverUser = users.find(u => u.email === emailConfig.approverEmail);
         if (approverUser?.phone) {
           await fetch(`${WA_API_URL}/send`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ phone: approverUser.phone, template: 'custom', data: { message: waMsg } }) });
@@ -1149,21 +1241,42 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
 
   const handleWaConnect = async () => {
     setWaConnecting(true);
+    setWaQrCode('');
+    setWaQrVisible(true); // show QR panel immediately with loading state
     try {
       const res = await fetch(`${WA_API_URL}/connect`, { method: 'POST' });
       const data = await res.json();
 
       if (data.success) {
-        notify('Connecting...', 'Scan QR code with WhatsApp', 'info');
+        // Server may return QR inline (waited up to 15s)
+        if (data.qrCode) {
+          setWaQrCode(data.qrCode);
+        }
+        if (data.status === 'connected') {
+          setWaConnected(true);
+          setWaConnecting(false);
+          setWaQrVisible(false);
+          setWaSessionInfo(data.sessionInfo);
+          notify('WhatsApp Connected', 'Session already active', 'success');
+          return;
+        }
 
-        // Poll for status until connected
+        notify('Scan QR Code', 'Open WhatsApp → Linked Devices → Link a Device', 'info');
+
+        // Fast poll: 800ms for first 20s, then 2s after
+        let pollCount = 0;
         const pollInterval = setInterval(async () => {
+          pollCount++;
           const status = await pollWaStatus();
           if (status === 'connected' || status === 'error') {
             clearInterval(pollInterval);
             setWaConnecting(false);
+            if (status === 'error') {
+              setWaQrVisible(false);
+              notify('Connection Failed', 'WhatsApp connection error. Try again.', 'warning');
+            }
           }
-        }, 2000);
+        }, pollCount < 25 ? 800 : 2000);
 
         // Stop polling after 2 minutes
         setTimeout(() => {
@@ -1171,12 +1284,17 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
           if (!waConnected) {
             setWaConnecting(false);
             setWaQrVisible(false);
-            notify('Connection Timeout', 'QR code expired. Try again.', 'warning');
+            notify('QR Expired', 'QR code timed out. Press Scan QR Code to try again.', 'warning');
           }
         }, 120000);
+      } else {
+        setWaConnecting(false);
+        setWaQrVisible(false);
+        notify('Connection Failed', data.error || 'Server returned an error', 'warning');
       }
     } catch (err) {
       setWaConnecting(false);
+      setWaQrVisible(false);
       notify('Connection Failed', 'Make sure the server is running', 'warning');
     }
   };
@@ -3387,13 +3505,21 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
 
         {/* QR Code Display */}
         {waQrVisible && !waConnected && (
-          <div style={{textAlign:'center',padding:20,background:'#F8FAFB',borderRadius:12,marginBottom:16}}>
-            <div style={{marginBottom:12}}>
-              {waQrCode.startsWith("data:") ? <img src={waQrCode} alt="QR Code" style={{width:200,height:200,borderRadius:8}}/> : <QRCodeCanvas text={waQrCode} size={200}/>}
-            </div>
-            <div style={{fontSize:13,fontWeight:600,color:'#1A202C',marginBottom:4}}>Scan with WhatsApp</div>
-            <div style={{fontSize:11,color:'#94A3B8'}}>Open WhatsApp → Linked Devices → Link a Device</div>
-            {waConnecting && <div style={{marginTop:12,display:'flex',alignItems:'center',justifyContent:'center',gap:8,fontSize:12,color:'#D97706'}}><RefreshCw size={14} style={{animation:'spin 1s linear infinite'}}/> Waiting for scan...</div>}
+          <div style={{textAlign:'center',padding:24,background:'#F8FAFB',borderRadius:12,marginBottom:16,border:'1px solid #E2E8F0'}}>
+            {waQrCode ? (
+              <div style={{marginBottom:12}}>
+                {waQrCode.startsWith("data:") ? <img src={waQrCode} alt="QR Code" style={{width:220,height:220,borderRadius:10,border:'3px solid #fff',boxShadow:'0 4px 12px rgba(0,0,0,0.1)'}}/> : <QRCodeCanvas text={waQrCode} size={220}/>}
+              </div>
+            ) : (
+              <div style={{width:220,height:220,margin:'0 auto 12px',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',background:'#fff',borderRadius:10,border:'1px solid #E8ECF0'}}>
+                <RefreshCw size={28} color="#94A3B8" style={{animation:'spin 1s linear infinite',marginBottom:12}}/>
+                <div style={{fontSize:12,color:'#94A3B8',fontWeight:500}}>Generating QR Code...</div>
+                <div style={{fontSize:11,color:'#CBD5E1',marginTop:4}}>This may take a few seconds</div>
+              </div>
+            )}
+            <div style={{fontSize:14,fontWeight:700,color:'#1A202C',marginBottom:4}}>{waQrCode ? 'Scan with WhatsApp' : 'Preparing Connection'}</div>
+            <div style={{fontSize:12,color:'#64748B'}}>Open WhatsApp → Linked Devices → Link a Device</div>
+            {waConnecting && waQrCode && <div style={{marginTop:12,display:'flex',alignItems:'center',justifyContent:'center',gap:8,fontSize:12,color:'#D97706'}}><RefreshCw size={14} style={{animation:'spin 1s linear infinite'}}/> Waiting for scan...</div>}
           </div>
         )}
 
@@ -4395,7 +4521,17 @@ if(scheduledNotifs.emailEnabled){                    addNotifEntry({id:'N-'+Date
           <input type="number" value={emailConfig.smtpPort} onChange={e=>setEmailConfig(prev=>({...prev,smtpPort:parseInt(e.target.value)}))} style={{width:'100%'}}/>
         </div>
       </div>
-      <div style={{fontSize:11,color:'#94A3B8'}}>Email notifications will be sent from this address. Configure SMTP for production use.</div>
+      <div className="grid-2" style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginTop:8}}>
+        <div>
+          <label style={{display:'block',fontSize:12,fontWeight:600,color:'#4A5568',marginBottom:6}}>SMTP Username</label>
+          <input type="text" value={emailConfig.smtpUser||''} onChange={e=>setEmailConfig(prev=>({...prev,smtpUser:e.target.value}))} placeholder="your-email@gmail.com" style={{width:'100%'}}/>
+        </div>
+        <div>
+          <label style={{display:'block',fontSize:12,fontWeight:600,color:'#4A5568',marginBottom:6}}>SMTP Password</label>
+          <input type="password" value={emailConfig.smtpPass||''} onChange={e=>setEmailConfig(prev=>({...prev,smtpPass:e.target.value}))} placeholder="App password" style={{width:'100%'}}/>
+        </div>
+      </div>
+      <div style={{fontSize:11,color:'#94A3B8',marginTop:6}}>Configure SMTP to send HTML emails with styled tables. Without SMTP, approval emails open in your default mail client (plain text).</div>
     </div>
   </div>}
 
@@ -4493,8 +4629,8 @@ if(scheduledNotifs.emailEnabled){                    addNotifEntry({id:'N-'+Date
     <div style={{marginTop:12,display:'flex',gap:8}}>
       <button className="bp" style={{fontSize:12}} onClick={async ()=>{const ok=await api.setConfigKey('emailTemplates',emailTemplates);if(ok){notify('Templates Saved','Email templates saved to database','success');}else{notify('Save Failed','Email templates not saved to database','error');}}}>Save Templates</button>
       <button className="bs" style={{fontSize:12}} onClick={()=>{setEmailTemplates({
-        orderApproval: { subject: '[APPROVAL] Order {orderId} - {description}', body: 'Order Approval Request\n\nOrder ID: {orderId}\nDescription: {description}\nMaterial No: {materialNo}\nQuantity: {quantity}\nTotal: S${totalCost}\nRequested By: {orderBy}\n\nReply APPROVE to approve or REJECT to decline.\n\n-Miltenyi Inventory Hub SG' },
-        bulkApproval: { subject: '[APPROVAL] Bulk Order {batchId} - {month}', body: 'Bulk Order Approval Request\n\nBatch ID: {batchId}\nMonth: {month}\nItems: {itemCount}\nTotal Cost: S${totalCost}\nRequested By: {orderBy}\n\nReply APPROVE to approve or REJECT to decline.\n\n-Miltenyi Inventory Hub SG' },
+        orderApproval: { subject: '[APPROVAL] Batch Order Request - {orderCount} Orders (S${totalCost})', body: 'Order Approval Request\n\nRequested By: {orderBy}\nDate: {date}\nTotal Orders: {orderCount}\nTotal Quantity: {totalQty}\nTotal Cost: S${totalCost}\n\n{orderTable}\n\nReply APPROVE to approve all orders or REJECT to decline.\n\n-Miltenyi Inventory Hub SG' },
+        bulkApproval: { subject: '[APPROVAL] Bulk Order Batch - {batchCount} Batches (S${totalCost})', body: 'Bulk Order Approval Request\n\nRequested By: {orderBy}\nDate: {date}\nBatches: {batchCount}\nTotal Items: {itemCount}\nTotal Cost: S${totalCost}\n\n{orderTable}\n\nReply APPROVE to approve or REJECT to decline.\n\n-Miltenyi Inventory Hub SG' },
         orderNotification: { subject: 'New Order: {orderId} - {description}', body: 'A new order has been created.\n\nOrder ID: {orderId}\nItem: {description}\nMaterial: {materialNo}\nQuantity: {quantity}\nTotal: S${totalCost}\nOrdered By: {orderBy}\nDate: {date}\n\n-Miltenyi Inventory Hub SG' },
         backOrderAlert: { subject: 'Back Order Alert: {description}', body: 'Back Order Alert\n\nThe following item is on back order:\n\nOrder ID: {orderId}\nItem: {description}\nOrdered: {quantity}\nReceived: {received}\nPending: {pending}\n\nPlease follow up with HQ.\n\n-Miltenyi Inventory Hub SG' },
         monthlySummary: { subject: 'Monthly Summary - {month}', body: 'Monthly Inventory Summary\n\nMonth: {month}\nTotal Orders: {totalOrders}\nReceived: {received}\nPending: {pending}\nBack Orders: {backOrders}\nTotal Value: S${totalValue}\n\n-Miltenyi Inventory Hub SG' }

@@ -629,6 +629,16 @@ async function deleteMachine(id) {
   }
 }
 
+async function sendEmail({ to, subject, html, smtp }) {
+  try {
+    const res = handleResponse(await fetch(`${BASE}/api/send-email`, { method: 'POST', headers: authHeaders(), body: JSON.stringify({ to, subject, html, smtp }) }));
+    const data = await res.json();
+    return data.ok || false;
+  } catch {
+    return false;
+  }
+}
+
 // ─── Export ───
 
 const api = {
@@ -683,6 +693,7 @@ const api = {
   createMachine,
   updateMachine,
   deleteMachine,
+  sendEmail,
 };
 
 export default api;
