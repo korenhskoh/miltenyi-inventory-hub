@@ -535,7 +535,7 @@ const [customLogo, setCustomLogo] = useState(() => {
   const [waAutoReply, setWaAutoReply] = useState(false);
   const [waNotifyRules, setWaNotifyRules] = useState({ orderCreated: true, bulkOrderCreated: true, partArrivalDone: true, deliveryArrival: true, backOrderUpdate: true, lowStockAlert: false, monthlySummary: false, urgentRequest: true });
   const [scheduledNotifs, setScheduledNotifs] = useState({ enabled: true, frequency: 'weekly', dayOfWeek: 1, dayOfMonth: 1, time: '09:00', lastRun: null, recipients: [], emailEnabled: true, whatsappEnabled: true, reports: { monthlySummary: true, backOrderReport: true, lowStockAlert: true, pendingApprovals: true, orderStats: true } });
-const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@miltenyibiotec.com', senderName: 'Miltenyi Inventory Hub', smtpHost: '', smtpPort: 587, enabled: true, approverEmail: '', approvalEnabled: true, approvalKeywords: ['approve', 'approved', 'yes', 'confirm', 'confirmed', 'ok', 'accept', 'accepted'] });
+const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@miltenyibiotec.com', senderName: 'Miltenyi Inventory Hub', smtpHost: '', smtpPort: 587, enabled: true, approverEmail: '', approvalEnabled: true, approvalKeywords: ['approve', 'approved', 'yes', 'confirm', 'confirmed', 'ok', 'accept', 'accepted'], approvalAutoEmail: true, approvalAutoWhatsApp: true });
   const [emailTemplates, setEmailTemplates] = useState({
     orderApproval: { subject: '[APPROVAL] Batch Order Request - {orderCount} Orders (S${totalCost})', body: 'Order Approval Request\n\nRequested By: {orderBy}\nDate: {date}\nTotal Orders: {orderCount}\nTotal Quantity: {totalQty}\nTotal Cost: S${totalCost}\n\n{orderTable}\n\nReply APPROVE to approve all orders or REJECT to decline.\n\n-Miltenyi Inventory Hub SG' },
     bulkApproval: { subject: '[APPROVAL] Bulk Order Batch - {batchCount} Batches (S${totalCost})', body: 'Bulk Order Approval Request\n\nRequested By: {orderBy}\nDate: {date}\nBatches: {batchCount}\nTotal Items: {itemCount}\nTotal Cost: S${totalCost}\n\n{orderTable}\n\nReply APPROVE to approve or REJECT to decline.\n\n-Miltenyi Inventory Hub SG' },
@@ -783,17 +783,17 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
     const monthStr = `${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][now.getMonth()]} ${now.getFullYear()}`;
     const linkedBg = newOrder.bulkGroupId ? bulkGroups.find(bg => bg.id === newOrder.bulkGroupId) : null;
     const o = { id:`ORD-${Date.now()}-${Math.random().toString(36).slice(2,6)}`,...newOrder, bulkGroupId:linkedBg ? linkedBg.id : null, quantity:parseInt(newOrder.quantity), listPrice:parseFloat(newOrder.listPrice)||0, totalCost:(parseFloat(newOrder.listPrice)||0)*parseInt(newOrder.quantity), orderDate:now.toISOString().slice(0,10), arrivalDate:null, qtyReceived:0, backOrder:-parseInt(newOrder.quantity), engineer:'', emailFull:'', emailBack:'', status:'Pending Approval', approvalStatus:'pending', approvalSentDate:null, month:linkedBg ? linkedBg.month : monthStr, year:String(now.getFullYear()) };
-    setOrders(prev=>[o,...prev]); setShowNewOrder(false); setNewOrder({materialNo:'',description:'',quantity:1,listPrice:0,orderBy:'',remark:'',bulkGroupId:''}); setNewBulkMonth('');
-    if (linkedBg) recalcBulkGroupForMonths([linkedBg.id], [o, ...orders]);
     const created = await api.createOrder(o);
     setIsSubmitting(false);
     if (!created) { notify('Save Failed','Order not saved to database. Please retry.','error'); return; }
+    setOrders(prev=>[o,...prev]); setShowNewOrder(false); setNewOrder({materialNo:'',description:'',quantity:1,listPrice:0,orderBy:'',remark:'',bulkGroupId:''}); setNewBulkMonth('');
+    if (linkedBg) recalcBulkGroupForMonths([linkedBg.id], [o, ...orders]);
     notify('Order Created',`${o.description} — ${o.quantity} units. Select and use "Order Approval & Notify" to send for approval.`,'success');
     logAction('create', 'order', o.id, { description: o.description, quantity: o.quantity, totalCost: o.totalCost });
   };
 
   // ── Duplicate Order ──
-  const handleDuplicateOrder = (sourceOrder) => {
+  const handleDuplicateOrder = async (sourceOrder) => {
     // Strip existing [Copy] or [Copy-N] prefix to get base name
     const baseName = sourceOrder.description.replace(/^\[Copy(?:-\d+)?\]\s*/, '');
     // Count existing copies of this base name
@@ -816,8 +816,9 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
       emailFull: '',
       emailBack: '',
     };
+    const saved = await api.createOrder(copy);
+    if (!saved) { notify('Save Failed','Duplicated order not saved to database','error'); return; }
     setOrders(prev=>[copy,...prev]);
-    dbSync(api.createOrder(copy), 'Duplicated order not saved to database');
     notify('Order Duplicated',`[Copy-${copyNum}] ${baseName}`,'success');
   };
 
@@ -1001,29 +1002,31 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
     const replacePlaceholders = (s) => (s||'').replace(/\{orderBy\}/g, currentUser?.name||'System').replace(/\{date\}/g, now).replace(/\{orderCount\}/g, selected.length).replace(/\{totalQty\}/g, totalQty).replace(/\{totalCost\}/g, totalCost.toFixed(2)).replace(/\{orderTable\}/g, table);
     const subject = replacePlaceholders(tmpl.subject || '[APPROVAL] Batch Order Request - {orderCount} Orders (S${totalCost})');
 
-    // Try HTML email via SMTP first
-    const htmlEmail = buildApprovalHtml({
-      title: '📋 Order Approval Request',
-      headerFields: [['Requested By', currentUser?.name||'System'], ['Date', now], ['Total Orders', selected.length], ['Total Quantity', totalQty], ['Total Cost', `S$${totalCost.toFixed(2)}`]],
-      sections: [{ cols: ['No.', 'Order ID', 'Material No.', 'Description', 'Qty', 'Total (SGD)'], rows: selected.map((o, i) => [i+1, o.id||'', o.materialNo||'N/A', (o.description||'').slice(0,40), o.quantity||0, `S$${(Number(o.totalCost)||0).toFixed(2)}`]), totals: ['', '', '', `${selected.length} orders`, `${totalQty} units`, `S$${totalCost.toFixed(2)}`] }]
-    });
-    const htmlSent = await trySendHtmlEmail(emailConfig.approverEmail, subject, htmlEmail);
-    if (!htmlSent) {
-      // Fallback to mailto plain text
-      const body = replacePlaceholders(tmpl.body || 'Order Approval Request\n\n{orderTable}');
-      const mailtoUrl = `mailto:${emailConfig.approverEmail}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
-      if (mailtoUrl.length > 2000) {
-        window.open(`mailto:${emailConfig.approverEmail}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body.substring(0, 1400) + '\n\n[... see full details in Inventory Hub]')}`, '_blank');
-      } else { window.open(mailtoUrl, '_blank'); }
-    } else {
-      notify('HTML Email Sent', `Approval email sent via SMTP to ${emailConfig.approverEmail}`, 'success');
+    const sentChannels = [];
+
+    // Email — auto-send if enabled
+    if (emailConfig.approvalAutoEmail !== false) {
+      const htmlEmail = buildApprovalHtml({
+        title: '📋 Order Approval Request',
+        headerFields: [['Requested By', currentUser?.name||'System'], ['Date', now], ['Total Orders', selected.length], ['Total Quantity', totalQty], ['Total Cost', `S$${totalCost.toFixed(2)}`]],
+        sections: [{ cols: ['No.', 'Order ID', 'Material No.', 'Description', 'Qty', 'Total (SGD)'], rows: selected.map((o, i) => [i+1, o.id||'', o.materialNo||'N/A', (o.description||'').slice(0,40), o.quantity||0, `S$${(Number(o.totalCost)||0).toFixed(2)}`]), totals: ['', '', '', `${selected.length} orders`, `${totalQty} units`, `S$${totalCost.toFixed(2)}`] }]
+      });
+      const htmlSent = await trySendHtmlEmail(emailConfig.approverEmail, subject, htmlEmail);
+      if (!htmlSent) {
+        const body = replacePlaceholders(tmpl.body || 'Order Approval Request\n\n{orderTable}');
+        const mailtoUrl = `mailto:${emailConfig.approverEmail}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+        if (mailtoUrl.length > 2000) {
+          window.open(`mailto:${emailConfig.approverEmail}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body.substring(0, 1400) + '\n\n[... see full details in Inventory Hub]')}`, '_blank');
+        } else { window.open(mailtoUrl, '_blank'); }
+        sentChannels.push('Email (mailto)');
+      } else {
+        sentChannels.push('Email (SMTP)');
+      }
+      addNotifEntry({ id: `N-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, type: 'email', to: emailConfig.approverEmail, subject, date: now, status: htmlSent ? 'Sent' : 'Sent' });
     }
 
-    // Notification log — email
-    addNotifEntry({ id: `N-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, type: 'email', to: emailConfig.approverEmail, subject, date: now, status: htmlSent ? 'Sent' : 'Sent' });
-
-    // WhatsApp — send to approver's phone number
-    if (waConnected) {
+    // WhatsApp — auto-send if enabled and connected
+    if (emailConfig.approvalAutoWhatsApp !== false && waConnected) {
       try {
         const waTable = selected.map((o, i) =>
           `${String(i+1).padEnd(3)}│ ${(o.materialNo||'N/A').padEnd(16)}│ ${(o.description||'').slice(0,22).padEnd(22)}│ ${String(o.quantity||0).padStart(3)} │ S$${(Number(o.totalCost)||0).toFixed(2)}`
@@ -1040,12 +1043,12 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
         if (approverUser?.phone) {
           await fetch(`${WA_API_URL}/send`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ phone: approverUser.phone, template: 'custom', data: { message: waMsg } }) });
           addNotifEntry({ id: `N-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, type: 'whatsapp', to: `${approverUser.phone} (${approverUser.name})`, subject, date: now, status: 'Delivered' });
-          notify('WhatsApp Sent', 'Batch approval sent to approver', 'success');
-        }
-      } catch (e) { console.log('WA batch approval error:', e); }
+          sentChannels.push('WhatsApp');
+        } else { sentChannels.push('WhatsApp (no phone for approver)'); }
+      } catch (e) { console.log('WA batch approval error:', e); sentChannels.push('WhatsApp (failed)'); }
     }
 
-    notify('Approval Sent', `${selected.length} orders sent for approval to ${emailConfig.approverEmail}`, 'success');
+    notify('Approval Sent', `${selected.length} orders sent via ${sentChannels.join(' + ') || 'no channels enabled'} to ${emailConfig.approverEmail}`, 'success');
     setSelOrders(new Set());
   };
 
@@ -1096,34 +1099,37 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
     const replaceBulk = (s) => (s||'').replace(/\{orderBy\}/g, currentUser?.name||'System').replace(/\{date\}/g, now).replace(/\{batchCount\}/g, selectedGroups.length).replace(/\{itemCount\}/g, linkedOrders.length).replace(/\{totalCost\}/g, totalCost.toFixed(2)).replace(/\{orderTable\}/g, table);
     const subject = replaceBulk(tmplB.subject || '[APPROVAL] Bulk Order Batch - {batchCount} Batches (S${totalCost})');
 
-    // Try HTML email via SMTP first
-    const bulkSections = selectedGroups.map(bg => {
-      const bgOrders = orders.filter(o => o.bulkGroupId === bg.id);
-      const bgCost = bgOrders.reduce((s, o) => s + (Number(o.totalCost) || 0), 0);
-      return { heading: `${bg.id} — ${bg.month} (By: ${bg.createdBy || 'N/A'})`, cols: ['No.', 'Material No.', 'Description', 'Qty', 'Total (SGD)'], rows: bgOrders.map((o, i) => [i+1, o.materialNo||'N/A', (o.description||'').slice(0,40), o.quantity||0, `S$${(Number(o.totalCost)||0).toFixed(2)}`]), totals: ['', '', `${bgOrders.length} items`, '', `S$${bgCost.toFixed(2)}`] };
-    });
-    const htmlEmail = buildApprovalHtml({
-      title: '📋 Bulk Order Approval Request',
-      headerFields: [['Requested By', currentUser?.name||'System'], ['Date', now], ['Batches', selectedGroups.length], ['Total Items', linkedOrders.length], ['Total Cost', `S$${totalCost.toFixed(2)}`]],
-      sections: bulkSections,
-      footer: `Grand Total: ${selectedGroups.length} batches | ${linkedOrders.length} items | S$${totalCost.toFixed(2)} — Miltenyi Inventory Hub SG`
-    });
-    const htmlSent = await trySendHtmlEmail(emailConfig.approverEmail, subject, htmlEmail);
-    if (!htmlSent) {
-      const body = replaceBulk(tmplB.body || 'Bulk Order Approval Request\n\n{orderTable}');
-      const mailtoUrl = `mailto:${emailConfig.approverEmail}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
-      if (mailtoUrl.length > 2000) {
-        window.open(`mailto:${emailConfig.approverEmail}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body.substring(0, 1400) + '\n\n[... see full details in Inventory Hub]')}`, '_blank');
-      } else { window.open(mailtoUrl, '_blank'); }
-    } else {
-      notify('HTML Email Sent', `Bulk approval email sent via SMTP to ${emailConfig.approverEmail}`, 'success');
+    const sentChannels = [];
+
+    // Email — auto-send if enabled
+    if (emailConfig.approvalAutoEmail !== false) {
+      const bulkSections = selectedGroups.map(bg => {
+        const bgOrders = orders.filter(o => o.bulkGroupId === bg.id);
+        const bgCost = bgOrders.reduce((s, o) => s + (Number(o.totalCost) || 0), 0);
+        return { heading: `${bg.id} — ${bg.month} (By: ${bg.createdBy || 'N/A'})`, cols: ['No.', 'Material No.', 'Description', 'Qty', 'Total (SGD)'], rows: bgOrders.map((o, i) => [i+1, o.materialNo||'N/A', (o.description||'').slice(0,40), o.quantity||0, `S$${(Number(o.totalCost)||0).toFixed(2)}`]), totals: ['', '', `${bgOrders.length} items`, '', `S$${bgCost.toFixed(2)}`] };
+      });
+      const htmlEmail = buildApprovalHtml({
+        title: '📋 Bulk Order Approval Request',
+        headerFields: [['Requested By', currentUser?.name||'System'], ['Date', now], ['Batches', selectedGroups.length], ['Total Items', linkedOrders.length], ['Total Cost', `S$${totalCost.toFixed(2)}`]],
+        sections: bulkSections,
+        footer: `Grand Total: ${selectedGroups.length} batches | ${linkedOrders.length} items | S$${totalCost.toFixed(2)} — Miltenyi Inventory Hub SG`
+      });
+      const htmlSent = await trySendHtmlEmail(emailConfig.approverEmail, subject, htmlEmail);
+      if (!htmlSent) {
+        const body = replaceBulk(tmplB.body || 'Bulk Order Approval Request\n\n{orderTable}');
+        const mailtoUrl = `mailto:${emailConfig.approverEmail}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+        if (mailtoUrl.length > 2000) {
+          window.open(`mailto:${emailConfig.approverEmail}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body.substring(0, 1400) + '\n\n[... see full details in Inventory Hub]')}`, '_blank');
+        } else { window.open(mailtoUrl, '_blank'); }
+        sentChannels.push('Email (mailto)');
+      } else {
+        sentChannels.push('Email (SMTP)');
+      }
+      addNotifEntry({ id: `N-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, type: 'email', to: emailConfig.approverEmail, subject, date: now, status: 'Sent' });
     }
 
-    // Notification log — email
-    addNotifEntry({ id: `N-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, type: 'email', to: emailConfig.approverEmail, subject, date: now, status: 'Sent' });
-
-    // WhatsApp — send to approver's phone number
-    if (waConnected) {
+    // WhatsApp — auto-send if enabled and connected
+    if (emailConfig.approvalAutoWhatsApp !== false && waConnected) {
       try {
         const waSections = selectedGroups.map(bg => {
           const bgOrders = orders.filter(o => o.bulkGroupId === bg.id);
@@ -1147,12 +1153,12 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
         if (approverUser?.phone) {
           await fetch(`${WA_API_URL}/send`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ phone: approverUser.phone, template: 'custom', data: { message: waMsg } }) });
           addNotifEntry({ id: `N-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, type: 'whatsapp', to: `${approverUser.phone} (${approverUser.name})`, subject, date: now, status: 'Delivered' });
-          notify('WhatsApp Sent', 'Bulk batch approval sent to approver', 'success');
-        }
-      } catch (e) { console.log('WA bulk batch approval error:', e); }
+          sentChannels.push('WhatsApp');
+        } else { sentChannels.push('WhatsApp (no phone for approver)'); }
+      } catch (e) { console.log('WA bulk batch approval error:', e); sentChannels.push('WhatsApp (failed)'); }
     }
 
-    notify('Approval Sent', `${selectedGroups.length} bulk batches sent for approval to ${emailConfig.approverEmail}`, 'success');
+    notify('Approval Sent', `${selectedGroups.length} bulk batches sent via ${sentChannels.join(' + ') || 'no channels enabled'} to ${emailConfig.approverEmail}`, 'success');
     setSelBulk(new Set());
   };
 
@@ -1456,11 +1462,15 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
       bulkGroupId:bgId
     }));
     const totalCost = newOrders.reduce((s,o)=>s+o.totalCost,0);
-    setOrders(prev=>[...newOrders,...prev]);
-    newOrders.forEach(o => dbSync(api.createOrder(o), 'Bulk order item not saved'));
     const bg = {id:bgId, month:bulkMonth, createdBy:bulkOrderBy, items:newOrders.length, totalCost, status:'Pending Approval', date:new Date().toISOString().slice(0,10)};
+    // Save to DB first, then update local state
+    const bgCreated = await api.createBulkGroup(bg);
+    if (!bgCreated) { setIsSubmitting(false); notify('Save Failed','Bulk group not saved to database. Please retry.','error'); return; }
+    const orderResults = await Promise.all(newOrders.map(o => api.createOrder(o)));
+    const failCount = orderResults.filter(r => !r).length;
+    if (failCount) notify('Partial Save',`${failCount} of ${newOrders.length} items failed to save. Please check.`,'warning');
+    setOrders(prev=>[...newOrders,...prev]);
     setBulkGroups(prev=>[bg,...prev]);
-    dbSync(api.createBulkGroup(bg), 'Bulk group not saved to database');
     setShowBulkOrder(false); setBulkItems([{materialNo:'',description:'',quantity:1,listPrice:0}]); setBulkRemark('');
     setIsSubmitting(false);
     notify('Bulk Order Created',`${newOrders.length} items for ${bulkMonth}. Select and use "Order Approval & Notify" to send for approval.`,'success');
@@ -1567,7 +1577,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
   const navItems = allNavItems.filter(n => hasPermission(n.perm));
 
   // ════════════════════════════ AI BOT PROCESSING ════════════════════════════
-  const processAiMessage = (userMessage) => {
+  const processAiMessage = async (userMessage) => {
     const msg = userMessage.toLowerCase().trim();
     const catalogLookupLocal = partsCatalog.reduce((acc, p) => { acc[p.m] = p; return acc; }, {});
 
@@ -1625,8 +1635,9 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
         const aiNow = new Date();
         const aiMonth = `${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][aiNow.getMonth()]} ${aiNow.getFullYear()}`;
         const newOrd = { id: `ORD-${Date.now()}-${Math.random().toString(36).slice(2,6)}`, ...po, totalCost: po.listPrice * po.quantity, orderDate: aiNow.toISOString().slice(0, 10), arrivalDate: null, qtyReceived: 0, backOrder: -po.quantity, engineer: "", emailFull: "", emailBack: "", status: "Pending", orderBy: currentUser.name, month: aiMonth, year: String(aiNow.getFullYear()), remark: "Created via AI Assistant" };
+        const aiCreated = await api.createOrder(newOrd);
+        if (!aiCreated) { notify("Save Failed", "Order not saved to database", "error"); return { type: "error", text: "Failed to save order. Please try again." }; }
         setOrders(prev => [newOrd, ...prev]);
-        dbSync(api.createOrder(newOrd), 'AI order not saved to database');
         notify("Order Created", `${po.description} × ${po.quantity}`, "success");
         return { type: "success", text: `✅ **Order Created Successfully!**\n\n• Order ID: ${newOrd.id}\n• Item: ${po.description}\n• Quantity: ${po.quantity}\n• Total: ${fmt(newOrd.totalCost)}\n\nYou can track this order by asking "Status ${newOrd.id}"` };
       }
@@ -1653,8 +1664,8 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
     setAiInput("");
     setAiProcessing(true);
 
-    setTimeout(() => {
-      const response = processAiMessage(aiInput);
+    setTimeout(async () => {
+      const response = await processAiMessage(aiInput);
       const botMsg = { id: Date.now() + 1, role: "bot", text: response.text, type: response.type, time: new Date().toLocaleTimeString(), pendingOrder: response.pendingOrder };
       setAiMessages(prev => [...prev, botMsg]);
       setAiProcessing(false);
@@ -2594,7 +2605,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
     </div>
   </div>
   {hasPermission('deleteOrders') && <BatchBar count={selOrders.size} onClear={()=>setSelOrders(new Set())}>
-    <BatchBtn onClick={batchApprovalNotifyOrders} bg="#7C3AED" icon={Send}>Order Approval & Notify</BatchBtn>
+    <BatchBtn onClick={batchApprovalNotifyOrders} bg="#7C3AED" icon={Send}>Order Approval & Notify {emailConfig.approvalAutoEmail!==false&&'📧'}{emailConfig.approvalAutoWhatsApp!==false&&waConnected&&'💬'}</BatchBtn>
     <BatchBtn onClick={()=>batchStatusOrders('Pending Approval')} bg="#D97706" icon={Clock}>Pending Approval</BatchBtn>
     <BatchBtn onClick={()=>batchStatusOrders('Approved')} bg="#059669" icon={Check}>Approved</BatchBtn>
     <BatchBtn onClick={()=>batchStatusOrders('Rejected')} bg="#991B1B" icon={X}>Rejected</BatchBtn>
@@ -2641,7 +2652,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
     ))}
   </div>
   {hasPermission('deleteBulkOrders') && <BatchBar count={selBulk.size} onClear={()=>setSelBulk(new Set())}>
-    <BatchBtn onClick={batchApprovalNotifyBulk} bg="#7C3AED" icon={Send}>Order Approval & Notify</BatchBtn>
+    <BatchBtn onClick={batchApprovalNotifyBulk} bg="#7C3AED" icon={Send}>Order Approval & Notify {emailConfig.approvalAutoEmail!==false&&'📧'}{emailConfig.approvalAutoWhatsApp!==false&&waConnected&&'💬'}</BatchBtn>
     <BatchBtn onClick={()=>batchStatusBulk('Pending Approval')} bg="#D97706" icon={Clock}>Pending Approval</BatchBtn>
     <BatchBtn onClick={()=>batchStatusBulk('Approved')} bg="#059669" icon={Check}>Approved</BatchBtn>
     <BatchBtn onClick={()=>batchStatusBulk('Rejected')} bg="#991B1B" icon={X}>Rejected</BatchBtn>
@@ -2706,7 +2717,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
         <button onClick={()=>setExpandedBulkGroup(null)} style={{background:'none',border:'none',cursor:'pointer'}}><X size={18} color="#64748B"/></button>
       </div>
       {hasPermission('deleteOrders')&&(()=>{ const monthIds = bgOrders.filter(o=>selOrders.has(o.id)); return monthIds.length>0 ? <BatchBar count={monthIds.length} onClear={()=>setSelOrders(prev=>{const n=new Set(prev);bgOrders.forEach(o=>n.delete(o.id));return n;})}>
-        <BatchBtn onClick={batchApprovalNotifyOrders} bg="#7C3AED" icon={Send}>Order Approval & Notify</BatchBtn>
+        <BatchBtn onClick={batchApprovalNotifyOrders} bg="#7C3AED" icon={Send}>Order Approval & Notify {emailConfig.approvalAutoEmail!==false&&'📧'}{emailConfig.approvalAutoWhatsApp!==false&&waConnected&&'💬'}</BatchBtn>
         <BatchBtn onClick={()=>batchStatusOrders('Pending Approval')} bg="#D97706" icon={Clock}>Pending Approval</BatchBtn>
         <BatchBtn onClick={()=>batchStatusOrders('Approved')} bg="#059669" icon={Check}>Approved</BatchBtn>
         <BatchBtn onClick={()=>batchStatusOrders('Rejected')} bg="#991B1B" icon={X}>Rejected</BatchBtn>
@@ -4558,6 +4569,31 @@ if(scheduledNotifs.emailEnabled){                    addNotifEntry({id:'N-'+Date
         <label style={{display:'block',fontSize:12,fontWeight:600,color:'#4A5568',marginBottom:6}}>Approval Trigger Keywords</label>
         <input type="text" value={(emailConfig.approvalKeywords||[]).join(', ')} onChange={e=>setEmailConfig(prev=>({...prev,approvalKeywords:e.target.value.split(',').map(k=>k.trim().toLowerCase()).filter(k=>k)}))} placeholder="approve, approved, yes, confirm" style={{width:'100%'}}/>
         <div style={{fontSize:11,color:'#64748B',marginTop:4}}>Keywords in reply that trigger approval (comma-separated)</div>
+      </div>
+      <div style={{background:'#F8FAFC',borderRadius:10,padding:16,border:'1px solid #E2E8F0'}}>
+        <div style={{fontSize:13,fontWeight:600,marginBottom:12,color:'#334155'}}>Auto-Send Channels (when "Order Approval & Notify" is pressed)</div>
+        <div style={{display:'flex',flexDirection:'column',gap:10}}>
+          <div style={{display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+            <div style={{display:'flex',alignItems:'center',gap:8}}>
+              <Mail size={15} color="#2563EB"/>
+              <div>
+                <span style={{fontSize:12,fontWeight:500}}>Auto-Send Email</span>
+                <div style={{fontSize:10,color:'#64748B'}}>{emailConfig.smtpHost ? 'SMTP configured — sends HTML email' : 'No SMTP — opens mailto client'}</div>
+              </div>
+            </div>
+            <Toggle active={emailConfig.approvalAutoEmail!==false} onClick={()=>setEmailConfig(prev=>({...prev,approvalAutoEmail:!prev.approvalAutoEmail}))} color="#2563EB"/>
+          </div>
+          <div style={{display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+            <div style={{display:'flex',alignItems:'center',gap:8}}>
+              <MessageSquare size={15} color="#25D366"/>
+              <div>
+                <span style={{fontSize:12,fontWeight:500}}>Auto-Send WhatsApp</span>
+                <div style={{fontSize:10,color:'#64748B'}}>{waConnected ? 'Connected — sends table message to approver' : 'Not connected — enable in WhatsApp tab'}</div>
+              </div>
+            </div>
+            <Toggle active={emailConfig.approvalAutoWhatsApp!==false} onClick={()=>setEmailConfig(prev=>({...prev,approvalAutoWhatsApp:!prev.approvalAutoWhatsApp}))} color="#25D366"/>
+          </div>
+        </div>
       </div>
       {pendingApprovals.length>0 && (
         <div style={{marginTop:8}}>
