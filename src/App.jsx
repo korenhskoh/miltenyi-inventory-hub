@@ -3595,9 +3595,50 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
         <div style={{display:'flex',gap:10,marginTop:16,paddingTop:16,borderTop:'1px solid #E8ECF0',flexWrap:'wrap'}}>
           {(()=>{const selIds=indivOrders.filter(o=>arrivalSelected.has(o.id)&&o.status!=='Received').map(o=>o.id);return selIds.length>0?<button className="bp" onClick={()=>batchConfirmArrival(selIds)} style={{padding:'8px 16px',display:'flex',alignItems:'center',gap:6}}><CheckCircle size={14}/> Batch Confirm ({selIds.length} selected)</button>:null;})()}
           <button className="be" onClick={()=>{
+            const summary = indivOrders.map(o=>`• ${o.materialNo}: ${o.qtyReceived||0}/${o.quantity} ${(o.qtyReceived||0)>=o.quantity?'✓':'(B/O: '+(o.quantity-(o.qtyReceived||0))+')'}`).join('\n');
             notify('Email Sent','Individual orders arrival report sent','success');
             addNotifEntry({id:`N-${Date.now()}-${Math.random().toString(36).slice(2,6)}`,type:'email',to:'service-sg@miltenyibiotec.com',subject:'Arrival Check: Individual Orders',date:new Date().toISOString().slice(0,10),status:'Sent'});
           }}><Mail size={14}/> Email Report</button>
+          {waConnected ? (
+            <button className="bw" onClick={async ()=>{
+              const received = indivOrders.filter(o=>(o.qtyReceived||0)>=o.quantity).length;
+              const backorder = indivOrders.filter(o=>(o.qtyReceived||0)<o.quantity).length;
+              const itemsList = indivOrders.slice(0,5).map(o=>`• ${o.description.slice(0,30)}: ${o.qtyReceived||0}/${o.quantity}`).join('\n');
+              try {
+                if (waNotifyRules.partArrivalDone) {
+                  for (const user of users.filter(u=>u.role!=='admin'&&u.status==='active'&&u.phone)) {
+                    await fetch(`${WA_API_URL}/send`, {
+                      method: 'POST', headers: {'Content-Type':'application/json'},
+                      body: JSON.stringify({ phone: user.phone, template: 'partArrivalDone', data: { month: 'Single Orders', totalItems: indivOrders.length, received, backOrders: backorder, verifiedBy: currentUser?.name||'Admin', date: new Date().toISOString().slice(0,10), itemsList: itemsList+(indivOrders.length>5?`\n...and ${indivOrders.length-5} more`:'') }})
+                    });
+                  }
+                }
+                notify('WhatsApp Sent','Single orders arrival report sent','success');
+                addNotifEntry({id:`N-${Date.now()}-${Math.random().toString(36).slice(2,6)}`,type:'whatsapp',to:'SG Service Team',subject:`Arrival: Single Orders - ${received} full, ${backorder} B/O`,date:new Date().toISOString().slice(0,10),status:'Delivered'});
+              } catch(e) { notify('Error','Failed to send WhatsApp','error'); }
+            }}><MessageSquare size={14}/> WhatsApp Report</button>
+          ) : (
+            <button className="bs" onClick={()=>{setPage('whatsapp');notify('Connect WhatsApp','Please scan QR code first','info');}} style={{opacity:0.7}}><MessageSquare size={14}/> WhatsApp (Not Connected)</button>
+          )}
+          <button className="bp" onClick={async ()=>{
+            const allReceived = indivOrders.every(o=>(o.qtyReceived||0)>=o.quantity);
+            if (allReceived) {
+              notify('All Arrived','All single orders marked as fully received','success');
+              if (waConnected && waNotifyRules.partArrivalDone) {
+                try {
+                  const itemsList = indivOrders.slice(0,5).map(o=>`• ${o.description.slice(0,30)}: ${o.qtyReceived||0}/${o.quantity}`).join('\n');
+                  for (const user of users.filter(u=>u.role!=='admin'&&u.status==='active'&&u.phone)) {
+                    await fetch(`${WA_API_URL}/send`, {
+                      method: 'POST', headers: {'Content-Type':'application/json'},
+                      body: JSON.stringify({ phone: user.phone, template: 'partArrivalDone', data: { month: 'Single Orders', totalItems: indivOrders.length, received: indivOrders.length, backOrders: 0, verifiedBy: currentUser?.name||'Admin', date: new Date().toISOString().slice(0,10), itemsList: itemsList+(indivOrders.length>5?`\n...and ${indivOrders.length-5} more`:'') }})
+                    });
+                  }
+                } catch(e) {}
+              }
+            } else {
+              notify('Incomplete',`${indivOrders.filter(o=>(o.qtyReceived||0)<o.quantity).length} items still pending`,'warning');
+            }
+          }}><CheckCircle size={14}/> Mark All Complete</button>
         </div>
       </div>
     );
