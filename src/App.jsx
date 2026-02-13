@@ -449,7 +449,7 @@ const [selectedUser, setSelectedUser] = useState(null);
     return Object.values(m).sort((a,b)=>b.cost-a.cost).slice(0,8);
   }, [orders, catalogLookup]);
   const catPriceData = useMemo(() => Object.entries(CATEGORIES).map(([k,c])=>{const i=partsCatalog.filter(p=>p.c===k);if(!i.length)return null;return{name:c.short,sg:Math.round(i.reduce((s,p)=>s+p.sg,0)/i.length),dist:Math.round(i.reduce((s,p)=>s+p.dist,0)/i.length),count:i.length,color:c.color};}).filter(Boolean),[partsCatalog]);
-  const catalogStats = useMemo(()=>{const t=partsCatalog.length;const cc={};partsCatalog.forEach(p=>{cc[p.c]=(cc[p.c]||0)+1;});return{total:t,avgSg:partsCatalog.reduce((s,p)=>s+p.sg,0)/t,avgDist:partsCatalog.reduce((s,p)=>s+p.dist,0)/t,catCounts:cc};},[partsCatalog]);
+  const catalogStats = useMemo(()=>{const t=partsCatalog.length;const cc={};partsCatalog.forEach(p=>{cc[p.c]=(cc[p.c]||0)+1;});return{total:t,avgSg:t>0?partsCatalog.reduce((s,p)=>s+p.sg,0)/t:0,avgDist:t>0?partsCatalog.reduce((s,p)=>s+p.dist,0)/t:0,catCounts:cc};},[partsCatalog]);
 
   // ── Advanced Analytics Memos ──
   const leadTimeData = useMemo(() => {
@@ -782,7 +782,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
     const now = new Date();
     const monthStr = `${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][now.getMonth()]} ${now.getFullYear()}`;
     const linkedBg = newOrder.bulkGroupId ? bulkGroups.find(bg => bg.id === newOrder.bulkGroupId) : null;
-    const o = { id:`ORD-${2000+orders.length}`,...newOrder, bulkGroupId:linkedBg ? linkedBg.id : null, quantity:parseInt(newOrder.quantity), listPrice:parseFloat(newOrder.listPrice)||0, totalCost:(parseFloat(newOrder.listPrice)||0)*parseInt(newOrder.quantity), orderDate:now.toISOString().slice(0,10), arrivalDate:null, qtyReceived:0, backOrder:-parseInt(newOrder.quantity), engineer:'', emailFull:'', emailBack:'', status:'Pending Approval', approvalStatus:'pending', approvalSentDate:null, month:linkedBg ? linkedBg.month : monthStr, year:String(now.getFullYear()) };
+    const o = { id:`ORD-${Date.now()}-${Math.random().toString(36).slice(2,6)}`,...newOrder, bulkGroupId:linkedBg ? linkedBg.id : null, quantity:parseInt(newOrder.quantity), listPrice:parseFloat(newOrder.listPrice)||0, totalCost:(parseFloat(newOrder.listPrice)||0)*parseInt(newOrder.quantity), orderDate:now.toISOString().slice(0,10), arrivalDate:null, qtyReceived:0, backOrder:-parseInt(newOrder.quantity), engineer:'', emailFull:'', emailBack:'', status:'Pending Approval', approvalStatus:'pending', approvalSentDate:null, month:linkedBg ? linkedBg.month : monthStr, year:String(now.getFullYear()) };
     setOrders(prev=>[o,...prev]); setShowNewOrder(false); setNewOrder({materialNo:'',description:'',quantity:1,listPrice:0,orderBy:'',remark:'',bulkGroupId:''}); setNewBulkMonth('');
     if (linkedBg) recalcBulkGroupForMonths([linkedBg.id], [o, ...orders]);
     const created = await api.createOrder(o);
@@ -804,15 +804,15 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
     const copyNum = copyCount + 1;
     const copy = {
       ...sourceOrder,
-      id: `ORD-${2000+orders.length}`,
+      id: `ORD-${Date.now()}-${Math.random().toString(36).slice(2,6)}`,
       description: `[Copy-${copyNum}] ${baseName}`,
       orderDate: new Date().toISOString().slice(0,10),
       arrivalDate: null,
       qtyReceived: 0,
       backOrder: -sourceOrder.quantity,
       status: 'Pending Approval',
-      approvalStatus: undefined,
-      approvalSentDate: undefined,
+      approvalStatus: 'pending',
+      approvalSentDate: null,
       emailFull: '',
       emailBack: '',
     };
@@ -843,7 +843,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
         setOrders(prev=>prev.map(o=>approval.orderIds.includes(o.id)?{...o,status:'Approved',approvalStatus:'approved'}:o));
         dbSync(api.bulkUpdateOrderStatus(approval.orderIds, 'Approved'), 'Batch order approval not saved');
       }
-      addNotifEntry({id:`N-${Date.now()}-${Math.random().toString(36).slice(2,6)}`,type:'approval',to:approval.requestedBy,subject:`Order ${approval.orderId} Approved`,date:new Date().toISOString().slice(0,10),status:'Approved'});
+      addNotifEntry({id:`N-${Date.now()}-${Math.random().toString(36).slice(2,6)}`,type:'email',to:approval.requestedBy,subject:`Order ${approval.orderId} Approved`,date:new Date().toISOString().slice(0,10),status:'Approved'});
       notify('Order Approved',`${approval.orderId} has been approved`,'success');
     } else {
       // Update order status to Rejected
@@ -859,7 +859,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
         setOrders(prev=>prev.map(o=>approval.orderIds.includes(o.id)?{...o,status:'Rejected',approvalStatus:'rejected'}:o));
         dbSync(api.bulkUpdateOrderStatus(approval.orderIds, 'Rejected'), 'Batch order rejection not saved');
       }
-      addNotifEntry({id:`N-${Date.now()}-${Math.random().toString(36).slice(2,6)}`,type:'approval',to:approval.requestedBy,subject:`Order ${approval.orderId} Rejected`,date:new Date().toISOString().slice(0,10),status:'Rejected'});
+      addNotifEntry({id:`N-${Date.now()}-${Math.random().toString(36).slice(2,6)}`,type:'email',to:approval.requestedBy,subject:`Order ${approval.orderId} Rejected`,date:new Date().toISOString().slice(0,10),status:'Rejected'});
       notify('Order Rejected',`${approval.orderId} has been rejected`,'warning');
     }
   };
@@ -1019,10 +1019,10 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
       notify('HTML Email Sent', `Approval email sent via SMTP to ${emailConfig.approverEmail}`, 'success');
     }
 
-    // Notification log
-    addNotifEntry({ id: `N-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, type: 'approval', to: emailConfig.approverEmail, subject, date: now, status: 'Pending' });
+    // Notification log — email
+    addNotifEntry({ id: `N-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, type: 'email', to: emailConfig.approverEmail, subject, date: now, status: htmlSent ? 'Sent' : 'Sent' });
 
-    // WhatsApp
+    // WhatsApp — send to approver's phone number
     if (waConnected) {
       try {
         const waTable = selected.map((o, i) =>
@@ -1039,6 +1039,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
         const approverUser = users.find(u => u.email === emailConfig.approverEmail);
         if (approverUser?.phone) {
           await fetch(`${WA_API_URL}/send`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ phone: approverUser.phone, template: 'custom', data: { message: waMsg } }) });
+          addNotifEntry({ id: `N-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, type: 'whatsapp', to: `${approverUser.phone} (${approverUser.name})`, subject, date: now, status: 'Delivered' });
           notify('WhatsApp Sent', 'Batch approval sent to approver', 'success');
         }
       } catch (e) { console.log('WA batch approval error:', e); }
@@ -1118,9 +1119,10 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
       notify('HTML Email Sent', `Bulk approval email sent via SMTP to ${emailConfig.approverEmail}`, 'success');
     }
 
-    addNotifEntry({ id: `N-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, type: 'approval', to: emailConfig.approverEmail, subject, date: now, status: 'Pending' });
+    // Notification log — email
+    addNotifEntry({ id: `N-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, type: 'email', to: emailConfig.approverEmail, subject, date: now, status: 'Sent' });
 
-    // WhatsApp
+    // WhatsApp — send to approver's phone number
     if (waConnected) {
       try {
         const waSections = selectedGroups.map(bg => {
@@ -1144,6 +1146,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
         const approverUser = users.find(u => u.email === emailConfig.approverEmail);
         if (approverUser?.phone) {
           await fetch(`${WA_API_URL}/send`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ phone: approverUser.phone, template: 'custom', data: { message: waMsg } }) });
+          addNotifEntry({ id: `N-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, type: 'whatsapp', to: `${approverUser.phone} (${approverUser.name})`, subject, date: now, status: 'Delivered' });
           notify('WhatsApp Sent', 'Bulk batch approval sent to approver', 'success');
         }
       } catch (e) { console.log('WA bulk batch approval error:', e); }
@@ -1442,9 +1445,9 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
     if(!validItems.length) { notify('No Valid Items','Each item needs Material No. and Description','warning'); return; }
     if(!bulkOrderBy) { notify('Missing Field','Order By is required','warning'); return; }
     setIsSubmitting(true);
-    const bgId = `BG-${String(bulkGroups.length+1).padStart(3,'0')}`;
+    const bgId = `BG-${Date.now()}-${Math.random().toString(36).slice(2,6)}`;
     const newOrders = validItems.map((item,idx)=>({
-      id:`ORD-${2000+orders.length+idx}`, materialNo:item.materialNo, description:item.description,
+      id:`ORD-${Date.now()}-${idx}-${Math.random().toString(36).slice(2,6)}`, materialNo:item.materialNo, description:item.description,
       quantity:parseInt(item.quantity)||1, listPrice:parseFloat(item.listPrice)||0,
       totalCost:(parseFloat(item.listPrice)||0)*(parseInt(item.quantity)||1),
       orderDate:new Date().toISOString().slice(0,10), orderBy:bulkOrderBy, remark:`Bulk: ${bulkMonth} — ${bulkRemark}`,
@@ -1621,7 +1624,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
         const po = lastBotMsg.pendingOrder;
         const aiNow = new Date();
         const aiMonth = `${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][aiNow.getMonth()]} ${aiNow.getFullYear()}`;
-        const newOrd = { id: `ORD-${2000 + orders.length}`, ...po, totalCost: po.listPrice * po.quantity, orderDate: aiNow.toISOString().slice(0, 10), arrivalDate: null, qtyReceived: 0, backOrder: -po.quantity, engineer: "", emailFull: "", emailBack: "", status: "Pending", orderBy: currentUser.name, month: aiMonth, year: String(aiNow.getFullYear()), remark: "Created via AI Assistant" };
+        const newOrd = { id: `ORD-${Date.now()}-${Math.random().toString(36).slice(2,6)}`, ...po, totalCost: po.listPrice * po.quantity, orderDate: aiNow.toISOString().slice(0, 10), arrivalDate: null, qtyReceived: 0, backOrder: -po.quantity, engineer: "", emailFull: "", emailBack: "", status: "Pending", orderBy: currentUser.name, month: aiMonth, year: String(aiNow.getFullYear()), remark: "Created via AI Assistant" };
         setOrders(prev => [newOrd, ...prev]);
         dbSync(api.createOrder(newOrd), 'AI order not saved to database');
         notify("Order Created", `${po.description} × ${po.quantity}`, "success");

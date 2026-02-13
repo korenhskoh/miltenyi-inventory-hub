@@ -67,7 +67,10 @@ import { messageTemplates } from './messageTemplates.js';
 import { handleBotMessage } from './waBot.js';
 
 // Initialize WhatsApp Connection
+let isConnecting = false;
 async function connectWhatsApp() {
+  if (isConnecting) return;
+  isConnecting = true;
   try {
     const { state, saveCreds } = await usePostgresAuthState();
     const { version } = await fetchLatestBaileysVersion();
@@ -96,6 +99,7 @@ async function connectWhatsApp() {
         connectionStatus = 'disconnected';
         qrCode = null;
         sessionInfo = null;
+        isConnecting = false;
 
         if (shouldReconnect && waReconnectAttempts < WA_MAX_RECONNECTS) {
           waReconnectAttempts++;
@@ -110,6 +114,7 @@ async function connectWhatsApp() {
         connectionStatus = 'connected';
         waReconnectAttempts = 0;
         qrCode = null;
+        isConnecting = false;
 
         // Get session info
         const user = sock.user;
@@ -153,6 +158,7 @@ async function connectWhatsApp() {
   } catch (error) {
     console.error('WhatsApp connection error:', error);
     connectionStatus = 'error';
+    isConnecting = false;
   }
 }
 
@@ -226,11 +232,13 @@ app.post('/api/whatsapp/connect', async (req, res) => {
 // Disconnect WhatsApp
 app.post('/api/whatsapp/disconnect', async (req, res) => {
   if (sock) {
-    await sock.logout();
+    try { sock.ev.removeAllListeners(); } catch (_) { /* ignore */ }
+    try { await sock.logout(); } catch (_) { /* ignore */ }
     sock = null;
     connectionStatus = 'disconnected';
     qrCode = null;
     sessionInfo = null;
+    isConnecting = false;
     // Clear stored session from DB so next connect generates fresh QR
     try { await dbQuery('DELETE FROM wa_auth'); } catch (e) { /* ignore */ }
   }
