@@ -232,7 +232,8 @@ const [selectedUser, setSelectedUser] = useState(null);
   const [waRecipient, setWaRecipient] = useState('');
   const [waMessageText, setWaMessageText] = useState('');
   const [waTemplate, setWaTemplate] = useState('custom');
-  const [waRecipientPicker, setWaRecipientPicker] = useState(null); // { selected: Set<userId>, onSend: fn, title: string }
+  const [waRecipientPicker, setWaRecipientPicker] = useState(null); // { selected: Set<userId>, message: string, subject: string, title: string }
+  const [waSending, setWaSending] = useState(false);
 
   // ── Bulk Order State ──
   const [showBulkOrder, setShowBulkOrder] = useState(false);
@@ -572,6 +573,15 @@ const [customLogo, setCustomLogo] = useState(() => {
   });
   const [waAutoReply, setWaAutoReply] = useState(false);
   const [waNotifyRules, setWaNotifyRules] = useState({ orderCreated: true, bulkOrderCreated: true, partArrivalDone: true, deliveryArrival: true, backOrderUpdate: true, lowStockAlert: false, monthlySummary: false, urgentRequest: true });
+  const [waMessageTemplates, setWaMessageTemplates] = useState({
+    orderApproval: { label: 'Order Approval Request', message: '*📋 Order Approval Request*\n\nRequested By: {orderBy}\nDate: {date}\nOrders: {orderCount}\nTotal: *S${totalCost}*\n\n{orderTable}\n\n_Reply *APPROVE* or *REJECT*_\n_Miltenyi Inventory Hub SG_' },
+    bulkApproval: { label: 'Bulk Order Approval', message: '*📋 Bulk Order Approval Request*\n\nRequested By: {orderBy}\nDate: {date}\nBatches: {batchCount}\nItems: {itemCount}\nTotal: *S${totalCost}*\n\n{orderTable}\n\n_Reply *APPROVE* or *REJECT*_\n_Miltenyi Inventory Hub SG_' },
+    backOrder: { label: 'Back Order Alert', message: '⚠️ *Back Order Alert*\n\nThe following items are on back order:\n{items}\n\nPlease follow up with HQ.\n\n_Miltenyi Biotec SG Service_' },
+    deliveryArrived: { label: 'Delivery Arrived', message: '📦 *Delivery Arrived*\n\nA new shipment has arrived at the warehouse. Please verify the items against the order list.\n\nCheck the Inventory Hub for details.\n\n_Miltenyi Biotec SG Service_' },
+    stockAlert: { label: 'Stock Level Warning', message: '🔔 *Stock Level Warning*\n\n{item} is running low.\nCurrent stock: Below threshold\n\nPlease initiate reorder.\n\n_Miltenyi Biotec SG Service_' },
+    monthlyUpdate: { label: 'Monthly Update', message: '📊 *Monthly Inventory Update — {month}*\n\nAll received orders have been verified.\nBack orders: See Inventory Hub\n\nPlease review and confirm.\n\n_Miltenyi Biotec SG Service_' },
+    partArrival: { label: 'Part Arrival Verified', message: '✅ *Part Arrival Verified*\n\nMonth: {month}\nItems: {totalItems}\nReceived: {received}\nBack Orders: {backOrders}\nVerified By: {verifiedBy}\n\n_Miltenyi Biotec SG Service_' }
+  });
   const [scheduledNotifs, setScheduledNotifs] = useState({ enabled: true, frequency: 'weekly', dayOfWeek: 1, dayOfMonth: 1, time: '09:00', lastRun: null, recipients: [], emailEnabled: true, whatsappEnabled: true, reports: { monthlySummary: true, backOrderReport: true, lowStockAlert: true, pendingApprovals: true, orderStats: true } });
 const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@miltenyibiotec.com', senderName: 'Miltenyi Inventory Hub', smtpHost: '', smtpPort: 587, enabled: true, approverEmail: '', approvalEnabled: true, approvalKeywords: ['approve', 'approved', 'yes', 'confirm', 'confirmed', 'ok', 'accept', 'accepted'], approvalAutoEmail: true, approvalAutoWhatsApp: true });
   const [emailTemplates, setEmailTemplates] = useState({
@@ -618,7 +628,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
   }, []);
 
   // ── localStorage Persistence ──
-  const LS_KEYS = { orders: 'mih_orders', bulkGroups: 'mih_bulkGroups', emailConfig: 'mih_emailConfig', emailTemplates: 'mih_emailTemplates', priceConfig: 'mih_priceConfig', notifLog: 'mih_notifLog', pendingApprovals: 'mih_pendingApprovals', users: 'mih_users', waNotifyRules: 'mih_waNotifyRules', scheduledNotifs: 'mih_scheduledNotifs', customLogo: 'mih_customLogo', stockChecks: 'mih_stockChecks' };
+  const LS_KEYS = { orders: 'mih_orders', bulkGroups: 'mih_bulkGroups', emailConfig: 'mih_emailConfig', emailTemplates: 'mih_emailTemplates', priceConfig: 'mih_priceConfig', notifLog: 'mih_notifLog', pendingApprovals: 'mih_pendingApprovals', users: 'mih_users', waNotifyRules: 'mih_waNotifyRules', scheduledNotifs: 'mih_scheduledNotifs', customLogo: 'mih_customLogo', stockChecks: 'mih_stockChecks', waMessageTemplates: 'mih_waMessageTemplates' };
 
   // Shared function to load all app data from DB
   // Uses !== null checks: null = API failed (skip), [] = DB empty (set empty state)
@@ -642,6 +652,11 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
         if (apiConfig.emailTemplates && typeof apiConfig.emailTemplates === 'object') setEmailTemplates(prev => ({...prev, ...apiConfig.emailTemplates}));
         if (apiConfig.priceConfig && typeof apiConfig.priceConfig === 'object') setPriceConfig(prev => ({...prev, ...apiConfig.priceConfig}));
         if (apiConfig.waNotifyRules && typeof apiConfig.waNotifyRules === 'object') setWaNotifyRules(prev => ({...prev, ...apiConfig.waNotifyRules}));
+        if (apiConfig.waMessageTemplates && typeof apiConfig.waMessageTemplates === 'object') setWaMessageTemplates(prev => {
+          const merged = {...prev};
+          for (const [k, v] of Object.entries(apiConfig.waMessageTemplates)) { if (v && typeof v === 'object') merged[k] = {...(prev[k]||{}), ...v}; }
+          return merged;
+        });
         if (apiConfig.scheduledNotifs && typeof apiConfig.scheduledNotifs === 'object') setScheduledNotifs(prev => ({...prev, ...apiConfig.scheduledNotifs, reports: {...prev.reports, ...(apiConfig.scheduledNotifs.reports||{})}}));
         if (apiConfig.customLogo) setCustomLogo(apiConfig.customLogo);
         if (apiConfig.aiBotConfig && typeof apiConfig.aiBotConfig === 'object') setAiBotConfig(prev => ({...prev, ...apiConfig.aiBotConfig}));
@@ -702,6 +717,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
         if (saved.pendingApprovals?.length) setPendingApprovals(saved.pendingApprovals);
         if (saved.users?.length) setUsers(saved.users);
         if (saved.waNotifyRules) setWaNotifyRules(saved.waNotifyRules);
+        if (saved.waMessageTemplates) setWaMessageTemplates(prev => ({...prev, ...saved.waMessageTemplates}));
         if (saved.scheduledNotifs) setScheduledNotifs(saved.scheduledNotifs);
         if (saved.customLogo) setCustomLogo(saved.customLogo);
         if (saved.stockChecks?.length) setStockChecks(saved.stockChecks);
@@ -784,6 +800,11 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
             if (cfg.emailTemplates && typeof cfg.emailTemplates === 'object') setEmailTemplates(prev => ({...prev, ...cfg.emailTemplates}));
             if (cfg.priceConfig && typeof cfg.priceConfig === 'object') setPriceConfig(prev => ({...prev, ...cfg.priceConfig}));
             if (cfg.waNotifyRules && typeof cfg.waNotifyRules === 'object') setWaNotifyRules(prev => ({...prev, ...cfg.waNotifyRules}));
+            if (cfg.waMessageTemplates && typeof cfg.waMessageTemplates === 'object') setWaMessageTemplates(prev => {
+              const merged = {...prev};
+              for (const [k, v] of Object.entries(cfg.waMessageTemplates)) { if (v && typeof v === 'object') merged[k] = {...(prev[k]||{}), ...v}; }
+              return merged;
+            });
             if (cfg.scheduledNotifs && typeof cfg.scheduledNotifs === 'object') setScheduledNotifs(prev => ({...prev, ...cfg.scheduledNotifs, reports: {...prev.reports, ...(cfg.scheduledNotifs.reports||{})}}));
             if (cfg.customLogo) setCustomLogo(cfg.customLogo);
             if (cfg.aiBotConfig && typeof cfg.aiBotConfig === 'object') setAiBotConfig(prev => ({...prev, ...cfg.aiBotConfig}));
@@ -823,6 +844,7 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
   useEffect(() => { try { localStorage.setItem(LS_KEYS.scheduledNotifs, JSON.stringify(scheduledNotifs)); } catch(e){} }, [scheduledNotifs]);
   useEffect(() => { try { localStorage.setItem(LS_KEYS.customLogo, JSON.stringify(customLogo)); } catch(e){} }, [customLogo]);
   useEffect(() => { try { localStorage.setItem(LS_KEYS.stockChecks, JSON.stringify(stockChecks)); } catch(e){} }, [stockChecks]);
+  useEffect(() => { try { localStorage.setItem(LS_KEYS.waMessageTemplates, JSON.stringify(waMessageTemplates)); } catch(e){} }, [waMessageTemplates]);
 
   // ── Open Order in New Tab ──
   const openOrderInNewTab = (order) => {
@@ -1088,36 +1110,27 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
 
     // WhatsApp — auto-send if enabled and connected
     if (emailConfig.approvalAutoWhatsApp !== false && waConnected) {
-      const waTable = selected.map((o, i) =>
-        `${String(i+1).padEnd(3)}│ ${(o.materialNo||'N/A').padEnd(16)}│ ${(o.description||'').slice(0,22).padEnd(22)}│ ${String(o.quantity||0).padStart(3)} │ S$${(Number(o.totalCost)||0).toFixed(2)}`
-      ).join('\n');
-      const waMsg = `*📋 Order Approval Request*\n\nRequested By: ${currentUser?.name||'System'}\nDate: ${now}\nOrders: ${selected.length}\nTotal: *S$${totalCost.toFixed(2)}*\n\n` +
-        '```\n' +
+      const waTable = '```\n' +
         `No │ Material No.    │ Description            │ Qty │ Total\n` +
         `───┼─────────────────┼────────────────────────┼─────┼──────────\n` +
-        waTable + '\n' +
+        selected.map((o, i) =>
+          `${String(i+1).padEnd(3)}│ ${(o.materialNo||'N/A').padEnd(16)}│ ${(o.description||'').slice(0,22).padEnd(22)}│ ${String(o.quantity||0).padStart(3)} │ S$${(Number(o.totalCost)||0).toFixed(2)}`
+        ).join('\n') + '\n' +
         `───┼─────────────────┼────────────────────────┼─────┼──────────\n` +
         `   │ TOTAL: ${String(selected.length).padEnd(8)}│ ${String(totalQty+' units').padEnd(22)}│     │ S$${totalCost.toFixed(2)}\n` +
-        '```\n\n_Reply *APPROVE* or *REJECT*_\n_Miltenyi Inventory Hub SG_';
+        '```';
+      const waMsg = (waMessageTemplates.orderApproval?.message || '*📋 Order Approval Request*\n\n{orderTable}\n\n_Reply *APPROVE* or *REJECT*_')
+        .replace(/\{orderBy\}/g, currentUser?.name||'System').replace(/\{date\}/g, now)
+        .replace(/\{orderCount\}/g, selected.length).replace(/\{totalCost\}/g, totalCost.toFixed(2))
+        .replace(/\{totalQty\}/g, totalQty).replace(/\{orderTable\}/g, waTable);
       // Pre-select the approver user
       const approverUser = users.find(u => u.email === emailConfig.approverEmail);
       const preSelected = new Set(approverUser ? [approverUser.id] : []);
       setWaRecipientPicker({
         title: `WhatsApp — ${selected.length} Order Approval`,
         selected: preSelected,
-        onSend: async (recipientIds) => {
-          const recipients = users.filter(u => recipientIds.has(u.id) && u.phone);
-          let waSent = 0;
-          for (const u of recipients) {
-            try {
-              await fetch(`${WA_API_URL}/send`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ phone: u.phone, template: 'custom', data: { message: waMsg } }) });
-              addNotifEntry({ id: `N-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, type: 'whatsapp', to: `${u.phone} (${u.name})`, subject, date: now, status: 'Delivered' });
-              waSent++;
-            } catch (e) { console.log('WA send error:', e); }
-          }
-          notify('WhatsApp Sent', `Approval sent to ${waSent} recipient(s)`, 'success');
-          setWaRecipientPicker(null);
-        }
+        message: waMsg,
+        subject
       });
       sentChannels.push('WhatsApp (picker shown)');
     }
@@ -1219,27 +1232,18 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
           `   │ Subtotal: ${String(bgOrders.length+' items').padEnd(22)}              │ S$${bgCost.toFixed(2)}\n` +
           '```';
       }).join('\n\n');
-      const waMsg = `*📋 Bulk Order Approval Request*\n\nRequested By: ${currentUser?.name||'System'}\nDate: ${now}\nBatches: ${selectedGroups.length}\nItems: ${linkedOrders.length}\nTotal: *S$${totalCost.toFixed(2)}*\n\n` +
-        waSections +
-        `\n\n*Grand Total: ${selectedGroups.length} batches │ ${linkedOrders.length} items │ S$${totalCost.toFixed(2)}*\n\n_Reply *APPROVE* or *REJECT*_\n_Miltenyi Inventory Hub SG_`;
+      const waTableBulk = waSections + `\n\n*Grand Total: ${selectedGroups.length} batches │ ${linkedOrders.length} items │ S$${totalCost.toFixed(2)}*`;
+      const waMsg = (waMessageTemplates.bulkApproval?.message || '*📋 Bulk Order Approval Request*\n\n{orderTable}\n\n_Reply *APPROVE* or *REJECT*_')
+        .replace(/\{orderBy\}/g, currentUser?.name||'System').replace(/\{date\}/g, now)
+        .replace(/\{batchCount\}/g, selectedGroups.length).replace(/\{itemCount\}/g, linkedOrders.length)
+        .replace(/\{totalCost\}/g, totalCost.toFixed(2)).replace(/\{orderTable\}/g, waTableBulk);
       const approverUser = users.find(u => u.email === emailConfig.approverEmail);
       const preSelected = new Set(approverUser ? [approverUser.id] : []);
       setWaRecipientPicker({
         title: `WhatsApp — ${selectedGroups.length} Bulk Batch Approval`,
         selected: preSelected,
-        onSend: async (recipientIds) => {
-          const recipients = users.filter(u => recipientIds.has(u.id) && u.phone);
-          let waSent = 0;
-          for (const u of recipients) {
-            try {
-              await fetch(`${WA_API_URL}/send`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ phone: u.phone, template: 'custom', data: { message: waMsg } }) });
-              addNotifEntry({ id: `N-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, type: 'whatsapp', to: `${u.phone} (${u.name})`, subject, date: now, status: 'Delivered' });
-              waSent++;
-            } catch (e) { console.log('WA send error:', e); }
-          }
-          notify('WhatsApp Sent', `Bulk approval sent to ${waSent} recipient(s)`, 'success');
-          setWaRecipientPicker(null);
-        }
+        message: waMsg,
+        subject
       });
       sentChannels.push('WhatsApp (picker shown)');
     }
@@ -1306,6 +1310,27 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
   // ── WhatsApp Baileys functions ──
   // WhatsApp API Base URL
   const WA_API_URL = '/api/whatsapp';
+
+  // Send WhatsApp to selected recipients from picker modal
+  const sendWaPickerMessages = async () => {
+    if (!waRecipientPicker || waSending) return;
+    const { selected, message, subject } = waRecipientPicker;
+    const recipients = users.filter(u => selected.has(u.id) && u.phone);
+    if (!recipients.length) { notify('No Recipients', 'No recipients with phone numbers selected', 'warning'); return; }
+    setWaSending(true);
+    const now = new Date().toISOString().slice(0, 10);
+    let waSent = 0;
+    for (const u of recipients) {
+      try {
+        await fetch(`${WA_API_URL}/send`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ phone: u.phone, template: 'custom', data: { message } }) });
+        addNotifEntry({ id: `N-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, type: 'whatsapp', to: `${u.phone} (${u.name})`, subject: subject || 'WhatsApp Notification', date: now, status: 'Delivered' });
+        waSent++;
+      } catch (e) { console.log('WA send error:', e); }
+    }
+    notify('WhatsApp Sent', `Sent to ${waSent} of ${recipients.length} recipient(s)`, 'success');
+    setWaSending(false);
+    setWaRecipientPicker(null);
+  };
 
   // Poll for WhatsApp status
   const pollWaStatus = async () => {
@@ -1511,11 +1536,12 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
     }
   };
 
+  // Use editable waMessageTemplates for template previews in Send Message dropdown
   const waTemplates = {
-    backOrder: (items) => `⚠️ *Back Order Alert*\n\nThe following items are on back order:\n${items||'- Yearly Maintenance Kit, MACSima (5 units)'}\n\nPlease follow up with HQ.\n\n_Miltenyi Biotec SG Service_`,
-    deliveryArrived: () => `📦 *Delivery Arrived*\n\nA new shipment has arrived at the warehouse. Please verify the items against the order list.\n\nCheck the Inventory Hub for details.\n\n_Miltenyi Biotec SG Service_`,
-    stockAlert: (item) => `🔔 *Stock Level Warning*\n\n${item||'Pump Syringe Hamilton 5ml'} is running low.\nCurrent stock: Below threshold\n\nPlease initiate reorder.\n\n_Miltenyi Biotec SG Service_`,
-    monthlyUpdate: (month) => `📊 *Monthly Inventory Update — ${month||'Feb 2026'}*\n\nAll received orders have been verified.\nBack orders: See Inventory Hub\n\nPlease review and confirm.\n\n_Miltenyi Biotec SG Service_`,
+    backOrder: () => (waMessageTemplates.backOrder?.message || '').replace(/\{items\}/g, '- Yearly Maintenance Kit, MACSima (5 units)'),
+    deliveryArrived: () => waMessageTemplates.deliveryArrived?.message || '',
+    stockAlert: () => (waMessageTemplates.stockAlert?.message || '').replace(/\{item\}/g, 'Pump Syringe Hamilton 5ml'),
+    monthlyUpdate: () => (waMessageTemplates.monthlyUpdate?.message || '').replace(/\{month\}/g, new Date().toLocaleString('en', {month:'short',year:'numeric'})),
   };
 
   // ── Bulk Order ──
@@ -3537,14 +3563,16 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
                     <button className="bw" onClick={async ()=>{
                       const received = bgOrders.filter(o=>o.qtyReceived>=o.quantity).length;
                       const backorder = bgOrders.filter(o=>o.qtyReceived<o.quantity).length;
-                      const itemsList = bgOrders.slice(0,5).map(o=>`• ${o.description.slice(0,30)}: ${o.qtyReceived}/${o.quantity}`).join('\n');
+                      const itemsList = bgOrders.slice(0,5).map(o=>`• ${o.description.slice(0,30)}: ${o.qtyReceived}/${o.quantity}`).join('\n')+(bgOrders.length>5?`\n...and ${bgOrders.length-5} more`:'');
+                      const arrMsg = (waMessageTemplates.partArrival?.message || '✅ *Part Arrival Verified*\n\nMonth: {month}\nItems: {totalItems}\nReceived: {received}\nBack Orders: {backOrders}\nVerified By: {verifiedBy}')
+                        .replace(/\{month\}/g, bg.month).replace(/\{totalItems\}/g, bgOrders.length).replace(/\{received\}/g, received)
+                        .replace(/\{backOrders\}/g, backorder).replace(/\{verifiedBy\}/g, currentUser?.name||'Admin').replace(/\{date\}/g, new Date().toISOString().slice(0,10)).replace(/\{itemsList\}/g, itemsList);
                       try {
-                        // Send to all engineers if partArrivalDone rule enabled
                         if (waNotifyRules.partArrivalDone) {
                           for (const user of users.filter(u=>u.role!=='admin'&&u.status==='active'&&u.phone)) {
                             await fetch(`${WA_API_URL}/send`, {
                               method: 'POST', headers: {'Content-Type':'application/json'},
-                              body: JSON.stringify({ phone: user.phone, template: 'partArrivalDone', data: { month: bg.month, totalItems: bgOrders.length, received, backOrders: backorder, verifiedBy: currentUser?.name||'Admin', date: new Date().toISOString().slice(0,10), itemsList: itemsList+(bgOrders.length>5?`\n...and ${bgOrders.length-5} more`:'') }})
+                              body: JSON.stringify({ phone: user.phone, template: 'custom', data: { message: arrMsg }})
                             });
                           }
                         }
@@ -3564,9 +3592,13 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
                       notify('Arrival Complete',`${bg.month} marked as fully received`,'success');
                       if (waConnected && waNotifyRules.partArrivalDone) {
                         try {
+                          const completeItemsList = bgOrders.slice(0,5).map(o=>`• ${o.description.slice(0,30)}: ${o.qtyReceived}/${o.quantity}`).join('\n')+(bgOrders.length>5?`\n...and ${bgOrders.length-5} more`:'');
+                          const completeMsg = (waMessageTemplates.partArrival?.message || '✅ *Part Arrival Verified*\n\nMonth: {month}\nItems: {totalItems}\nReceived: {received}\nBack Orders: {backOrders}\nVerified By: {verifiedBy}')
+                            .replace(/\{month\}/g, bg.month).replace(/\{totalItems\}/g, bgOrders.length).replace(/\{received\}/g, bgOrders.length)
+                            .replace(/\{backOrders\}/g, 0).replace(/\{verifiedBy\}/g, currentUser?.name||'Admin').replace(/\{date\}/g, new Date().toISOString().slice(0,10)).replace(/\{itemsList\}/g, completeItemsList);
                           await fetch(`${WA_API_URL}/send`, {
                             method: 'POST', headers: {'Content-Type':'application/json'},
-                            body: JSON.stringify({ phone: users.find(u=>u.name===bg.createdBy)?.phone || '+65 9111 2222', template: 'partArrivalDone', data: { month: bg.month, totalItems: bgOrders.length, received: bgOrders.length, backOrders: 0, verifiedBy: currentUser?.name||'Admin', date: new Date().toISOString().slice(0,10), itemsList: bgOrders.slice(0,5).map(o=>`• ${o.description.slice(0,30)}: ${o.qtyReceived}/${o.quantity}`).join('\n')+(bgOrders.length>5?`\n...and ${bgOrders.length-5} more`:'') }})
+                            body: JSON.stringify({ phone: users.find(u=>u.name===bg.createdBy)?.phone || '+65 9111 2222', template: 'custom', data: { message: completeMsg }})
                           });
                         } catch(e) {}
                       }
@@ -3629,13 +3661,16 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
             <button className="bw" onClick={async ()=>{
               const received = indivOrders.filter(o=>(o.qtyReceived||0)>=o.quantity).length;
               const backorder = indivOrders.filter(o=>(o.qtyReceived||0)<o.quantity).length;
-              const itemsList = indivOrders.slice(0,5).map(o=>`• ${o.description.slice(0,30)}: ${o.qtyReceived||0}/${o.quantity}`).join('\n');
+              const itemsList = indivOrders.slice(0,5).map(o=>`• ${o.description.slice(0,30)}: ${o.qtyReceived||0}/${o.quantity}`).join('\n')+(indivOrders.length>5?`\n...and ${indivOrders.length-5} more`:'');
+              const arrMsg = (waMessageTemplates.partArrival?.message || '✅ *Part Arrival Verified*\n\nMonth: {month}\nItems: {totalItems}\nReceived: {received}\nBack Orders: {backOrders}\nVerified By: {verifiedBy}')
+                .replace(/\{month\}/g, 'Single Orders').replace(/\{totalItems\}/g, indivOrders.length).replace(/\{received\}/g, received)
+                .replace(/\{backOrders\}/g, backorder).replace(/\{verifiedBy\}/g, currentUser?.name||'Admin').replace(/\{date\}/g, new Date().toISOString().slice(0,10)).replace(/\{itemsList\}/g, itemsList);
               try {
                 if (waNotifyRules.partArrivalDone) {
                   for (const user of users.filter(u=>u.role!=='admin'&&u.status==='active'&&u.phone)) {
                     await fetch(`${WA_API_URL}/send`, {
                       method: 'POST', headers: {'Content-Type':'application/json'},
-                      body: JSON.stringify({ phone: user.phone, template: 'partArrivalDone', data: { month: 'Single Orders', totalItems: indivOrders.length, received, backOrders: backorder, verifiedBy: currentUser?.name||'Admin', date: new Date().toISOString().slice(0,10), itemsList: itemsList+(indivOrders.length>5?`\n...and ${indivOrders.length-5} more`:'') }})
+                      body: JSON.stringify({ phone: user.phone, template: 'custom', data: { message: arrMsg }})
                     });
                   }
                 }
@@ -3652,11 +3687,14 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
               notify('All Arrived','All single orders marked as fully received','success');
               if (waConnected && waNotifyRules.partArrivalDone) {
                 try {
-                  const itemsList = indivOrders.slice(0,5).map(o=>`• ${o.description.slice(0,30)}: ${o.qtyReceived||0}/${o.quantity}`).join('\n');
+                  const complItemsList = indivOrders.slice(0,5).map(o=>`• ${o.description.slice(0,30)}: ${o.qtyReceived||0}/${o.quantity}`).join('\n')+(indivOrders.length>5?`\n...and ${indivOrders.length-5} more`:'');
+                  const complMsg = (waMessageTemplates.partArrival?.message || '✅ *Part Arrival Verified*\n\nMonth: {month}\nItems: {totalItems}\nReceived: {received}\nBack Orders: {backOrders}\nVerified By: {verifiedBy}')
+                    .replace(/\{month\}/g, 'Single Orders').replace(/\{totalItems\}/g, indivOrders.length).replace(/\{received\}/g, indivOrders.length)
+                    .replace(/\{backOrders\}/g, 0).replace(/\{verifiedBy\}/g, currentUser?.name||'Admin').replace(/\{date\}/g, new Date().toISOString().slice(0,10)).replace(/\{itemsList\}/g, complItemsList);
                   for (const user of users.filter(u=>u.role!=='admin'&&u.status==='active'&&u.phone)) {
                     await fetch(`${WA_API_URL}/send`, {
                       method: 'POST', headers: {'Content-Type':'application/json'},
-                      body: JSON.stringify({ phone: user.phone, template: 'partArrivalDone', data: { month: 'Single Orders', totalItems: indivOrders.length, received: indivOrders.length, backOrders: 0, verifiedBy: currentUser?.name||'Admin', date: new Date().toISOString().slice(0,10), itemsList: itemsList+(indivOrders.length>5?`\n...and ${indivOrders.length-5} more`:'') }})
+                      body: JSON.stringify({ phone: user.phone, template: 'custom', data: { message: complMsg }})
                     });
                   }
                 } catch(e) {}
@@ -4875,8 +4913,8 @@ if(scheduledNotifs.emailEnabled){                    addNotifEntry({id:'N-'+Date
     <p style={{fontSize:12,color:'#64748B',marginBottom:16}}>Customize email templates for approvals, notifications, and alerts. Use {'{placeholder}'} variables that get replaced with actual data.</p>
     <div style={{display:'flex',flexDirection:'column',gap:10}}>
       {(typeof emailTemplates === 'object' && emailTemplates ? Object.entries(emailTemplates) : []).map(([key, tmpl]) => {
-        const labels = { orderApproval: 'Order Approval', bulkApproval: 'Bulk Order Approval', orderNotification: 'Order Notification', backOrderAlert: 'Back Order Alert', monthlySummary: 'Monthly Summary' };
-        const icons = { orderApproval: Shield, bulkApproval: Layers, orderNotification: Bell, backOrderAlert: AlertTriangle, monthlySummary: BarChart3 };
+        const labels = { orderApproval: 'Order Approval', bulkApproval: 'Bulk Order Approval', orderNotification: 'Order Notification', backOrderAlert: 'Back Order Alert', monthlySummary: 'Monthly Summary', partArrivalDone: 'Part Arrival Verified' };
+        const icons = { orderApproval: Shield, bulkApproval: Layers, orderNotification: Bell, backOrderAlert: AlertTriangle, monthlySummary: BarChart3, partArrivalDone: CheckCircle };
         const Icon = icons[key] || Mail;
         return (
           <div key={key} style={{border:'1px solid #E8ECF0',borderRadius:10,overflow:'hidden'}}>
@@ -4915,6 +4953,56 @@ if(scheduledNotifs.emailEnabled){                    addNotifEntry({id:'N-'+Date
         backOrderAlert: { subject: 'Back Order Alert: {description}', body: 'Back Order Alert\n\nThe following item is on back order:\n\nOrder ID: {orderId}\nItem: {description}\nOrdered: {quantity}\nReceived: {received}\nPending: {pending}\n\nPlease follow up with HQ.\n\n-Miltenyi Inventory Hub SG' },
         monthlySummary: { subject: 'Monthly Summary - {month}', body: 'Monthly Inventory Summary\n\nMonth: {month}\nTotal Orders: {totalOrders}\nReceived: {received}\nPending: {pending}\nBack Orders: {backOrders}\nTotal Value: S${totalValue}\n\n-Miltenyi Inventory Hub SG' }
       });notify('Templates Reset','Restored default templates','info');}}>Reset Defaults</button>
+    </div>
+  </div>}
+
+  {/* WhatsApp Message Templates - Admin Only */}
+  {hasPermission('settings') && <div className="card" style={{padding:'24px 28px',marginBottom:16}}>
+    <h3 style={{fontSize:15,fontWeight:600,marginBottom:20,display:'flex',alignItems:'center',gap:10}}><MessageSquare size={18} color="#25D366"/> WhatsApp Message Templates</h3>
+    <p style={{fontSize:12,color:'#64748B',marginBottom:16}}>Customize WhatsApp message templates. Use {'{placeholder}'} variables that get replaced with actual data. WhatsApp formatting: *bold*, _italic_, ~strikethrough~, ```monospace```.</p>
+    <div style={{display:'flex',flexDirection:'column',gap:10}}>
+      {Object.entries(waMessageTemplates).map(([key, tmpl]) => {
+        const icons = { orderApproval: Shield, bulkApproval: Layers, backOrder: AlertTriangle, deliveryArrived: Truck, stockAlert: Bell, monthlyUpdate: BarChart3, partArrival: CheckCircle };
+        const Icon = icons[key] || MessageSquare;
+        return (
+          <div key={key} style={{border:'1px solid #E8ECF0',borderRadius:10,overflow:'hidden'}}>
+            <div onClick={()=>setEditingTemplate(editingTemplate===('wa_'+key)?null:('wa_'+key))} style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'12px 16px',cursor:'pointer',background:editingTemplate===('wa_'+key)?'#ECFDF5':'#F8FAFB'}}>
+              <div style={{display:'flex',alignItems:'center',gap:8}}>
+                <Icon size={14} color={editingTemplate===('wa_'+key)?'#059669':'#64748B'}/>
+                <span style={{fontSize:13,fontWeight:600,color:editingTemplate===('wa_'+key)?'#059669':'#374151'}}>{tmpl.label || key}</span>
+              </div>
+              <ChevronDown size={14} color="#64748B" style={{transform:editingTemplate===('wa_'+key)?'rotate(180deg)':'none',transition:'transform 0.2s'}}/>
+            </div>
+            {editingTemplate===('wa_'+key) && (
+              <div style={{padding:16,borderTop:'1px solid #E8ECF0'}}>
+                <div style={{marginBottom:12}}>
+                  <label style={{display:'block',fontSize:11,fontWeight:600,color:'#4A5568',marginBottom:4}}>Template Label</label>
+                  <input value={tmpl.label||''} onChange={e=>setWaMessageTemplates(prev=>({...prev,[key]:{...prev[key],label:e.target.value}}))} style={{width:'100%',padding:'8px 10px',borderRadius:6,border:'1.5px solid #E2E8F0',fontSize:12,boxSizing:'border-box'}}/>
+                </div>
+                <div style={{marginBottom:12}}>
+                  <label style={{display:'block',fontSize:11,fontWeight:600,color:'#4A5568',marginBottom:4}}>Message Body</label>
+                  <textarea value={tmpl.message||''} onChange={e=>setWaMessageTemplates(prev=>({...prev,[key]:{...prev[key],message:e.target.value}}))} rows={8} style={{width:'100%',padding:'8px 10px',borderRadius:6,border:'1.5px solid #E2E8F0',fontSize:11,fontFamily:'monospace',resize:'vertical',boxSizing:'border-box',lineHeight:1.5}}/>
+                </div>
+                <div style={{padding:8,background:'#ECFDF5',borderRadius:6,fontSize:10,color:'#065F46'}}>
+                  <strong>Variables:</strong> {'{orderBy}'}, {'{date}'}, {'{orderCount}'}, {'{totalCost}'}, {'{orderTable}'}, {'{batchCount}'}, {'{itemCount}'}, {'{items}'}, {'{item}'}, {'{month}'}, {'{totalItems}'}, {'{received}'}, {'{backOrders}'}, {'{verifiedBy}'}
+                </div>
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+    <div style={{marginTop:12,display:'flex',gap:8}}>
+      <button className="bw" style={{fontSize:12,background:'#25D366',color:'#fff',border:'none'}} onClick={async ()=>{const ok=await api.setConfigKey('waMessageTemplates',waMessageTemplates);if(ok){notify('Templates Saved','WhatsApp templates saved to database','success');}else{notify('Save Failed','WhatsApp templates not saved to database','error');}}}>Save WhatsApp Templates</button>
+      <button className="bs" style={{fontSize:12}} onClick={()=>{setWaMessageTemplates({
+        orderApproval: { label: 'Order Approval Request', message: '*📋 Order Approval Request*\n\nRequested By: {orderBy}\nDate: {date}\nOrders: {orderCount}\nTotal: *S${totalCost}*\n\n{orderTable}\n\n_Reply *APPROVE* or *REJECT*_\n_Miltenyi Inventory Hub SG_' },
+        bulkApproval: { label: 'Bulk Order Approval', message: '*📋 Bulk Order Approval Request*\n\nRequested By: {orderBy}\nDate: {date}\nBatches: {batchCount}\nItems: {itemCount}\nTotal: *S${totalCost}*\n\n{orderTable}\n\n_Reply *APPROVE* or *REJECT*_\n_Miltenyi Inventory Hub SG_' },
+        backOrder: { label: 'Back Order Alert', message: '⚠️ *Back Order Alert*\n\nThe following items are on back order:\n{items}\n\nPlease follow up with HQ.\n\n_Miltenyi Biotec SG Service_' },
+        deliveryArrived: { label: 'Delivery Arrived', message: '📦 *Delivery Arrived*\n\nA new shipment has arrived at the warehouse. Please verify the items against the order list.\n\nCheck the Inventory Hub for details.\n\n_Miltenyi Biotec SG Service_' },
+        stockAlert: { label: 'Stock Level Warning', message: '🔔 *Stock Level Warning*\n\n{item} is running low.\nCurrent stock: Below threshold\n\nPlease initiate reorder.\n\n_Miltenyi Biotec SG Service_' },
+        monthlyUpdate: { label: 'Monthly Update', message: '📊 *Monthly Inventory Update — {month}*\n\nAll received orders have been verified.\nBack orders: See Inventory Hub\n\nPlease review and confirm.\n\n_Miltenyi Biotec SG Service_' },
+        partArrival: { label: 'Part Arrival Verified', message: '✅ *Part Arrival Verified*\n\nMonth: {month}\nItems: {totalItems}\nReceived: {received}\nBack Orders: {backOrders}\nVerified By: {verifiedBy}\n\n_Miltenyi Biotec SG Service_' }
+      });notify('Templates Reset','Restored default WhatsApp templates','info');}}>Reset Defaults</button>
     </div>
   </div>}
 
@@ -5431,10 +5519,11 @@ if(scheduledNotifs.emailEnabled){                    addNotifEntry({id:'N-'+Date
               ))}
               {users.filter(u => u.status === 'active').length === 0 && <div style={{padding:20,textAlign:'center',color:'#94A3B8',fontSize:12}}>No active users found</div>}
             </div>
-            <div style={{display:'flex',gap:10,marginTop:16,justifyContent:'flex-end'}}>
-              <button className="bs" onClick={() => setWaRecipientPicker(null)}>Cancel</button>
-              <button className="bp" disabled={waRecipientPicker.selected.size === 0} onClick={() => waRecipientPicker.onSend(waRecipientPicker.selected)} style={{display:'flex',alignItems:'center',gap:6,opacity:waRecipientPicker.selected.size>0?1:0.5}}>
-                <Send size={14}/> Send to {waRecipientPicker.selected.size} Recipient{waRecipientPicker.selected.size !== 1 ? 's' : ''}
+            <div style={{fontSize:11,color:'#94A3B8',marginTop:12,textAlign:'center'}}>WhatsApp notification is optional — skip if not needed</div>
+            <div style={{display:'flex',gap:10,marginTop:8,justifyContent:'flex-end'}}>
+              <button className="bs" onClick={() => setWaRecipientPicker(null)} style={{display:'flex',alignItems:'center',gap:4}}><X size={12}/> Skip WhatsApp</button>
+              <button className="bp" disabled={waRecipientPicker.selected.size === 0 || waSending} onClick={sendWaPickerMessages} style={{display:'flex',alignItems:'center',gap:6,opacity:waRecipientPicker.selected.size>0&&!waSending?1:0.5}}>
+                {waSending ? <><RefreshCw size={14} className="spin"/> Sending...</> : <><Send size={14}/> Send to {waRecipientPicker.selected.size} Recipient{waRecipientPicker.selected.size !== 1 ? 's' : ''}</>}
               </button>
             </div>
           </div>
