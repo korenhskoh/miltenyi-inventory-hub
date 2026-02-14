@@ -232,6 +232,7 @@ const [selectedUser, setSelectedUser] = useState(null);
   const [waRecipient, setWaRecipient] = useState('');
   const [waMessageText, setWaMessageText] = useState('');
   const [waTemplate, setWaTemplate] = useState('custom');
+  const [waRecipientPicker, setWaRecipientPicker] = useState(null); // { selected: Set<userId>, onSend: fn, title: string }
 
   // ── Bulk Order State ──
   const [showBulkOrder, setShowBulkOrder] = useState(false);
@@ -1087,28 +1088,41 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
 
     // WhatsApp — auto-send if enabled and connected
     if (emailConfig.approvalAutoWhatsApp !== false && waConnected) {
-      try {
-        const waTable = selected.map((o, i) =>
-          `${String(i+1).padEnd(3)}│ ${(o.materialNo||'N/A').padEnd(16)}│ ${(o.description||'').slice(0,22).padEnd(22)}│ ${String(o.quantity||0).padStart(3)} │ S$${(Number(o.totalCost)||0).toFixed(2)}`
-        ).join('\n');
-        const waMsg = `*📋 Order Approval Request*\n\nRequested By: ${currentUser?.name||'System'}\nDate: ${now}\nOrders: ${selected.length}\nTotal: *S$${totalCost.toFixed(2)}*\n\n` +
-          '```\n' +
-          `No │ Material No.    │ Description            │ Qty │ Total\n` +
-          `───┼─────────────────┼────────────────────────┼─────┼──────────\n` +
-          waTable + '\n' +
-          `───┼─────────────────┼────────────────────────┼─────┼──────────\n` +
-          `   │ TOTAL: ${String(selected.length).padEnd(8)}│ ${String(totalQty+' units').padEnd(22)}│     │ S$${totalCost.toFixed(2)}\n` +
-          '```\n\n_Reply *APPROVE* or *REJECT*_\n_Miltenyi Inventory Hub SG_';
-        const approverUser = users.find(u => u.email === emailConfig.approverEmail);
-        if (approverUser?.phone) {
-          await fetch(`${WA_API_URL}/send`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ phone: approverUser.phone, template: 'custom', data: { message: waMsg } }) });
-          addNotifEntry({ id: `N-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, type: 'whatsapp', to: `${approverUser.phone} (${approverUser.name})`, subject, date: now, status: 'Delivered' });
-          sentChannels.push('WhatsApp');
-        } else { sentChannels.push('WhatsApp (no phone for approver)'); }
-      } catch (e) { console.log('WA batch approval error:', e); sentChannels.push('WhatsApp (failed)'); }
+      const waTable = selected.map((o, i) =>
+        `${String(i+1).padEnd(3)}│ ${(o.materialNo||'N/A').padEnd(16)}│ ${(o.description||'').slice(0,22).padEnd(22)}│ ${String(o.quantity||0).padStart(3)} │ S$${(Number(o.totalCost)||0).toFixed(2)}`
+      ).join('\n');
+      const waMsg = `*📋 Order Approval Request*\n\nRequested By: ${currentUser?.name||'System'}\nDate: ${now}\nOrders: ${selected.length}\nTotal: *S$${totalCost.toFixed(2)}*\n\n` +
+        '```\n' +
+        `No │ Material No.    │ Description            │ Qty │ Total\n` +
+        `───┼─────────────────┼────────────────────────┼─────┼──────────\n` +
+        waTable + '\n' +
+        `───┼─────────────────┼────────────────────────┼─────┼──────────\n` +
+        `   │ TOTAL: ${String(selected.length).padEnd(8)}│ ${String(totalQty+' units').padEnd(22)}│     │ S$${totalCost.toFixed(2)}\n` +
+        '```\n\n_Reply *APPROVE* or *REJECT*_\n_Miltenyi Inventory Hub SG_';
+      // Pre-select the approver user
+      const approverUser = users.find(u => u.email === emailConfig.approverEmail);
+      const preSelected = new Set(approverUser ? [approverUser.id] : []);
+      setWaRecipientPicker({
+        title: `WhatsApp — ${selected.length} Order Approval`,
+        selected: preSelected,
+        onSend: async (recipientIds) => {
+          const recipients = users.filter(u => recipientIds.has(u.id) && u.phone);
+          let waSent = 0;
+          for (const u of recipients) {
+            try {
+              await fetch(`${WA_API_URL}/send`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ phone: u.phone, template: 'custom', data: { message: waMsg } }) });
+              addNotifEntry({ id: `N-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, type: 'whatsapp', to: `${u.phone} (${u.name})`, subject, date: now, status: 'Delivered' });
+              waSent++;
+            } catch (e) { console.log('WA send error:', e); }
+          }
+          notify('WhatsApp Sent', `Approval sent to ${waSent} recipient(s)`, 'success');
+          setWaRecipientPicker(null);
+        }
+      });
+      sentChannels.push('WhatsApp (picker shown)');
     }
 
-    notify('Approval Sent', `${selected.length} orders sent via ${sentChannels.join(' + ') || 'no channels enabled'} to ${emailConfig.approverEmail}`, 'success');
+    notify('Approval Sent', `${selected.length} orders sent via ${sentChannels.filter(c=>c!=='WhatsApp (picker shown)').join(' + ') || 'Email'} to ${emailConfig.approverEmail}${sentChannels.includes('WhatsApp (picker shown)') ? ' — select WhatsApp recipients' : ''}`, 'success');
     setSelOrders(new Set());
   };
 
@@ -1190,35 +1204,47 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
 
     // WhatsApp — auto-send if enabled and connected
     if (emailConfig.approvalAutoWhatsApp !== false && waConnected) {
-      try {
-        const waSections = selectedGroups.map(bg => {
-          const bgOrders = orders.filter(o => o.bulkGroupId === bg.id);
-          const bgCost = bgOrders.reduce((s, o) => s + (Number(o.totalCost) || 0), 0);
-          const bgRows = bgOrders.map((o, i) =>
-            `${String(i+1).padEnd(3)}│ ${(o.materialNo||'N/A').padEnd(16)}│ ${(o.description||'').slice(0,22).padEnd(22)}│ ${String(o.quantity||0).padStart(3)} │ S$${(Number(o.totalCost)||0).toFixed(2)}`
-          ).join('\n');
-          return `*${bg.id} — ${bg.month}*\n` +
-            '```\n' +
-            `No │ Material No.    │ Description            │ Qty │ Total\n` +
-            `───┼─────────────────┼────────────────────────┼─────┼──────────\n` +
-            bgRows + '\n' +
-            `───┼─────────────────┼────────────────────────┼─────┼──────────\n` +
-            `   │ Subtotal: ${String(bgOrders.length+' items').padEnd(22)}              │ S$${bgCost.toFixed(2)}\n` +
-            '```';
-        }).join('\n\n');
-        const waMsg = `*📋 Bulk Order Approval Request*\n\nRequested By: ${currentUser?.name||'System'}\nDate: ${now}\nBatches: ${selectedGroups.length}\nItems: ${linkedOrders.length}\nTotal: *S$${totalCost.toFixed(2)}*\n\n` +
-          waSections +
-          `\n\n*Grand Total: ${selectedGroups.length} batches │ ${linkedOrders.length} items │ S$${totalCost.toFixed(2)}*\n\n_Reply *APPROVE* or *REJECT*_\n_Miltenyi Inventory Hub SG_`;
-        const approverUser = users.find(u => u.email === emailConfig.approverEmail);
-        if (approverUser?.phone) {
-          await fetch(`${WA_API_URL}/send`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ phone: approverUser.phone, template: 'custom', data: { message: waMsg } }) });
-          addNotifEntry({ id: `N-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, type: 'whatsapp', to: `${approverUser.phone} (${approverUser.name})`, subject, date: now, status: 'Delivered' });
-          sentChannels.push('WhatsApp');
-        } else { sentChannels.push('WhatsApp (no phone for approver)'); }
-      } catch (e) { console.log('WA bulk batch approval error:', e); sentChannels.push('WhatsApp (failed)'); }
+      const waSections = selectedGroups.map(bg => {
+        const bgOrders = orders.filter(o => o.bulkGroupId === bg.id);
+        const bgCost = bgOrders.reduce((s, o) => s + (Number(o.totalCost) || 0), 0);
+        const bgRows = bgOrders.map((o, i) =>
+          `${String(i+1).padEnd(3)}│ ${(o.materialNo||'N/A').padEnd(16)}│ ${(o.description||'').slice(0,22).padEnd(22)}│ ${String(o.quantity||0).padStart(3)} │ S$${(Number(o.totalCost)||0).toFixed(2)}`
+        ).join('\n');
+        return `*${bg.id} — ${bg.month}*\n` +
+          '```\n' +
+          `No │ Material No.    │ Description            │ Qty │ Total\n` +
+          `───┼─────────────────┼────────────────────────┼─────┼──────────\n` +
+          bgRows + '\n' +
+          `───┼─────────────────┼────────────────────────┼─────┼──────────\n` +
+          `   │ Subtotal: ${String(bgOrders.length+' items').padEnd(22)}              │ S$${bgCost.toFixed(2)}\n` +
+          '```';
+      }).join('\n\n');
+      const waMsg = `*📋 Bulk Order Approval Request*\n\nRequested By: ${currentUser?.name||'System'}\nDate: ${now}\nBatches: ${selectedGroups.length}\nItems: ${linkedOrders.length}\nTotal: *S$${totalCost.toFixed(2)}*\n\n` +
+        waSections +
+        `\n\n*Grand Total: ${selectedGroups.length} batches │ ${linkedOrders.length} items │ S$${totalCost.toFixed(2)}*\n\n_Reply *APPROVE* or *REJECT*_\n_Miltenyi Inventory Hub SG_`;
+      const approverUser = users.find(u => u.email === emailConfig.approverEmail);
+      const preSelected = new Set(approverUser ? [approverUser.id] : []);
+      setWaRecipientPicker({
+        title: `WhatsApp — ${selectedGroups.length} Bulk Batch Approval`,
+        selected: preSelected,
+        onSend: async (recipientIds) => {
+          const recipients = users.filter(u => recipientIds.has(u.id) && u.phone);
+          let waSent = 0;
+          for (const u of recipients) {
+            try {
+              await fetch(`${WA_API_URL}/send`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ phone: u.phone, template: 'custom', data: { message: waMsg } }) });
+              addNotifEntry({ id: `N-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, type: 'whatsapp', to: `${u.phone} (${u.name})`, subject, date: now, status: 'Delivered' });
+              waSent++;
+            } catch (e) { console.log('WA send error:', e); }
+          }
+          notify('WhatsApp Sent', `Bulk approval sent to ${waSent} recipient(s)`, 'success');
+          setWaRecipientPicker(null);
+        }
+      });
+      sentChannels.push('WhatsApp (picker shown)');
     }
 
-    notify('Approval Sent', `${selectedGroups.length} bulk batches sent via ${sentChannels.join(' + ') || 'no channels enabled'} to ${emailConfig.approverEmail}`, 'success');
+    notify('Approval Sent', `${selectedGroups.length} bulk batches sent via ${sentChannels.filter(c=>c!=='WhatsApp (picker shown)').join(' + ') || 'Email'} to ${emailConfig.approverEmail}${sentChannels.includes('WhatsApp (picker shown)') ? ' — select WhatsApp recipients' : ''}`, 'success');
     setSelBulk(new Set());
   };
 
@@ -5374,6 +5400,46 @@ if(scheduledNotifs.emailEnabled){                    addNotifEntry({id:'N-'+Date
           </div>
         </div>
       </div>
+
+      {/* WhatsApp Recipient Picker Modal */}
+      {waRecipientPicker && (
+        <div className="mo" onClick={() => setWaRecipientPicker(null)} style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.5)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:9999}}>
+          <div onClick={e => e.stopPropagation()} style={{background:'#fff',borderRadius:16,padding:'24px 28px',width:420,maxWidth:'94vw',maxHeight:'80vh',overflow:'auto',boxShadow:'0 20px 60px rgba(0,0,0,.2)'}}>
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:16}}>
+              <h3 style={{fontSize:15,fontWeight:700,margin:0,display:'flex',alignItems:'center',gap:8}}><MessageSquare size={16} color="#25D366"/> {waRecipientPicker.title || 'Select WhatsApp Recipients'}</h3>
+              <button onClick={() => setWaRecipientPicker(null)} style={{background:'none',border:'none',cursor:'pointer'}}><X size={18} color="#64748B"/></button>
+            </div>
+            <div style={{fontSize:12,color:'#64748B',marginBottom:12}}>Select users to receive this WhatsApp notification:</div>
+            <div style={{display:'flex',gap:6,marginBottom:12}}>
+              <button onClick={() => setWaRecipientPicker(prev => ({...prev, selected: new Set(users.filter(u => u.phone && u.status === 'active').map(u => u.id))}))} style={{padding:'4px 10px',borderRadius:6,border:'1px solid #E2E8F0',background:'#F8FAFB',fontSize:11,cursor:'pointer',color:'#475569'}}>Select All</button>
+              <button onClick={() => setWaRecipientPicker(prev => ({...prev, selected: new Set()}))} style={{padding:'4px 10px',borderRadius:6,border:'1px solid #E2E8F0',background:'#F8FAFB',fontSize:11,cursor:'pointer',color:'#475569'}}>Clear All</button>
+            </div>
+            <div style={{maxHeight:300,overflowY:'auto',border:'1px solid #E8ECF0',borderRadius:10}}>
+              {users.filter(u => u.status === 'active').map(u => (
+                <label key={u.id} style={{display:'flex',alignItems:'center',gap:10,padding:'10px 14px',borderBottom:'1px solid #F0F2F5',cursor:u.phone?'pointer':'default',opacity:u.phone?1:0.5}}>
+                  <input type="checkbox" disabled={!u.phone} checked={waRecipientPicker.selected.has(u.id)} onChange={() => setWaRecipientPicker(prev => {
+                    const next = new Set(prev.selected);
+                    next.has(u.id) ? next.delete(u.id) : next.add(u.id);
+                    return {...prev, selected: next};
+                  })}/>
+                  <div style={{flex:1}}>
+                    <div style={{fontSize:13,fontWeight:500}}>{u.name} <span style={{fontSize:10,color:'#94A3B8',fontWeight:400}}>({u.role})</span></div>
+                    <div style={{fontSize:11,color:'#64748B'}}>{u.phone || 'No phone number'}{u.email ? ` • ${u.email}` : ''}</div>
+                  </div>
+                  {u.phone && <span style={{fontSize:10,color:'#25D366',fontWeight:600}}>WhatsApp</span>}
+                </label>
+              ))}
+              {users.filter(u => u.status === 'active').length === 0 && <div style={{padding:20,textAlign:'center',color:'#94A3B8',fontSize:12}}>No active users found</div>}
+            </div>
+            <div style={{display:'flex',gap:10,marginTop:16,justifyContent:'flex-end'}}>
+              <button className="bs" onClick={() => setWaRecipientPicker(null)}>Cancel</button>
+              <button className="bp" disabled={waRecipientPicker.selected.size === 0} onClick={() => waRecipientPicker.onSend(waRecipientPicker.selected)} style={{display:'flex',alignItems:'center',gap:6,opacity:waRecipientPicker.selected.size>0?1:0.5}}>
+                <Send size={14}/> Send to {waRecipientPicker.selected.size} Recipient{waRecipientPicker.selected.size !== 1 ? 's' : ''}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   );
