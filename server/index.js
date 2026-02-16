@@ -37,7 +37,7 @@ const PORT = process.env.PORT || 3001;
 // Security Middleware
 app.use(helmet({ contentSecurityPolicy: false })); // CSP off for SPA inline styles
 app.use(cors({
-  origin: process.env.FRONTEND_URL || '*',
+  origin: process.env.FRONTEND_URL || true,
   credentials: true
 }));
 app.use(express.json({ limit: '10mb' }));
