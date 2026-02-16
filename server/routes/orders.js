@@ -2,30 +2,48 @@ import { Router } from 'express';
 import { query } from '../db.js';
 import { snakeToCamel, camelToSnake } from '../utils.js';
 import { pickAllowed, requireFields, sanitizeDates } from '../validation.js';
+import { paginate, envelope } from '../pagination.js';
+import { asyncHandler } from '../middleware/errorHandler.js';
 
 const router = Router();
 
 // Allowed fields for order create/update (prevents mass assignment)
 const ORDER_FIELDS = [
-  'id', 'material_no', 'description', 'quantity', 'list_price', 'total_cost',
-  'order_date', 'order_by', 'remark', 'arrival_date', 'qty_received',
-  'back_order', 'engineer', 'email_full', 'email_back', 'status',
-  'approval_status', 'approval_sent_date', 'month', 'year', 'bulk_group_id'
+  'id',
+  'material_no',
+  'description',
+  'quantity',
+  'list_price',
+  'total_cost',
+  'order_date',
+  'order_by',
+  'remark',
+  'arrival_date',
+  'qty_received',
+  'back_order',
+  'engineer',
+  'email_full',
+  'email_back',
+  'status',
+  'approval_status',
+  'approval_sent_date',
+  'month',
+  'year',
+  'bulk_group_id',
 ];
 const ORDER_REQUIRED = ['id', 'description', 'quantity'];
 
 const ORDER_DATE_FIELDS = ['order_date', 'arrival_date', 'approval_sent_date'];
 
 // Allowed columns for ORDER BY (prevents SQL injection)
-const ALLOWED_ORDER_COLUMNS = new Set([
-  ...ORDER_FIELDS, 'created_at'
-]);
+const ALLOWED_ORDER_COLUMNS = new Set([...ORDER_FIELDS, 'created_at']);
 
-// GET / - list all orders, optional query params: status, month, orderBy
-router.get('/', async (req, res) => {
-  try {
+// GET / - list all orders, optional query params: status, month, orderBy, page, limit
+router.get(
+  '/',
+  asyncHandler(async (req, res) => {
     const { status, month, orderBy } = req.query;
-    let sql = 'SELECT * FROM orders';
+    const { page, pageSize, offset } = paginate(req.query);
     const conditions = [];
     const params = [];
     let paramIndex = 1;
@@ -39,29 +57,27 @@ router.get('/', async (req, res) => {
       params.push(month);
     }
 
-    if (conditions.length > 0) {
-      sql += ' WHERE ' + conditions.join(' AND ');
-    }
+    const whereClause = conditions.length > 0 ? ' WHERE ' + conditions.join(' AND ') : '';
 
+    let orderClause = ' ORDER BY id DESC';
     if (orderBy) {
-      // Convert camelCase to snake_case safely
-      const snakeCol = orderBy.replace(/[A-Z]/g, c => '_' + c.toLowerCase());
+      const snakeCol = orderBy.replace(/[A-Z]/g, (c) => '_' + c.toLowerCase());
       if (ALLOWED_ORDER_COLUMNS.has(snakeCol)) {
-        sql += ` ORDER BY ${snakeCol}`;
-      } else {
-        sql += ' ORDER BY id DESC';
+        orderClause = ` ORDER BY ${snakeCol}`;
       }
-    } else {
-      sql += ' ORDER BY id DESC';
     }
 
-    const result = await query(sql, params);
-    const rows = result.rows.map(snakeToCamel);
-    res.json(rows);
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
+    const countResult = await query(`SELECT COUNT(*) FROM orders${whereClause}`, params);
+    const total = parseInt(countResult.rows[0].count);
+
+    const dataResult = await query(
+      `SELECT * FROM orders${whereClause}${orderClause} LIMIT $${paramIndex++} OFFSET $${paramIndex++}`,
+      [...params, pageSize, offset],
+    );
+    const rows = dataResult.rows.map(snakeToCamel);
+    res.json(envelope(rows, total, page, pageSize));
+  }),
+);
 
 // POST / - create order
 router.post('/', async (req, res) => {

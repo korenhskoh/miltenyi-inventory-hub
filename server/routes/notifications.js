@@ -2,6 +2,8 @@ import { Router } from 'express';
 import { query } from '../db.js';
 import { snakeToCamel, camelToSnake } from '../utils.js';
 import { pickAllowed } from '../validation.js';
+import { paginate, envelope } from '../pagination.js';
+import { asyncHandler } from '../middleware/errorHandler.js';
 
 const router = Router();
 
@@ -28,15 +30,17 @@ function mapNotifOutput(row) {
 }
 
 // GET / - list all notification logs
-router.get('/', async (req, res) => {
-  try {
-    const result = await query('SELECT * FROM notif_log ORDER BY id DESC');
-    const rows = result.rows.map(mapNotifOutput);
-    res.json(rows);
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
+router.get(
+  '/',
+  asyncHandler(async (req, res) => {
+    const { page, pageSize, offset } = paginate(req.query);
+    const countResult = await query('SELECT COUNT(*) FROM notif_log');
+    const total = parseInt(countResult.rows[0].count);
+    const dataResult = await query('SELECT * FROM notif_log ORDER BY id DESC LIMIT $1 OFFSET $2', [pageSize, offset]);
+    const rows = dataResult.rows.map(mapNotifOutput);
+    res.json(envelope(rows, total, page, pageSize));
+  }),
+);
 
 // POST / - create notification log entry
 router.post('/', async (req, res) => {

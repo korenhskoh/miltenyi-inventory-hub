@@ -1,5 +1,10 @@
 const BASE = '';
 
+// Unwrap paginated envelope { data, total, page, pageSize } → data array
+function unwrapList(json) {
+  return Array.isArray(json) ? json : (json?.data ?? []);
+}
+
 // ─── Token Management ───
 
 let _token = null;
@@ -29,7 +34,7 @@ function authHeaders() {
 
 function authHeadersGet() {
   const token = getToken();
-  if (token) return { 'Authorization': `Bearer ${token}` };
+  if (token) return { Authorization: `Bearer ${token}` };
   return {};
 }
 
@@ -127,7 +132,7 @@ async function getOrders(filters = {}) {
     const qs = params.toString();
     const res = handleResponse(await fetch(`${BASE}/api/orders${qs ? `?${qs}` : ''}`, { headers: authHeadersGet() }));
     if (!res.ok) return null;
-    return await res.json();
+    return unwrapList(await res.json());
   } catch {
     return null;
   }
@@ -135,11 +140,13 @@ async function getOrders(filters = {}) {
 
 async function createOrder(order) {
   try {
-    const res = handleResponse(await fetch(`${BASE}/api/orders`, {
-      method: 'POST',
-      headers: authHeaders(),
-      body: JSON.stringify(order),
-    }));
+    const res = handleResponse(
+      await fetch(`${BASE}/api/orders`, {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify(order),
+      }),
+    );
     if (!res.ok) return null;
     return await res.json();
   } catch {
@@ -149,11 +156,13 @@ async function createOrder(order) {
 
 async function updateOrder(id, updates) {
   try {
-    const res = handleResponse(await fetch(`${BASE}/api/orders/${id}`, {
-      method: 'PUT',
-      headers: authHeaders(),
-      body: JSON.stringify(updates),
-    }));
+    const res = handleResponse(
+      await fetch(`${BASE}/api/orders/${id}`, {
+        method: 'PUT',
+        headers: authHeaders(),
+        body: JSON.stringify(updates),
+      }),
+    );
     if (!res.ok) return null;
     return await res.json();
   } catch {
@@ -163,7 +172,9 @@ async function updateOrder(id, updates) {
 
 async function deleteOrder(id) {
   try {
-    const res = handleResponse(await fetch(`${BASE}/api/orders/${id}`, { method: 'DELETE', headers: authHeadersGet() }));
+    const res = handleResponse(
+      await fetch(`${BASE}/api/orders/${id}`, { method: 'DELETE', headers: authHeadersGet() }),
+    );
     return res.ok;
   } catch {
     return false;
@@ -172,11 +183,13 @@ async function deleteOrder(id) {
 
 async function bulkUpdateOrderStatus(ids, status, approvalStatus) {
   try {
-    const res = handleResponse(await fetch(`${BASE}/api/orders/bulk-status`, {
-      method: 'PUT',
-      headers: authHeaders(),
-      body: JSON.stringify({ ids, status, ...(approvalStatus ? { approvalStatus } : {}) }),
-    }));
+    const res = handleResponse(
+      await fetch(`${BASE}/api/orders/bulk-status`, {
+        method: 'PUT',
+        headers: authHeaders(),
+        body: JSON.stringify({ ids, status, ...(approvalStatus ? { approvalStatus } : {}) }),
+      }),
+    );
     return res.ok;
   } catch {
     return false;
@@ -189,7 +202,7 @@ async function getBulkGroups() {
   try {
     const res = handleResponse(await fetch(`${BASE}/api/bulk-groups`, { headers: authHeadersGet() }));
     if (!res.ok) return null;
-    return await res.json();
+    return unwrapList(await res.json());
   } catch {
     return null;
   }
@@ -197,11 +210,13 @@ async function getBulkGroups() {
 
 async function createBulkGroup(group) {
   try {
-    const res = handleResponse(await fetch(`${BASE}/api/bulk-groups`, {
-      method: 'POST',
-      headers: authHeaders(),
-      body: JSON.stringify(group),
-    }));
+    const res = handleResponse(
+      await fetch(`${BASE}/api/bulk-groups`, {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify(group),
+      }),
+    );
     if (!res.ok) return null;
     return await res.json();
   } catch {
@@ -211,11 +226,13 @@ async function createBulkGroup(group) {
 
 async function updateBulkGroup(id, updates) {
   try {
-    const res = handleResponse(await fetch(`${BASE}/api/bulk-groups/${id}`, {
-      method: 'PUT',
-      headers: authHeaders(),
-      body: JSON.stringify(updates),
-    }));
+    const res = handleResponse(
+      await fetch(`${BASE}/api/bulk-groups/${id}`, {
+        method: 'PUT',
+        headers: authHeaders(),
+        body: JSON.stringify(updates),
+      }),
+    );
     if (!res.ok) return null;
     return await res.json();
   } catch {
@@ -225,7 +242,9 @@ async function updateBulkGroup(id, updates) {
 
 async function deleteBulkGroup(id) {
   try {
-    const res = handleResponse(await fetch(`${BASE}/api/bulk-groups/${id}`, { method: 'DELETE', headers: authHeadersGet() }));
+    const res = handleResponse(
+      await fetch(`${BASE}/api/bulk-groups/${id}`, { method: 'DELETE', headers: authHeadersGet() }),
+    );
     return res.ok;
   } catch {
     return false;
@@ -238,7 +257,7 @@ async function getUsers() {
   try {
     const res = handleResponse(await fetch(`${BASE}/api/users`, { headers: authHeadersGet() }));
     if (!res.ok) return null;
-    return await res.json();
+    return unwrapList(await res.json());
   } catch {
     return null;
   }
@@ -246,11 +265,13 @@ async function getUsers() {
 
 async function createUser(user) {
   try {
-    const res = handleResponse(await fetch(`${BASE}/api/users`, {
-      method: 'POST',
-      headers: authHeaders(),
-      body: JSON.stringify(user),
-    }));
+    const res = handleResponse(
+      await fetch(`${BASE}/api/users`, {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify(user),
+      }),
+    );
     if (!res.ok) return null;
     return await res.json();
   } catch {
@@ -260,11 +281,13 @@ async function createUser(user) {
 
 async function updateUser(id, updates) {
   try {
-    const res = handleResponse(await fetch(`${BASE}/api/users/${id}`, {
-      method: 'PUT',
-      headers: authHeaders(),
-      body: JSON.stringify(updates),
-    }));
+    const res = handleResponse(
+      await fetch(`${BASE}/api/users/${id}`, {
+        method: 'PUT',
+        headers: authHeaders(),
+        body: JSON.stringify(updates),
+      }),
+    );
     if (!res.ok) return null;
     return await res.json();
   } catch {
@@ -287,7 +310,7 @@ async function getStockChecks() {
   try {
     const res = handleResponse(await fetch(`${BASE}/api/stock-checks`, { headers: authHeadersGet() }));
     if (!res.ok) return null;
-    return await res.json();
+    return unwrapList(await res.json());
   } catch {
     return null;
   }
@@ -295,11 +318,13 @@ async function getStockChecks() {
 
 async function createStockCheck(check) {
   try {
-    const res = handleResponse(await fetch(`${BASE}/api/stock-checks`, {
-      method: 'POST',
-      headers: authHeaders(),
-      body: JSON.stringify(check),
-    }));
+    const res = handleResponse(
+      await fetch(`${BASE}/api/stock-checks`, {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify(check),
+      }),
+    );
     if (!res.ok) return null;
     return await res.json();
   } catch {
@@ -309,11 +334,13 @@ async function createStockCheck(check) {
 
 async function updateStockCheck(id, updates) {
   try {
-    const res = handleResponse(await fetch(`${BASE}/api/stock-checks/${id}`, {
-      method: 'PUT',
-      headers: authHeaders(),
-      body: JSON.stringify(updates),
-    }));
+    const res = handleResponse(
+      await fetch(`${BASE}/api/stock-checks/${id}`, {
+        method: 'PUT',
+        headers: authHeaders(),
+        body: JSON.stringify(updates),
+      }),
+    );
     if (!res.ok) return null;
     return await res.json();
   } catch {
@@ -327,7 +354,7 @@ async function getNotifLog() {
   try {
     const res = handleResponse(await fetch(`${BASE}/api/notif-log`, { headers: authHeadersGet() }));
     if (!res.ok) return null;
-    return await res.json();
+    return unwrapList(await res.json());
   } catch {
     return null;
   }
@@ -335,11 +362,13 @@ async function getNotifLog() {
 
 async function createNotifEntry(entry) {
   try {
-    const res = handleResponse(await fetch(`${BASE}/api/notif-log`, {
-      method: 'POST',
-      headers: authHeaders(),
-      body: JSON.stringify(entry),
-    }));
+    const res = handleResponse(
+      await fetch(`${BASE}/api/notif-log`, {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify(entry),
+      }),
+    );
     if (!res.ok) return null;
     return await res.json();
   } catch {
@@ -354,7 +383,7 @@ async function getApprovals(status) {
     const qs = status ? `?status=${encodeURIComponent(status)}` : '';
     const res = handleResponse(await fetch(`${BASE}/api/pending-approvals${qs}`, { headers: authHeadersGet() }));
     if (!res.ok) return null;
-    return await res.json();
+    return unwrapList(await res.json());
   } catch {
     return null;
   }
@@ -362,11 +391,13 @@ async function getApprovals(status) {
 
 async function createApproval(approval) {
   try {
-    const res = handleResponse(await fetch(`${BASE}/api/pending-approvals`, {
-      method: 'POST',
-      headers: authHeaders(),
-      body: JSON.stringify(approval),
-    }));
+    const res = handleResponse(
+      await fetch(`${BASE}/api/pending-approvals`, {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify(approval),
+      }),
+    );
     if (!res.ok) return null;
     return await res.json();
   } catch {
@@ -376,11 +407,13 @@ async function createApproval(approval) {
 
 async function updateApproval(id, updates) {
   try {
-    const res = handleResponse(await fetch(`${BASE}/api/pending-approvals/${id}`, {
-      method: 'PUT',
-      headers: authHeaders(),
-      body: JSON.stringify(updates),
-    }));
+    const res = handleResponse(
+      await fetch(`${BASE}/api/pending-approvals/${id}`, {
+        method: 'PUT',
+        headers: authHeaders(),
+        body: JSON.stringify(updates),
+      }),
+    );
     if (!res.ok) return null;
     return await res.json();
   } catch {
@@ -402,7 +435,9 @@ async function getConfig() {
 
 async function getConfigKey(key) {
   try {
-    const res = handleResponse(await fetch(`${BASE}/api/config/${encodeURIComponent(key)}`, { headers: authHeadersGet() }));
+    const res = handleResponse(
+      await fetch(`${BASE}/api/config/${encodeURIComponent(key)}`, { headers: authHeadersGet() }),
+    );
     if (!res.ok) return null;
     return await res.json();
   } catch {
@@ -412,11 +447,13 @@ async function getConfigKey(key) {
 
 async function setConfigKey(key, value) {
   try {
-    const res = handleResponse(await fetch(`${BASE}/api/config/${encodeURIComponent(key)}`, {
-      method: 'PUT',
-      headers: authHeaders(),
-      body: JSON.stringify({ value }),
-    }));
+    const res = handleResponse(
+      await fetch(`${BASE}/api/config/${encodeURIComponent(key)}`, {
+        method: 'PUT',
+        headers: authHeaders(),
+        body: JSON.stringify({ value }),
+      }),
+    );
     if (!res.ok) return null;
     return await res.json();
   } catch {
@@ -430,7 +467,7 @@ async function getCatalog() {
   try {
     const res = handleResponse(await fetch(`${BASE}/api/catalog`, { headers: authHeadersGet() }));
     if (!res.ok) return null;
-    return await res.json();
+    return unwrapList(await res.json());
   } catch {
     return null;
   }
@@ -438,11 +475,13 @@ async function getCatalog() {
 
 async function uploadCatalog(parts) {
   try {
-    const res = handleResponse(await fetch(`${BASE}/api/catalog`, {
-      method: 'POST',
-      headers: authHeaders(),
-      body: JSON.stringify({ parts }),
-    }));
+    const res = handleResponse(
+      await fetch(`${BASE}/api/catalog`, {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify({ parts }),
+      }),
+    );
     if (!res.ok) return null;
     return await res.json();
   } catch {
@@ -472,7 +511,9 @@ async function clearOrders() {
 
 async function clearBulkGroups() {
   try {
-    const res = handleResponse(await fetch(`${BASE}/api/bulk-groups/all`, { method: 'DELETE', headers: authHeadersGet() }));
+    const res = handleResponse(
+      await fetch(`${BASE}/api/bulk-groups/all`, { method: 'DELETE', headers: authHeadersGet() }),
+    );
     return res.ok;
   } catch {
     return false;
@@ -481,7 +522,9 @@ async function clearBulkGroups() {
 
 async function deleteStockCheck(id) {
   try {
-    const res = handleResponse(await fetch(`${BASE}/api/stock-checks/${id}`, { method: 'DELETE', headers: authHeadersGet() }));
+    const res = handleResponse(
+      await fetch(`${BASE}/api/stock-checks/${id}`, { method: 'DELETE', headers: authHeadersGet() }),
+    );
     return res.ok;
   } catch {
     return false;
@@ -490,7 +533,9 @@ async function deleteStockCheck(id) {
 
 async function clearStockChecks() {
   try {
-    const res = handleResponse(await fetch(`${BASE}/api/stock-checks`, { method: 'DELETE', headers: authHeadersGet() }));
+    const res = handleResponse(
+      await fetch(`${BASE}/api/stock-checks`, { method: 'DELETE', headers: authHeadersGet() }),
+    );
     return res.ok;
   } catch {
     return false;
@@ -499,7 +544,9 @@ async function clearStockChecks() {
 
 async function deleteNotifEntry(id) {
   try {
-    const res = handleResponse(await fetch(`${BASE}/api/notif-log/${id}`, { method: 'DELETE', headers: authHeadersGet() }));
+    const res = handleResponse(
+      await fetch(`${BASE}/api/notif-log/${id}`, { method: 'DELETE', headers: authHeadersGet() }),
+    );
     return res.ok;
   } catch {
     return false;
@@ -517,7 +564,9 @@ async function clearNotifLog() {
 
 async function clearApprovals() {
   try {
-    const res = handleResponse(await fetch(`${BASE}/api/pending-approvals`, { method: 'DELETE', headers: authHeadersGet() }));
+    const res = handleResponse(
+      await fetch(`${BASE}/api/pending-approvals`, { method: 'DELETE', headers: authHeadersGet() }),
+    );
     return res.ok;
   } catch {
     return false;
@@ -528,11 +577,13 @@ async function clearApprovals() {
 
 async function migrateData(data) {
   try {
-    const res = handleResponse(await fetch(`${BASE}/api/migrate`, {
-      method: 'POST',
-      headers: authHeaders(),
-      body: JSON.stringify(data),
-    }));
+    const res = handleResponse(
+      await fetch(`${BASE}/api/migrate`, {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify(data),
+      }),
+    );
     if (!res.ok) return null;
     return await res.json();
   } catch {
@@ -549,9 +600,11 @@ async function getAuditLog(filters = {}) {
       if (v !== '' && v !== null && v !== undefined) params.append(k, v);
     }
     const qs = params.toString();
-    const res = handleResponse(await fetch(`${BASE}/api/audit-log${qs ? `?${qs}` : ''}`, { headers: authHeadersGet() }));
+    const res = handleResponse(
+      await fetch(`${BASE}/api/audit-log${qs ? `?${qs}` : ''}`, { headers: authHeadersGet() }),
+    );
     if (!res.ok) return null;
-    return await res.json();
+    return unwrapList(await res.json());
   } catch {
     return null;
   }
@@ -559,11 +612,13 @@ async function getAuditLog(filters = {}) {
 
 async function createAuditEntry(entry) {
   try {
-    const res = handleResponse(await fetch(`${BASE}/api/audit-log`, {
-      method: 'POST',
-      headers: authHeaders(),
-      body: JSON.stringify(entry),
-    }));
+    const res = handleResponse(
+      await fetch(`${BASE}/api/audit-log`, {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify(entry),
+      }),
+    );
     if (!res.ok) return null;
     return await res.json();
   } catch {
@@ -586,7 +641,7 @@ async function getMachines() {
   try {
     const res = handleResponse(await fetch(`${BASE}/api/machines`, { headers: authHeadersGet() }));
     if (!res.ok) return null;
-    return await res.json();
+    return unwrapList(await res.json());
   } catch {
     return null;
   }
@@ -594,11 +649,13 @@ async function getMachines() {
 
 async function createMachine(machine) {
   try {
-    const res = handleResponse(await fetch(`${BASE}/api/machines`, {
-      method: 'POST',
-      headers: authHeaders(),
-      body: JSON.stringify(machine),
-    }));
+    const res = handleResponse(
+      await fetch(`${BASE}/api/machines`, {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify(machine),
+      }),
+    );
     if (!res.ok) return null;
     return await res.json();
   } catch {
@@ -608,11 +665,13 @@ async function createMachine(machine) {
 
 async function updateMachine(id, updates) {
   try {
-    const res = handleResponse(await fetch(`${BASE}/api/machines/${id}`, {
-      method: 'PUT',
-      headers: authHeaders(),
-      body: JSON.stringify(updates),
-    }));
+    const res = handleResponse(
+      await fetch(`${BASE}/api/machines/${id}`, {
+        method: 'PUT',
+        headers: authHeaders(),
+        body: JSON.stringify(updates),
+      }),
+    );
     if (!res.ok) return null;
     return await res.json();
   } catch {
@@ -622,7 +681,9 @@ async function updateMachine(id, updates) {
 
 async function deleteMachine(id) {
   try {
-    const res = handleResponse(await fetch(`${BASE}/api/machines/${id}`, { method: 'DELETE', headers: authHeadersGet() }));
+    const res = handleResponse(
+      await fetch(`${BASE}/api/machines/${id}`, { method: 'DELETE', headers: authHeadersGet() }),
+    );
     return res.ok;
   } catch {
     return false;
@@ -631,7 +692,13 @@ async function deleteMachine(id) {
 
 async function sendEmail({ to, subject, html, smtp }) {
   try {
-    const res = handleResponse(await fetch(`${BASE}/api/send-email`, { method: 'POST', headers: authHeaders(), body: JSON.stringify({ to, subject, html, smtp }) }));
+    const res = handleResponse(
+      await fetch(`${BASE}/api/send-email`, {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify({ to, subject, html, smtp }),
+      }),
+    );
     const data = await res.json();
     return data.ok || false;
   } catch {

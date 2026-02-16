@@ -3,6 +3,8 @@ import bcrypt from 'bcryptjs';
 import { query } from '../db.js';
 import { snakeToCamel, camelToSnake } from '../utils.js';
 import { pickAllowed, requireFields } from '../validation.js';
+import { paginate, envelope } from '../pagination.js';
+import { asyncHandler } from '../middleware/errorHandler.js';
 
 const router = Router();
 
@@ -11,17 +13,20 @@ const USER_FIELDS = ['id', 'username', 'password_hash', 'name', 'email', 'phone'
 const USER_REQUIRED = ['username'];
 
 // GET / - list all users (EXCLUDE password_hash)
-router.get('/', async (req, res) => {
-  try {
-    const result = await query(
-      'SELECT id, username, name, email, phone, role, status, permissions, created FROM users ORDER BY id'
+router.get(
+  '/',
+  asyncHandler(async (req, res) => {
+    const { page, pageSize, offset } = paginate(req.query);
+    const countResult = await query('SELECT COUNT(*) FROM users');
+    const total = parseInt(countResult.rows[0].count);
+    const dataResult = await query(
+      'SELECT id, username, name, email, phone, role, status, permissions, created FROM users ORDER BY id LIMIT $1 OFFSET $2',
+      [pageSize, offset],
     );
-    const rows = result.rows.map(snakeToCamel);
-    res.json(rows);
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
+    const rows = dataResult.rows.map(snakeToCamel);
+    res.json(envelope(rows, total, page, pageSize));
+  }),
+);
 
 // POST / - create user (hash password with bcryptjs)
 router.post('/', async (req, res) => {
@@ -33,7 +38,8 @@ router.post('/', async (req, res) => {
     }
 
     const snakeBody = pickAllowed(camelToSnake(body), USER_FIELDS);
-    if (snakeBody.permissions && typeof snakeBody.permissions === 'object') snakeBody.permissions = JSON.stringify(snakeBody.permissions);
+    if (snakeBody.permissions && typeof snakeBody.permissions === 'object')
+      snakeBody.permissions = JSON.stringify(snakeBody.permissions);
     const err = requireFields(snakeBody, USER_REQUIRED);
     if (err) return res.status(400).json({ error: err });
 
@@ -61,7 +67,8 @@ router.put('/:id', async (req, res) => {
     }
 
     const snakeBody = pickAllowed(camelToSnake(body), USER_FIELDS);
-    if (snakeBody.permissions && typeof snakeBody.permissions === 'object') snakeBody.permissions = JSON.stringify(snakeBody.permissions);
+    if (snakeBody.permissions && typeof snakeBody.permissions === 'object')
+      snakeBody.permissions = JSON.stringify(snakeBody.permissions);
     const keys = Object.keys(snakeBody);
     const values = Object.values(snakeBody);
 

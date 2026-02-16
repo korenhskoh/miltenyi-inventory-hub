@@ -2,26 +2,39 @@ import { Router } from 'express';
 import { query } from '../db.js';
 import { snakeToCamel, camelToSnake } from '../utils.js';
 import { pickAllowed } from '../validation.js';
+import { paginate, envelope } from '../pagination.js';
+import { asyncHandler } from '../middleware/errorHandler.js';
 
 const router = Router();
 
 const MACHINE_FIELDS = ['name', 'modality', 'location', 'install_date', 'status', 'notes'];
 
 // GET / - list all machines
-router.get('/', async (req, res) => {
-  try {
+router.get(
+  '/',
+  asyncHandler(async (req, res) => {
     const { modality } = req.query;
-    let sql = 'SELECT * FROM machines';
+    const { page, pageSize, offset } = paginate(req.query);
+    let whereClause = '';
     const params = [];
-    if (modality) { sql += ' WHERE modality = $1'; params.push(modality); }
-    sql += ' ORDER BY id DESC';
-    const result = await query(sql, params);
-    const rows = result.rows.map(snakeToCamel);
-    res.json(rows);
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
+    let paramIndex = 1;
+
+    if (modality) {
+      whereClause = ` WHERE modality = $${paramIndex++}`;
+      params.push(modality);
+    }
+
+    const countResult = await query(`SELECT COUNT(*) FROM machines${whereClause}`, params);
+    const total = parseInt(countResult.rows[0].count);
+
+    const dataResult = await query(
+      `SELECT * FROM machines${whereClause} ORDER BY id DESC LIMIT $${paramIndex++} OFFSET $${paramIndex++}`,
+      [...params, pageSize, offset],
+    );
+    const rows = dataResult.rows.map(snakeToCamel);
+    res.json(envelope(rows, total, page, pageSize));
+  }),
+);
 
 // POST / - add machine
 router.post('/', async (req, res) => {

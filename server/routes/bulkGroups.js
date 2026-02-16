@@ -2,6 +2,8 @@ import { Router } from 'express';
 import { query } from '../db.js';
 import { snakeToCamel, camelToSnake } from '../utils.js';
 import { pickAllowed, requireFields, sanitizeDates } from '../validation.js';
+import { paginate, envelope } from '../pagination.js';
+import { asyncHandler } from '../middleware/errorHandler.js';
 
 const router = Router();
 
@@ -10,15 +12,17 @@ const BG_DATE_FIELDS = ['date'];
 const BULK_GROUP_REQUIRED = ['id', 'month'];
 
 // GET / - list all bulk groups
-router.get('/', async (req, res) => {
-  try {
-    const result = await query('SELECT * FROM bulk_groups ORDER BY id DESC');
-    const rows = result.rows.map(snakeToCamel);
-    res.json(rows);
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
+router.get(
+  '/',
+  asyncHandler(async (req, res) => {
+    const { page, pageSize, offset } = paginate(req.query);
+    const countResult = await query('SELECT COUNT(*) FROM bulk_groups');
+    const total = parseInt(countResult.rows[0].count);
+    const dataResult = await query('SELECT * FROM bulk_groups ORDER BY id DESC LIMIT $1 OFFSET $2', [pageSize, offset]);
+    const rows = dataResult.rows.map(snakeToCamel);
+    res.json(envelope(rows, total, page, pageSize));
+  }),
+);
 
 // POST / - create bulk group
 router.post('/', async (req, res) => {

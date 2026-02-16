@@ -1,0 +1,80 @@
+import js from '@eslint/js';
+import react from 'eslint-plugin-react';
+import reactHooks from 'eslint-plugin-react-hooks';
+import prettier from 'eslint-config-prettier';
+
+export default [
+  js.configs.recommended,
+  {
+    files: ['src/**/*.{js,jsx}'],
+    plugins: { react, 'react-hooks': reactHooks },
+    languageOptions: {
+      parserOptions: { ecmaFeatures: { jsx: true } },
+      globals: {
+        window: true,
+        document: true,
+        localStorage: true,
+        fetch: true,
+        console: true,
+        setTimeout: true,
+        clearTimeout: true,
+        setInterval: true,
+        clearInterval: true,
+        URLSearchParams: true,
+        FormData: true,
+        Blob: true,
+        URL: true,
+        alert: true,
+        confirm: true,
+        navigator: true,
+        Intl: true,
+        Image: true,
+        FileReader: true,
+        AbortController: true,
+        Headers: true,
+        HTMLElement: true,
+        Event: true,
+        MutationObserver: true,
+        matchMedia: true,
+        requestAnimationFrame: true,
+        cancelAnimationFrame: true,
+        IntersectionObserver: true,
+        ResizeObserver: true,
+        performance: true,
+        structuredClone: true,
+        crypto: true,
+        TextEncoder: true,
+      },
+    },
+    rules: {
+      'react/react-in-jsx-scope': 'off',
+      'react/prop-types': 'off',
+      'react/jsx-uses-react': 'error',
+      'react/jsx-uses-vars': 'error',
+      'no-unused-vars': ['warn', { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }],
+      ...reactHooks.configs.recommended.rules,
+    },
+    settings: { react: { version: 'detect' } },
+  },
+  {
+    files: ['server/**/*.js'],
+    languageOptions: {
+      globals: {
+        process: true,
+        console: true,
+        setTimeout: true,
+        clearTimeout: true,
+        setInterval: true,
+        clearInterval: true,
+        Buffer: true,
+        URL: true,
+        URLSearchParams: true,
+      },
+    },
+    rules: {
+      'no-unused-vars': ['warn', { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }],
+    },
+  },
+  prettier,
+  { ignores: ['dist/', 'node_modules/', '*.cjs'] },
+];

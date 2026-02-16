@@ -8,11 +8,13 @@ import { fileURLToPath } from 'url';
 import makeWASocket, { DisconnectReason, fetchLatestBaileysVersion } from '@whiskeysockets/baileys';
 import { usePostgresAuthState } from './waAuthState.js';
 import QRCode from 'qrcode';
-import pino from 'pino';
+import pinoHttp from 'pino-http';
+import logger from './logger.js';
 import { initDatabase } from './initDb.js';
 import { query as dbQuery } from './db.js';
 import nodemailer from 'nodemailer';
 import { verifyToken, requireAdmin } from './middleware/auth.js';
+import { errorHandler } from './middleware/errorHandler.js';
 
 // API Routes
 import ordersRouter from './routes/orders.js';
@@ -36,17 +38,20 @@ const PORT = process.env.PORT || 3001;
 
 // Security Middleware
 app.use(helmet({ contentSecurityPolicy: false })); // CSP off for SPA inline styles
-app.use(cors({
-  origin: process.env.FRONTEND_URL || true,
-  credentials: true
-}));
+app.use(
+  cors({
+    origin: process.env.FRONTEND_URL || true,
+    credentials: true,
+  }),
+);
 app.use(express.json({ limit: '10mb' }));
+app.use(pinoHttp({ logger, autoLogging: { ignore: (req) => req.url === '/api/health' } }));
 
 // Rate limiting on auth routes (prevent brute force)
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: 20, // 20 attempts per window
-  message: { error: 'Too many login attempts. Please try again in 15 minutes.' }
+  message: { error: 'Too many login attempts. Please try again in 15 minutes.' },
 });
 
 // WhatsApp State
@@ -57,8 +62,9 @@ let sessionInfo = null;
 let waReconnectAttempts = 0;
 const WA_MAX_RECONNECTS = 10;
 
-// Logger (silent for cleaner output)
-const logger = pino({ level: 'silent' });
+// Baileys internal logger (keep silent — our own logger handles app logging)
+const baileysLogger = logger.child({ component: 'baileys' });
+baileysLogger.level = 'silent';
 
 // Message Templates (imported from shared module)
 import { messageTemplates } from './messageTemplates.js';
@@ -78,7 +84,7 @@ async function connectWhatsApp() {
     sock = makeWASocket({
       version,
       auth: state,
-      logger,
+      logger: baileysLogger,
       printQRInTerminal: true,
       browser: ['Miltenyi Inventory Hub', 'Chrome', '120.0.0'],
     });
@@ -91,7 +97,7 @@ async function connectWhatsApp() {
         // Generate QR code as data URL
         qrCode = await QRCode.toDataURL(qr);
         connectionStatus = 'awaiting_scan';
-        console.log('📱 QR Code generated - scan with WhatsApp');
+        logger.info('QR code generated — scan with WhatsApp');
       }
 
       if (connection === 'close') {
@@ -104,18 +110,25 @@ async function connectWhatsApp() {
         if (shouldReconnect && waReconnectAttempts < WA_MAX_RECONNECTS) {
           waReconnectAttempts++;
           const delay = Math.min(3000 * waReconnectAttempts, 30000); // 3s, 6s, 9s... max 30s
-          console.log(`WhatsApp reconnecting in ${delay/1000}s (attempt ${waReconnectAttempts}/${WA_MAX_RECONNECTS})...`);
+          logger.info(
+            { delay: delay / 1000, attempt: waReconnectAttempts, max: WA_MAX_RECONNECTS },
+            'WhatsApp reconnecting',
+          );
           setTimeout(connectWhatsApp, delay);
         } else if (!shouldReconnect) {
-          console.log('WhatsApp logged out by user — clearing auth');
-          try { await dbQuery('DELETE FROM wa_auth'); } catch (_) {}
+          logger.info('WhatsApp logged out by user — clearing auth');
+          try {
+            await dbQuery('DELETE FROM wa_auth');
+          } catch (_e) {
+            /* ignore */
+          }
           connectionStatus = 'disconnected';
         } else {
-          console.log('WhatsApp reconnection stopped — max attempts reached');
+          logger.info('WhatsApp reconnection stopped — max attempts reached');
           connectionStatus = 'disconnected';
         }
       } else if (connection === 'open') {
-        console.log('✅ WhatsApp connected successfully!');
+        logger.info('WhatsApp connected successfully');
         connectionStatus = 'connected';
         waReconnectAttempts = 0;
         qrCode = null;
@@ -127,7 +140,7 @@ async function connectWhatsApp() {
           phone: user?.id?.split(':')[0] || 'Unknown',
           name: user?.name || 'WhatsApp User',
           connectedAt: new Date().toLocaleString(),
-          platform: 'Baileys WhiskeySockets'
+          platform: 'Baileys WhiskeySockets',
         };
       }
     });
@@ -141,27 +154,28 @@ async function connectWhatsApp() {
       if (!msg.key.fromMe && msg.message) {
         const text = msg.message.conversation || msg.message.extendedTextMessage?.text || '';
         const jid = msg.key.remoteJid;
-        console.log(`📩 Message from ${jid}: ${text}`);
+        logger.info({ jid }, 'Incoming WhatsApp message');
 
         try {
           // Check if bot is enabled
-          const cfgResult = await dbQuery("SELECT value FROM app_config WHERE key = 'waAutoReply' AND user_id = '__global__'");
+          const cfgResult = await dbQuery(
+            "SELECT value FROM app_config WHERE key = 'waAutoReply' AND user_id = '__global__'",
+          );
           const botEnabled = cfgResult.rows.length > 0 && cfgResult.rows[0].value === true;
           if (!botEnabled) return;
 
           const reply = await handleBotMessage(text, jid);
           if (reply && sock) {
             await sock.sendMessage(jid, { text: reply });
-            console.log(`🤖 Bot replied to ${jid}`);
+            logger.info({ jid }, 'Bot replied');
           }
         } catch (e) {
-          console.error('Bot reply error:', e.message);
+          logger.error({ err: e }, 'Bot reply error');
         }
       }
     });
-
   } catch (error) {
-    console.error('WhatsApp connection error:', error);
+    logger.error({ err: error }, 'WhatsApp connection error');
     connectionStatus = 'error';
     isConnecting = false;
   }
@@ -170,7 +184,7 @@ async function connectWhatsApp() {
 // Format phone number for WhatsApp
 function formatPhoneNumber(phone) {
   // Remove spaces, dashes, and plus sign
-  let cleaned = phone.replace(/[\s\-\+\(\)]/g, '');
+  let cleaned = phone.replace(/[\s\-+()]/g, '');
 
   // Add country code if not present (default Singapore +65)
   if (!cleaned.startsWith('65') && cleaned.length === 8) {
@@ -187,7 +201,7 @@ app.get('/api/whatsapp/status', (req, res) => {
   res.json({
     status: connectionStatus,
     qrCode: qrCode,
-    sessionInfo: sessionInfo
+    sessionInfo: sessionInfo,
   });
 });
 
@@ -207,14 +221,22 @@ app.post('/api/whatsapp/connect', async (req, res) => {
   try {
     // Only clear auth if explicitly forced (user wants fresh QR)
     if (forceNew && connectionStatus === 'disconnected') {
-      try { await dbQuery('DELETE FROM wa_auth'); } catch (e) { /* ignore */ }
-      console.log('Auth cleared — forcing fresh QR');
+      try {
+        await dbQuery('DELETE FROM wa_auth');
+      } catch (e) {
+        /* ignore */
+      }
+      logger.info('Auth cleared — forcing fresh QR');
     }
 
     // Reset state for reconnect
     qrCode = null;
     if (sock) {
-      try { sock.ev.removeAllListeners(); } catch (_) {}
+      try {
+        sock.ev.removeAllListeners();
+      } catch (_e) {
+        /* ignore */
+      }
       sock = null;
     }
     waReconnectAttempts = 0;
@@ -233,11 +255,16 @@ app.post('/api/whatsapp/connect', async (req, res) => {
       if (connectionStatus === 'error') {
         return res.status(500).json({ success: false, error: 'Connection failed' });
       }
-      await new Promise(r => setTimeout(r, 300));
+      await new Promise((r) => setTimeout(r, 300));
     }
 
     // Timeout but connection initiated — frontend can poll
-    res.json({ success: true, message: 'Connection initiated. Polling for status.', status: connectionStatus, qrCode: qrCode || null });
+    res.json({
+      success: true,
+      message: 'Connection initiated. Polling for status.',
+      status: connectionStatus,
+      qrCode: qrCode || null,
+    });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -246,15 +273,27 @@ app.post('/api/whatsapp/connect', async (req, res) => {
 // Disconnect WhatsApp
 app.post('/api/whatsapp/disconnect', async (req, res) => {
   if (sock) {
-    try { sock.ev.removeAllListeners(); } catch (_) { /* ignore */ }
-    try { await sock.logout(); } catch (_) { /* ignore */ }
+    try {
+      sock.ev.removeAllListeners();
+    } catch (_) {
+      /* ignore */
+    }
+    try {
+      await sock.logout();
+    } catch (_) {
+      /* ignore */
+    }
     sock = null;
     connectionStatus = 'disconnected';
     qrCode = null;
     sessionInfo = null;
     isConnecting = false;
     // Clear stored session from DB so next connect generates fresh QR
-    try { await dbQuery('DELETE FROM wa_auth'); } catch (e) { /* ignore */ }
+    try {
+      await dbQuery('DELETE FROM wa_auth');
+    } catch (e) {
+      /* ignore */
+    }
   }
   res.json({ success: true, message: 'Disconnected' });
 });
@@ -287,16 +326,15 @@ app.post('/api/whatsapp/send', async (req, res) => {
     // Send message
     await sock.sendMessage(jid, { text: message });
 
-    console.log(`📤 Message sent to ${phone}`);
+    logger.info({ phone }, 'WhatsApp message sent');
     res.json({
       success: true,
       message: 'Message sent',
       to: phone,
-      template: template || 'custom'
+      template: template || 'custom',
     });
-
   } catch (error) {
-    console.error('Send error:', error);
+    logger.error({ err: error }, 'WhatsApp send error');
     res.status(500).json({ success: false, error: error.message });
   }
 });
@@ -330,14 +368,13 @@ app.post('/api/whatsapp/broadcast', async (req, res) => {
         await sock.sendMessage(jid, { text: message });
         results.push({ phone, success: true });
         // Small delay between messages to avoid rate limiting
-        await new Promise(resolve => setTimeout(resolve, 1000));
+        await new Promise((resolve) => setTimeout(resolve, 1000));
       } catch (err) {
         results.push({ phone, success: false, error: err.message });
       }
     }
 
     res.json({ success: true, results });
-
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -346,9 +383,9 @@ app.post('/api/whatsapp/broadcast', async (req, res) => {
 // Get available templates
 app.get('/api/whatsapp/templates', (req, res) => {
   res.json({
-    templates: Object.keys(messageTemplates).map(key => ({
+    templates: Object.keys(messageTemplates).map((key) => ({
       id: key,
-      name: key.replace(/([A-Z])/g, ' $1').replace(/^./, str => str.toUpperCase()),
+      name: key.replace(/([A-Z])/g, ' $1').replace(/^./, (str) => str.toUpperCase()),
       preview: messageTemplates[key]({
         orderId: 'ORD-001',
         description: 'Sample Item',
@@ -372,9 +409,9 @@ app.get('/api/whatsapp/templates', (req, res) => {
         pending: 3,
         backOrders: 2,
         itemsList: '• Sample Item: 5/5\n• Another Item: 3/5',
-        message: 'Custom message here'
-      })
-    }))
+        message: 'Custom message here',
+      }),
+    })),
   });
 });
 
@@ -386,11 +423,15 @@ app.use('/api/auth', authLimiter, authRouter);
 app.get('/api/public/logo', async (req, res) => {
   try {
     const result = await Promise.race([
-      (await import('./db.js')).query("SELECT value FROM app_config WHERE key = 'customLogo' AND user_id = '__global__'"),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 5000))
+      (await import('./db.js')).query(
+        "SELECT value FROM app_config WHERE key = 'customLogo' AND user_id = '__global__'",
+      ),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 5000)),
     ]);
     res.json({ logo: result.rows.length ? result.rows[0].value : null });
-  } catch { res.json({ logo: null }); }
+  } catch {
+    res.json({ logo: null });
+  }
 });
 
 // Protected routes (require valid JWT)
@@ -420,17 +461,17 @@ app.post('/api/send-email', verifyToken, async (req, res) => {
       port: smtp.port || 587,
       secure: (smtp.port || 587) === 465,
       auth: smtp.user ? { user: smtp.user, pass: smtp.pass } : undefined,
-      tls: { rejectUnauthorized: false }
+      tls: { rejectUnauthorized: false },
     });
     await transporter.sendMail({
       from: smtp.from || `"Miltenyi Inventory Hub" <${smtp.user || 'noreply@miltenyibiotec.com'}>`,
       to,
       subject,
-      html
+      html,
     });
     res.json({ ok: true });
   } catch (err) {
-    console.error('Email send error:', err.message);
+    logger.error({ err }, 'Email send error');
     res.status(500).json({ error: err.message });
   }
 });
@@ -443,12 +484,17 @@ app.get('/api/health', async (req, res) => {
   try {
     const r = await Promise.race([
       dbQuery('SELECT 1'),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 3000))
+      new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 3000)),
     ]);
     dbOk = r.rows.length > 0;
-  } catch {}
+  } catch (_e) {
+    /* timeout or db error */
+  }
   res.json({ status: 'ok', whatsapp: connectionStatus, database: dbOk ? 'connected' : 'error', pool: poolInfo });
 });
+
+// Global error handler (must be after all routes)
+app.use(errorHandler);
 
 // ============ STATIC FILE SERVING ============
 const distPath = path.join(__dirname, '..', 'dist');
@@ -460,7 +506,7 @@ if (distExists) {
     res.sendFile(path.join(distPath, 'index.html'));
   });
 } else {
-  console.warn('WARNING: dist/ directory not found. Run "npm run build" first. API-only mode.');
+  logger.warn('dist/ directory not found — run "npm run build" first. API-only mode.');
   app.get('*', (req, res) => {
     if (!req.path.startsWith('/api/')) {
       res.status(503).send('Frontend not built. Run npm run build.');
@@ -474,39 +520,21 @@ async function start() {
   if (process.env.DATABASE_URL) {
     try {
       await initDatabase();
-      console.log('Database initialized');
+      logger.info('Database initialized');
     } catch (err) {
-      console.error('Database init failed:', err.message);
-      console.log('Continuing without database — localStorage fallback active');
+      logger.error({ err }, 'Database init failed');
+      logger.info('Continuing without database — localStorage fallback active');
     }
   } else {
-    console.log('No DATABASE_URL set — running without database (localStorage only)');
+    logger.info('No DATABASE_URL set — running without database (localStorage only)');
   }
 
   app.listen(PORT, '0.0.0.0', () => {
-    console.log(`
-╔════════════════════════════════════════════════════════════╗
-║     Miltenyi Inventory Hub Server                          ║
-║     Running on http://0.0.0.0:${PORT}                         ║
-╠════════════════════════════════════════════════════════════╣
-║  API Routes:                                               ║
-║  /api/orders          - Orders CRUD                        ║
-║  /api/bulk-groups     - Bulk Groups CRUD                   ║
-║  /api/users           - User Management                    ║
-║  /api/auth            - Login / Register                   ║
-║  /api/stock-checks    - Stock Checks                       ║
-║  /api/notif-log       - Notification Log                   ║
-║  /api/pending-approvals - Approvals                        ║
-║  /api/config          - App Configuration                  ║
-║  /api/catalog         - Parts Catalog                      ║
-║  /api/whatsapp/*      - WhatsApp Baileys                   ║
-║  /api/health          - Health Check                       ║
-╚════════════════════════════════════════════════════════════╝
-    `);
+    logger.info({ port: PORT }, 'Miltenyi Inventory Hub Server started');
 
     // Auto-connect WhatsApp on server start
-    console.log('Auto-connecting WhatsApp...');
-    connectWhatsApp().catch(err => console.error('Auto-connect failed:', err.message));
+    logger.info('Auto-connecting WhatsApp...');
+    connectWhatsApp().catch((err) => logger.error({ err }, 'WhatsApp auto-connect failed'));
   });
 }
 

@@ -4,6 +4,7 @@ import jwt from 'jsonwebtoken';
 import { query } from '../db.js';
 import { snakeToCamel, camelToSnake } from '../utils.js';
 import { generateToken, JWT_SECRET } from '../middleware/auth.js';
+import logger from '../logger.js';
 
 const router = Router();
 
@@ -39,7 +40,7 @@ router.post('/login', async (req, res) => {
     const token = generateToken(userData);
     res.json({ user: userData, token });
   } catch (e) {
-    console.error('Login error:', e.message);
+    logger.error({ err: e }, 'Login error');
     res.status(500).json({ error: 'Server error — database may not be connected' });
   }
 });
@@ -96,7 +97,7 @@ router.get('/me', async (req, res) => {
     const { password_hash, ...userWithoutPassword } = user;
     res.json({ user: snakeToCamel(userWithoutPassword) });
   } catch (e) {
-    console.error('Auth/me error:', e.message);
+    logger.error({ err: e }, 'Auth/me error');
     res.status(500).json({ error: 'Server error' });
   }
 });

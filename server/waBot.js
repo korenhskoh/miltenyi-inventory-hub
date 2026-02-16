@@ -1,4 +1,5 @@
 // WhatsApp Bot — Session Manager & Entry Point
+import logger from './logger.js';
 import { matchIntent } from './waBotPatterns.js';
 import { commandHandlers, stateHandlers, confirmExecutors } from './waBotCommands.js';
 
@@ -123,7 +124,7 @@ export async function handleBotMessage(text, jid) {
 
     return commandHandlers.unknown();
   } catch (error) {
-    console.error('Bot error:', error);
+    logger.error({ err: error }, 'Bot error');
     return `⚠️ Something went wrong. Please try again.\n\nType *help* for commands.`;
   }
 }

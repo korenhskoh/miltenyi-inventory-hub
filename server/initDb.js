@@ -1,4 +1,5 @@
 import { query } from './db.js';
+import logger from './logger.js';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -15,7 +16,7 @@ export async function initDatabase() {
     const schemaSql = fs.readFileSync(schemaPath, 'utf-8');
     await Promise.race([
       query(schemaSql),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('Schema execution timed out after 15s')), 15000))
+      new Promise((_, reject) => setTimeout(() => reject(new Error('Schema execution timed out after 15s')), 15000)),
     ]);
 
     // --- 2. Seed default users (only if users table is empty) ---
@@ -26,16 +27,25 @@ export async function initDatabase() {
       await query(
         `INSERT INTO users (id, username, password_hash, name, email, role, status, phone)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-        ['U001', 'admin', bcryptjs.hashSync('admin123', 10), 'System Admin', 'admin@miltenyibiotec.com', 'admin', 'active', '']
+        [
+          'U001',
+          'admin',
+          bcryptjs.hashSync('admin123', 10),
+          'System Admin',
+          'admin@miltenyibiotec.com',
+          'admin',
+          'active',
+          '',
+        ],
       );
-      console.log('Default admin user seeded');
+      logger.info('Default admin user seeded');
     } else {
       // Safety: ensure at least one active admin exists
       const adminCheck = await query("SELECT COUNT(*) AS count FROM users WHERE role = 'admin' AND status = 'active'");
       if (parseInt(adminCheck.rows[0].count, 10) === 0) {
         // Restore the original admin user's role
         await query("UPDATE users SET role = 'admin', status = 'active' WHERE username = 'admin'");
-        console.log('WARNING: No active admin found — restored admin user role');
+        logger.warn('No active admin found — restored admin user role');
       }
     }
 
@@ -53,7 +63,7 @@ export async function initDatabase() {
         enabled: true,
         approverEmail: '',
         approvalEnabled: true,
-        approvalKeywords: ['approve', 'approved', 'yes', 'confirm', 'confirmed', 'ok', 'accept', 'accepted']
+        approvalKeywords: ['approve', 'approved', 'yes', 'confirm', 'confirmed', 'ok', 'accept', 'accepted'],
       };
 
       // emailTemplates (imported from shared module)
@@ -66,7 +76,7 @@ export async function initDatabase() {
         gst: 1.09,
         distMarkup: 2.05,
         specialRate: 2.0,
-        year: 2025
+        year: 2025,
       };
 
       // waNotifyRules
@@ -78,7 +88,7 @@ export async function initDatabase() {
         backOrderUpdate: true,
         lowStockAlert: false,
         monthlySummary: false,
-        urgentRequest: true
+        urgentRequest: true,
       };
 
       // scheduledNotifs
@@ -97,8 +107,8 @@ export async function initDatabase() {
           backOrderReport: true,
           lowStockAlert: true,
           pendingApprovals: true,
-          orderStats: true
-        }
+          orderStats: true,
+        },
       };
 
       const configEntries = [
@@ -106,22 +116,22 @@ export async function initDatabase() {
         { key: 'emailTemplates', value: emailTemplates },
         { key: 'priceConfig', value: priceConfig },
         { key: 'waNotifyRules', value: waNotifyRules },
-        { key: 'scheduledNotifs', value: scheduledNotifs }
+        { key: 'scheduledNotifs', value: scheduledNotifs },
       ];
 
       for (const entry of configEntries) {
-        await query(
-          `INSERT INTO app_config (key, user_id, value) VALUES ($1, '__global__', $2)`,
-          [entry.key, JSON.stringify(entry.value)]
-        );
+        await query(`INSERT INTO app_config (key, user_id, value) VALUES ($1, '__global__', $2)`, [
+          entry.key,
+          JSON.stringify(entry.value),
+        ]);
       }
 
-      console.log('Default app_config seeded successfully');
+      logger.info('Default app_config seeded');
     }
 
-    console.log('Database initialized successfully');
+    logger.info('Database initialized successfully');
   } catch (error) {
-    console.error('Error initializing database:', error);
+    logger.error({ err: error }, 'Error initializing database');
     throw error;
   }
 }

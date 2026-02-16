@@ -1,19 +1,26 @@
 import { Router } from 'express';
 import { query } from '../db.js';
 import { snakeToCamel, camelToSnake } from '../utils.js';
+import { paginate, envelope } from '../pagination.js';
+import { asyncHandler } from '../middleware/errorHandler.js';
 
 const router = Router();
 
 // GET / - list all parts from parts_catalog
-router.get('/', async (req, res) => {
-  try {
-    const result = await query('SELECT * FROM parts_catalog ORDER BY material_no');
-    const rows = result.rows.map(snakeToCamel);
-    res.json(rows);
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
+router.get(
+  '/',
+  asyncHandler(async (req, res) => {
+    const { page, pageSize, offset } = paginate(req.query);
+    const countResult = await query('SELECT COUNT(*) FROM parts_catalog');
+    const total = parseInt(countResult.rows[0].count);
+    const dataResult = await query('SELECT * FROM parts_catalog ORDER BY material_no LIMIT $1 OFFSET $2', [
+      pageSize,
+      offset,
+    ]);
+    const rows = dataResult.rows.map(snakeToCamel);
+    res.json(envelope(rows, total, page, pageSize));
+  }),
+);
 
 // POST / - bulk upsert parts in a single transaction
 router.post('/', async (req, res) => {
@@ -32,7 +39,7 @@ router.post('/', async (req, res) => {
     for (const part of parts) {
       const snakePart = camelToSnake(part);
       valueClauses.push(
-        `($${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++})`
+        `($${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++})`,
       );
       values.push(
         snakePart.material_no,
@@ -41,7 +48,7 @@ router.post('/', async (req, res) => {
         snakePart.sg_price || null,
         snakePart.dist_price || null,
         snakePart.transfer_price || null,
-        snakePart.rsp_eur || null
+        snakePart.rsp_eur || null,
       );
     }
 

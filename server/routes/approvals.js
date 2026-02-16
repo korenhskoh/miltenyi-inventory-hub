@@ -2,33 +2,52 @@ import { Router } from 'express';
 import { query } from '../db.js';
 import { snakeToCamel, camelToSnake } from '../utils.js';
 import { pickAllowed, sanitizeDates } from '../validation.js';
+import { paginate, envelope } from '../pagination.js';
+import { asyncHandler } from '../middleware/errorHandler.js';
 
 const router = Router();
 
-const APPROVAL_FIELDS = ['id', 'order_id', 'order_type', 'description', 'requested_by', 'quantity', 'total_cost', 'sent_date', 'status', 'action_date', 'order_ids'];
+const APPROVAL_FIELDS = [
+  'id',
+  'order_id',
+  'order_type',
+  'description',
+  'requested_by',
+  'quantity',
+  'total_cost',
+  'sent_date',
+  'status',
+  'action_date',
+  'order_ids',
+];
 const APPROVAL_DATE_FIELDS = ['sent_date', 'action_date'];
 
 // GET / - list all pending approvals, optional status filter
-router.get('/', async (req, res) => {
-  try {
+router.get(
+  '/',
+  asyncHandler(async (req, res) => {
     const { status } = req.query;
-    let sql = 'SELECT * FROM pending_approvals';
+    const { page, pageSize, offset } = paginate(req.query);
+    let whereClause = '';
     const params = [];
+    let paramIndex = 1;
 
     if (status) {
-      sql += ' WHERE status = $1';
+      whereClause = ` WHERE status = $${paramIndex++}`;
       params.push(status);
     }
 
-    sql += ' ORDER BY id DESC';
+    const countResult = await query(`SELECT COUNT(*) FROM pending_approvals${whereClause}`, params);
+    const total = parseInt(countResult.rows[0].count);
 
-    const result = await query(sql, params);
-    const rows = result.rows.map(snakeToCamel);
-    res.json(rows);
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
+    const dataResult = await query(
+      `SELECT * FROM pending_approvals${whereClause} ORDER BY id DESC LIMIT $${paramIndex++} OFFSET $${paramIndex++}`,
+      [...params, pageSize, offset],
+    );
+    const rows = dataResult.rows.map(snakeToCamel);
+    res.json(envelope(rows, total, page, pageSize));
+  }),
+);
 
 // POST / - create pending approval
 router.post('/', async (req, res) => {

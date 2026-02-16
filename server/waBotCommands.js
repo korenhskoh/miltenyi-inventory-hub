@@ -1,20 +1,21 @@
 // WhatsApp Bot — Command Handlers
 import { query } from './db.js';
+import logger from './logger.js';
 
 // ── Helpers ──
 const PAGE_SIZE = 5;
-const fmtPrice = (n) => n != null && Number(n) > 0 ? `S$${Number(n).toFixed(2)}` : '—';
-const fmtDate = (d) => d ? new Date(d).toLocaleDateString('en-SG') : '—';
+const fmtPrice = (n) => (n != null && Number(n) > 0 ? `S$${Number(n).toFixed(2)}` : '—');
+const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('en-SG') : '—');
 const ALLOWED_STATUSES = ['Pending', 'Pending Approval', 'Approved', 'Received', 'Rejected', 'Cancelled'];
 
 async function logBotAudit(action, entityType, entityId, details) {
   try {
     await query(
       `INSERT INTO audit_log (user_id, user_name, action, entity_type, entity_id, details) VALUES ($1,$2,$3,$4,$5,$6)`,
-      ['BOT', 'WhatsApp Bot', action, entityType, entityId, JSON.stringify(details || {})]
+      ['BOT', 'WhatsApp Bot', action, entityType, entityId, JSON.stringify(details || {})],
     );
   } catch (e) {
-    console.error('Bot audit log error:', e.message);
+    logger.error({ err: e }, 'Bot audit log error');
   }
 }
 
@@ -49,7 +50,7 @@ function paginate(items, session, formatFn) {
 
 function currentMonth() {
   const now = new Date();
-  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
   return `${months[now.getMonth()]} ${now.getFullYear()}`;
 }
 
@@ -156,8 +157,21 @@ async function executeOrderConfirm(session) {
   await query(
     `INSERT INTO orders (id, material_no, description, quantity, list_price, total_cost, order_date, order_by, status, approval_status, month, year, remark)
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
-    [orderId, d.materialNo, d.description, d.qty, d.price, d.total,
-     now.toISOString().slice(0, 10), 'WhatsApp Bot', 'Pending Approval', 'pending', month, String(now.getFullYear()), 'Created via WhatsApp Bot']
+    [
+      orderId,
+      d.materialNo,
+      d.description,
+      d.qty,
+      d.price,
+      d.total,
+      now.toISOString().slice(0, 10),
+      'WhatsApp Bot',
+      'Pending Approval',
+      'pending',
+      month,
+      String(now.getFullYear()),
+      'Created via WhatsApp Bot',
+    ],
   );
 
   await logBotAudit('create_order', 'order', orderId, { materialNo: d.materialNo, qty: d.qty, total: d.total });
@@ -193,8 +207,11 @@ async function handleListOrders(params, session) {
   if (!r.rows.length) return `No orders found${params.status ? ` with status "${params.status}"` : ''}.`;
 
   session.page = 0;
-  return paginate(r.rows, session, (o) =>
-    `*${o.id}* | ${o.status}\n${o.material_no || ''} | ${o.description || '—'}\nQty: ${o.quantity} | ${fmtPrice(o.total_cost)} | By: ${o.order_by || '—'}`
+  return paginate(
+    r.rows,
+    session,
+    (o) =>
+      `*${o.id}* | ${o.status}\n${o.material_no || ''} | ${o.description || '—'}\nQty: ${o.quantity} | ${fmtPrice(o.total_cost)} | By: ${o.order_by || '—'}`,
   );
 }
 
@@ -202,15 +219,18 @@ async function handleSearchOrders(params, session) {
   const q = `%${params.query}%`;
   const r = await query(
     `SELECT * FROM orders WHERE description ILIKE $1 OR material_no ILIKE $1 OR order_by ILIKE $1 ORDER BY created_at DESC`,
-    [q]
+    [q],
   );
   await logBotAudit('search_orders', 'order', null, { query: params.query });
 
   if (!r.rows.length) return `No orders found matching "${params.query}".`;
 
   session.page = 0;
-  return paginate(r.rows, session, (o) =>
-    `*${o.id}* | ${o.status}\n${o.material_no || ''} | ${o.description || '—'}\nQty: ${o.quantity} | ${fmtPrice(o.total_cost)}`
+  return paginate(
+    r.rows,
+    session,
+    (o) =>
+      `*${o.id}* | ${o.status}\n${o.material_no || ''} | ${o.description || '—'}\nQty: ${o.quantity} | ${fmtPrice(o.total_cost)}`,
   );
 }
 
@@ -218,9 +238,9 @@ async function handleUpdateOrder(params, session) {
   const { orderId, newStatus } = params;
 
   // Validate status
-  const matched = ALLOWED_STATUSES.find(s => s.toLowerCase() === newStatus.toLowerCase());
+  const matched = ALLOWED_STATUSES.find((s) => s.toLowerCase() === newStatus.toLowerCase());
   if (!matched) {
-    return `❌ Invalid status. Allowed values:\n${ALLOWED_STATUSES.map(s => `• ${s}`).join('\n')}`;
+    return `❌ Invalid status. Allowed values:\n${ALLOWED_STATUSES.map((s) => `• ${s}`).join('\n')}`;
   }
 
   const r = await query('SELECT * FROM orders WHERE id = $1', [orderId]);
@@ -273,8 +293,10 @@ async function handleListBulk(params, session) {
   if (!r.rows.length) return 'No bulk groups found.';
 
   session.page = 0;
-  return paginate(r.rows, session, (b) =>
-    `*${b.id}* | ${b.month || '—'}\nItems: ${b.items} | ${fmtPrice(b.total_cost)} | Status: ${b.status}`
+  return paginate(
+    r.rows,
+    session,
+    (b) => `*${b.id}* | ${b.month || '—'}\nItems: ${b.items} | ${fmtPrice(b.total_cost)} | Status: ${b.status}`,
   );
 }
 
@@ -293,8 +315,10 @@ async function handleBulkDetail(params, session) {
     text += '\nNo orders linked to this group.';
   } else {
     session.page = 0;
-    const orderList = paginate(or.rows, session, (o) =>
-      `  ${o.id}: ${o.description || '—'} (x${o.quantity}) — ${o.status}`
+    const orderList = paginate(
+      or.rows,
+      session,
+      (o) => `  ${o.id}: ${o.description || '—'} (x${o.quantity}) — ${o.status}`,
     );
     text += '\n' + orderList;
   }
@@ -310,8 +334,11 @@ async function handleListApprovals(params, session) {
   if (!r.rows.length) return '✅ No pending approvals.';
 
   session.page = 0;
-  return paginate(r.rows, session, (a) =>
-    `*${a.id}* | ${a.order_type || 'single'}\nOrder: ${a.order_id || '—'} | By: ${a.requested_by || '—'}\nQty: ${a.quantity || 0} | ${fmtPrice(a.total_cost)} | Sent: ${fmtDate(a.sent_date)}`
+  return paginate(
+    r.rows,
+    session,
+    (a) =>
+      `*${a.id}* | ${a.order_type || 'single'}\nOrder: ${a.order_id || '—'} | By: ${a.requested_by || '—'}\nQty: ${a.quantity || 0} | ${fmtPrice(a.total_cost)} | Sent: ${fmtDate(a.sent_date)}`,
   );
 }
 
@@ -375,7 +402,12 @@ async function handleStock() {
   const r = await query('SELECT * FROM stock_checks ORDER BY date DESC LIMIT 3');
   await logBotAudit('stock_check', 'stock_check', null, {});
   if (r.rows.length) {
-    const list = r.rows.map(s => `• *${s.id}*: ${s.items} items, ${s.disc} discrepancies (${s.status})\n  Checked by: ${s.checked_by || '—'} | ${fmtDate(s.date)}`).join('\n');
+    const list = r.rows
+      .map(
+        (s) =>
+          `• *${s.id}*: ${s.items} items, ${s.disc} discrepancies (${s.status})\n  Checked by: ${s.checked_by || '—'} | ${fmtDate(s.date)}`,
+      )
+      .join('\n');
     return `📊 *Recent Stock Checks:*\n\n${list}`;
   }
   return 'No stock checks recorded yet.';
@@ -387,8 +419,11 @@ async function handleStockHistory(params, session) {
   if (!r.rows.length) return 'No stock checks recorded yet.';
 
   session.page = 0;
-  return paginate(r.rows, session, (s) =>
-    `*${s.id}* | ${fmtDate(s.date)}\nItems: ${s.items} | Discrepancies: ${s.disc} | ${s.status}\nBy: ${s.checked_by || '—'}`
+  return paginate(
+    r.rows,
+    session,
+    (s) =>
+      `*${s.id}* | ${fmtDate(s.date)}\nItems: ${s.items} | Discrepancies: ${s.disc} | ${s.status}\nBy: ${s.checked_by || '—'}`,
   );
 }
 
@@ -398,15 +433,18 @@ async function handleSearchCatalog(params, session) {
   const q = `%${params.query}%`;
   const r = await query(
     `SELECT * FROM parts_catalog WHERE description ILIKE $1 OR material_no ILIKE $1 OR category ILIKE $1 ORDER BY material_no LIMIT 20`,
-    [q]
+    [q],
   );
   await logBotAudit('search_catalog', 'parts_catalog', null, { query: params.query });
 
   if (!r.rows.length) return `No parts found matching "${params.query}".`;
 
   session.page = 0;
-  return paginate(r.rows, session, (p) =>
-    `*${p.material_no}* | ${p.description}\nCategory: ${p.category || '—'}\nUnit: ${fmtPrice(p.sg_price)} | Dist: ${fmtPrice(p.dist_price)} | Transfer: ${fmtPrice(p.transfer_price)}`
+  return paginate(
+    r.rows,
+    session,
+    (p) =>
+      `*${p.material_no}* | ${p.description}\nCategory: ${p.category || '—'}\nUnit: ${fmtPrice(p.sg_price)} | Dist: ${fmtPrice(p.dist_price)} | Transfer: ${fmtPrice(p.transfer_price)}`,
   );
 }
 
@@ -414,10 +452,19 @@ async function handleSearchCatalog(params, session) {
 
 async function handleReportMonthly(params) {
   const month = params.month || currentMonth();
-  const r = await query('SELECT COUNT(*) as total, COALESCE(SUM(total_cost),0) as cost FROM orders WHERE month ILIKE $1', [`%${month}%`]);
-  const received = await query("SELECT COUNT(*) as c FROM orders WHERE month ILIKE $1 AND status = 'Received'", [`%${month}%`]);
-  const pending = await query("SELECT COUNT(*) as c FROM orders WHERE month ILIKE $1 AND status ILIKE '%pending%'", [`%${month}%`]);
-  const backorder = await query('SELECT COUNT(*) as c FROM orders WHERE month ILIKE $1 AND back_order > 0', [`%${month}%`]);
+  const r = await query(
+    'SELECT COUNT(*) as total, COALESCE(SUM(total_cost),0) as cost FROM orders WHERE month ILIKE $1',
+    [`%${month}%`],
+  );
+  const received = await query("SELECT COUNT(*) as c FROM orders WHERE month ILIKE $1 AND status = 'Received'", [
+    `%${month}%`,
+  ]);
+  const pending = await query("SELECT COUNT(*) as c FROM orders WHERE month ILIKE $1 AND status ILIKE '%pending%'", [
+    `%${month}%`,
+  ]);
+  const backorder = await query('SELECT COUNT(*) as c FROM orders WHERE month ILIKE $1 AND back_order > 0', [
+    `%${month}%`,
+  ]);
 
   const total = parseInt(r.rows[0].total);
   const cost = Number(r.rows[0].cost);
@@ -429,7 +476,7 @@ async function handleReportMonthly(params) {
 
   if (total === 0) return `📈 *Report — ${month}*\n\nNo orders found for this month.`;
 
-  return `📈 *Monthly Summary — ${month}*\n\n• Total Orders: *${total}*\n• Total Spending: *${fmtPrice(cost)}*\n• Received: ${rec}\n• Pending: ${pend}\n• Back Orders: ${bo}\n• Completion: ${total > 0 ? Math.round(rec / total * 100) : 0}%`;
+  return `📈 *Monthly Summary — ${month}*\n\n• Total Orders: *${total}*\n• Total Spending: *${fmtPrice(cost)}*\n• Received: ${rec}\n• Pending: ${pend}\n• Back Orders: ${bo}\n• Completion: ${total > 0 ? Math.round((rec / total) * 100) : 0}%`;
 }
 
 async function handleTopMaterials() {
@@ -437,15 +484,18 @@ async function handleTopMaterials() {
     `SELECT material_no, description, SUM(quantity) as total_qty, COUNT(*) as order_count
      FROM orders WHERE material_no IS NOT NULL
      GROUP BY material_no, description
-     ORDER BY total_qty DESC LIMIT 10`
+     ORDER BY total_qty DESC LIMIT 10`,
   );
   await logBotAudit('report_top', 'report', null, {});
 
   if (!r.rows.length) return 'Not enough order data for top materials report.';
 
-  const items = r.rows.map((m, i) =>
-    `${i + 1}. *${m.material_no}* | ${m.description || '—'}\n   Orders: ${m.order_count} | Total Qty: ${m.total_qty}`
-  ).join('\n\n');
+  const items = r.rows
+    .map(
+      (m, i) =>
+        `${i + 1}. *${m.material_no}* | ${m.description || '—'}\n   Orders: ${m.order_count} | Total Qty: ${m.total_qty}`,
+    )
+    .join('\n\n');
 
   return `📊 *Top 10 Materials by Quantity*\n\n${items}`;
 }
@@ -454,15 +504,13 @@ async function handleSpending() {
   const r = await query(
     `SELECT month, COUNT(*) as orders, COALESCE(SUM(total_cost),0) as total
      FROM orders WHERE month IS NOT NULL
-     GROUP BY month ORDER BY MAX(created_at) DESC LIMIT 6`
+     GROUP BY month ORDER BY MAX(created_at) DESC LIMIT 6`,
   );
   await logBotAudit('report_spending', 'report', null, {});
 
   if (!r.rows.length) return 'Not enough order data for spending report.';
 
-  const items = r.rows.map(m =>
-    `• *${m.month}*: ${m.orders} orders | ${fmtPrice(Number(m.total))}`
-  ).join('\n');
+  const items = r.rows.map((m) => `• *${m.month}*: ${m.orders} orders | ${fmtPrice(Number(m.total))}`).join('\n');
 
   const grand = r.rows.reduce((sum, m) => sum + Number(m.total), 0);
 
@@ -482,8 +530,11 @@ async function handleListMachines(params, session) {
   if (!r.rows.length) return 'No machines found.';
 
   session.page = 0;
-  return paginate(r.rows, session, (m) =>
-    `*#${m.id}* ${m.name}\nModality: ${m.modality} | Location: ${m.location || '—'}\nStatus: ${m.status} | Installed: ${fmtDate(m.install_date)}`
+  return paginate(
+    r.rows,
+    session,
+    (m) =>
+      `*#${m.id}* ${m.name}\nModality: ${m.modality} | Location: ${m.location || '—'}\nStatus: ${m.status} | Installed: ${fmtDate(m.install_date)}`,
   );
 }
 
