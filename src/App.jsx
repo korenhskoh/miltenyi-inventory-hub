@@ -574,8 +574,8 @@ const [customLogo, setCustomLogo] = useState(() => {
   const [waAutoReply, setWaAutoReply] = useState(false);
   const [waNotifyRules, setWaNotifyRules] = useState({ orderCreated: true, bulkOrderCreated: true, partArrivalDone: true, deliveryArrival: true, backOrderUpdate: true, lowStockAlert: false, monthlySummary: false, urgentRequest: true });
   const [waMessageTemplates, setWaMessageTemplates] = useState({
-    orderApproval: { label: 'Order Approval Request', message: '*📋 Order Approval Request*\n\nRequested By: {orderBy}\nDate: {date}\nOrders: {orderCount}\nTotal: *S${totalCost}*\n\n{orderTable}\n\n_Reply *APPROVE* or *REJECT*_\n_Miltenyi Inventory Hub SG_' },
-    bulkApproval: { label: 'Bulk Order Approval', message: '*📋 Bulk Order Approval Request*\n\nRequested By: {orderBy}\nDate: {date}\nBatches: {batchCount}\nItems: {itemCount}\nTotal: *S${totalCost}*\n\n{orderTable}\n\n_Reply *APPROVE* or *REJECT*_\n_Miltenyi Inventory Hub SG_' },
+    orderApproval: { label: 'Order Approval Request', message: '*📋 Order Approval Request*\n\nRequested By: {orderBy}\nDate: {date}\nOrders: {orderCount}\nTotal Qty: {totalQty} units\nTotal: *S${totalCost}*\n\n{orderTable}\n\n_Reply *APPROVE* or *REJECT*_\n_Miltenyi Inventory Hub SG_' },
+    bulkApproval: { label: 'Bulk Order Approval', message: '*📋 Bulk Order Approval Request*\n\nRequested By: {orderBy}\nDate: {date}\nBatches: {batchCount}\nItems: {itemCount}\nTotal Qty: {totalQty} units\nTotal: *S${totalCost}*\n\n{orderTable}\n\n_Reply *APPROVE* or *REJECT*_\n_Miltenyi Inventory Hub SG_' },
     backOrder: { label: 'Back Order Alert', message: '⚠️ *Back Order Alert*\n\nThe following items are on back order:\n{items}\n\nPlease follow up with HQ.\n\n_Miltenyi Biotec SG Service_' },
     deliveryArrived: { label: 'Delivery Arrived', message: '📦 *Delivery Arrived*\n\nA new shipment has arrived at the warehouse. Please verify the items against the order list.\n\nCheck the Inventory Hub for details.\n\n_Miltenyi Biotec SG Service_' },
     stockAlert: { label: 'Stock Level Warning', message: '🔔 *Stock Level Warning*\n\n{item} is running low.\nCurrent stock: Below threshold\n\nPlease initiate reorder.\n\n_Miltenyi Biotec SG Service_' },
@@ -1062,7 +1062,10 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
     const now = new Date().toISOString().slice(0, 10);
     const approvalId = `APR-${Date.now()}`;
     const orderIds = selected.map(o => o.id);
-    const totalCost = selected.reduce((s, o) => s + (Number(o.totalCost) || 0), 0);
+    // Use catalog prices (same as UI display) for consistency
+    const getEffectiveTotal = (o) => { const cp = catalogLookup[o.materialNo]; const price = cp ? (cp.sg||cp.tp||cp.dist||0) : Number(o.listPrice)||0; return price > 0 ? price * (Number(o.quantity)||0) : (Number(o.totalCost)||0); };
+    const getEffectivePrice = (o) => { const cp = catalogLookup[o.materialNo]; const price = cp ? (cp.sg||cp.tp||cp.dist||0) : Number(o.listPrice)||0; return price > 0 ? price : Number(o.listPrice)||0; };
+    const totalCost = selected.reduce((s, o) => s + getEffectiveTotal(o), 0);
     const totalQty = selected.reduce((s, o) => s + (Number(o.quantity) || 0), 0);
 
     // Create batch approval record
@@ -1073,10 +1076,10 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
     orderIds.forEach(id => dbSync(api.updateOrder(id, { approvalSentDate: now }), 'Approval date not saved'));
 
     // Build plain-text table
-    const hdr = 'No. | Order ID     | Material No.     | Description                        | Qty  | Total (SGD)';
-    const sep = '----|--------------|------------------|------------------------------------|------|------------';
+    const hdr = 'No. | Order ID     | Material No.     | Description                        | Qty  | Unit Price  | Total (SGD)';
+    const sep = '----|--------------|------------------|------------------------------------|------|-------------|------------';
     const rows = selected.map((o, i) =>
-      `${String(i + 1).padEnd(3)} | ${(o.id || '').padEnd(12)} | ${(o.materialNo || 'N/A').padEnd(16)} | ${(o.description || '').substring(0, 34).padEnd(34)} | ${String(o.quantity || 0).padEnd(4)} | S$${(Number(o.totalCost) || 0).toFixed(2)}`
+      `${String(i + 1).padEnd(3)} | ${(o.id || '').padEnd(12)} | ${(o.materialNo || 'N/A').padEnd(16)} | ${(o.description || '').substring(0, 34).padEnd(34)} | ${String(o.quantity || 0).padEnd(4)} | S$${getEffectivePrice(o).toFixed(2).padStart(8)} | S$${getEffectiveTotal(o).toFixed(2)}`
     );
     const table = [hdr, sep, ...rows, sep, `TOTAL: ${selected.length} orders | ${totalQty} units | S$${totalCost.toFixed(2)}`].join('\n');
 
@@ -1091,8 +1094,8 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
     if (emailConfig.approvalAutoEmail !== false) {
       const htmlEmail = buildApprovalHtml({
         title: '📋 Order Approval Request',
-        headerFields: [['Requested By', currentUser?.name||'System'], ['Date', now], ['Total Orders', selected.length], ['Total Quantity', totalQty], ['Total Cost', `S$${totalCost.toFixed(2)}`]],
-        sections: [{ cols: ['No.', 'Order ID', 'Material No.', 'Description', 'Qty', 'Total (SGD)'], rows: selected.map((o, i) => [i+1, o.id||'', o.materialNo||'N/A', (o.description||'').slice(0,40), o.quantity||0, `S$${(Number(o.totalCost)||0).toFixed(2)}`]), totals: ['', '', '', `${selected.length} orders`, `${totalQty} units`, `S$${totalCost.toFixed(2)}`] }]
+        headerFields: [['Requested By', currentUser?.name||'System'], ['Date', now], ['Total Orders', selected.length], ['Total Quantity', `${totalQty} units`], ['Total Cost', `S$${totalCost.toFixed(2)}`]],
+        sections: [{ cols: ['No.', 'Order ID', 'Material No.', 'Description', 'Qty', 'Unit Price', 'Total (SGD)'], rows: selected.map((o, i) => [i+1, o.id||'', o.materialNo||'N/A', (o.description||'').slice(0,40), o.quantity||0, `S$${getEffectivePrice(o).toFixed(2)}`, `S$${getEffectiveTotal(o).toFixed(2)}`]), totals: ['', '', '', `${selected.length} orders`, `${totalQty} units`, '', `S$${totalCost.toFixed(2)}`] }]
       });
       const htmlSent = await trySendHtmlEmail(emailConfig.approverEmail, subject, htmlEmail);
       if (!htmlSent) {
@@ -1114,10 +1117,10 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
         `No │ Material No.    │ Description            │ Qty │ Total\n` +
         `───┼─────────────────┼────────────────────────┼─────┼──────────\n` +
         selected.map((o, i) =>
-          `${String(i+1).padEnd(3)}│ ${(o.materialNo||'N/A').padEnd(16)}│ ${(o.description||'').slice(0,22).padEnd(22)}│ ${String(o.quantity||0).padStart(3)} │ S$${(Number(o.totalCost)||0).toFixed(2)}`
+          `${String(i+1).padEnd(3)}│ ${(o.materialNo||'N/A').padEnd(16)}│ ${(o.description||'').slice(0,22).padEnd(22)}│ ${String(o.quantity||0).padStart(3)} │ S$${getEffectiveTotal(o).toFixed(2)}`
         ).join('\n') + '\n' +
         `───┼─────────────────┼────────────────────────┼─────┼──────────\n` +
-        `   │ TOTAL: ${String(selected.length).padEnd(8)}│ ${String(totalQty+' units').padEnd(22)}│     │ S$${totalCost.toFixed(2)}\n` +
+        `   │ ${selected.length} order(s)       │ TOTAL                  │ ${String(totalQty).padStart(3)} │ S$${totalCost.toFixed(2)}\n` +
         '```';
       const waMsg = (waMessageTemplates.orderApproval?.message || '*📋 Order Approval Request*\n\n{orderTable}\n\n_Reply *APPROVE* or *REJECT*_')
         .replace(/\{orderBy\}/g, currentUser?.name||'System').replace(/\{date\}/g, now)
@@ -1150,14 +1153,18 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
     if (!selectedGroups.length) return;
     const now = new Date().toISOString().slice(0, 10);
     const linkedOrders = orders.filter(o => o.bulkGroupId && selBulk.has(o.bulkGroupId));
-    const totalCost = linkedOrders.reduce((s, o) => s + (Number(o.totalCost) || 0), 0);
+    // Use catalog prices (same as UI display) for consistency
+    const getEffectiveTotal = (o) => { const cp = catalogLookup[o.materialNo]; const price = cp ? (cp.sg||cp.tp||cp.dist||0) : Number(o.listPrice)||0; return price > 0 ? price * (Number(o.quantity)||0) : (Number(o.totalCost)||0); };
+    const getEffectivePrice = (o) => { const cp = catalogLookup[o.materialNo]; const price = cp ? (cp.sg||cp.tp||cp.dist||0) : Number(o.listPrice)||0; return price > 0 ? price : Number(o.listPrice)||0; };
+    const totalCost = linkedOrders.reduce((s, o) => s + getEffectiveTotal(o), 0);
     const totalQty = linkedOrders.reduce((s, o) => s + (Number(o.quantity) || 0), 0);
 
     // Create approval per bulk group
     selectedGroups.forEach(bg => {
       const bgOrders = orders.filter(o => o.bulkGroupId === bg.id);
-      const bgCost = bgOrders.reduce((s, o) => s + (Number(o.totalCost) || 0), 0);
-      addApproval({ id: `APR-${Date.now()}-${bg.id}`, orderId: bg.id, orderType: 'bulk', description: `Bulk Order - ${bg.month}`, requestedBy: bg.createdBy || currentUser?.name || 'System', quantity: bgOrders.length, totalCost: bgCost, sentDate: now, status: 'pending', orderIds: bgOrders.map(o => o.id) });
+      const bgCost = bgOrders.reduce((s, o) => s + getEffectiveTotal(o), 0);
+      const bgQty = bgOrders.reduce((s, o) => s + (Number(o.quantity) || 0), 0);
+      addApproval({ id: `APR-${Date.now()}-${bg.id}`, orderId: bg.id, orderType: 'bulk', description: `Bulk Order - ${bg.month}`, requestedBy: bg.createdBy || currentUser?.name || 'System', quantity: bgQty, totalCost: bgCost, sentDate: now, status: 'pending', orderIds: bgOrders.map(o => o.id) });
     });
 
     // Update approvalSentDate on all linked orders
@@ -1169,21 +1176,22 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
     let lines = [];
     selectedGroups.forEach(bg => {
       const bgOrders = orders.filter(o => o.bulkGroupId === bg.id);
-      const bgCost = bgOrders.reduce((s, o) => s + (Number(o.totalCost) || 0), 0);
+      const bgCost = bgOrders.reduce((s, o) => s + getEffectiveTotal(o), 0);
       lines.push(`\n=== ${bg.id} | ${bg.month} | By: ${bg.createdBy || 'N/A'} ===`);
-      lines.push('No. | Material No.     | Description                        | Qty  | Total (SGD)');
-      lines.push('----|------------------|------------------------------------|------|------------');
+      lines.push('No. | Material No.     | Description                        | Qty  | Unit Price  | Total (SGD)');
+      lines.push('----|------------------|------------------------------------|------|-------------|------------');
       bgOrders.forEach((o, i) => {
-        lines.push(`${String(i + 1).padEnd(3)} | ${(o.materialNo || 'N/A').padEnd(16)} | ${(o.description || '').substring(0, 34).padEnd(34)} | ${String(o.quantity || 0).padEnd(4)} | S$${(Number(o.totalCost) || 0).toFixed(2)}`);
+        lines.push(`${String(i + 1).padEnd(3)} | ${(o.materialNo || 'N/A').padEnd(16)} | ${(o.description || '').substring(0, 34).padEnd(34)} | ${String(o.quantity || 0).padEnd(4)} | S$${getEffectivePrice(o).toFixed(2).padStart(8)} | S$${getEffectiveTotal(o).toFixed(2)}`);
       });
-      lines.push(`Batch Subtotal: ${bgOrders.length} items | S$${bgCost.toFixed(2)}`);
+      const bgTotalQty = bgOrders.reduce((s, o) => s + (Number(o.quantity) || 0), 0);
+      lines.push(`Batch Subtotal: ${bgOrders.length} items | ${bgTotalQty} units | S$${bgCost.toFixed(2)}`);
     });
-    lines.push(`\nGRAND TOTAL: ${selectedGroups.length} batches | ${linkedOrders.length} items | S$${totalCost.toFixed(2)}`);
+    lines.push(`\nGRAND TOTAL: ${selectedGroups.length} batches | ${linkedOrders.length} items | ${totalQty} units | S$${totalCost.toFixed(2)}`);
     const table = lines.join('\n');
 
     // Compose email
     const tmplB = emailTemplates.bulkApproval || {};
-    const replaceBulk = (s) => (s||'').replace(/\{orderBy\}/g, currentUser?.name||'System').replace(/\{date\}/g, now).replace(/\{batchCount\}/g, selectedGroups.length).replace(/\{itemCount\}/g, linkedOrders.length).replace(/\{totalCost\}/g, totalCost.toFixed(2)).replace(/\{orderTable\}/g, table);
+    const replaceBulk = (s) => (s||'').replace(/\{orderBy\}/g, currentUser?.name||'System').replace(/\{date\}/g, now).replace(/\{batchCount\}/g, selectedGroups.length).replace(/\{itemCount\}/g, linkedOrders.length).replace(/\{totalQty\}/g, totalQty).replace(/\{totalCost\}/g, totalCost.toFixed(2)).replace(/\{orderTable\}/g, table);
     const subject = replaceBulk(tmplB.subject || '[APPROVAL] Bulk Order Batch - {batchCount} Batches (S${totalCost})');
 
     const sentChannels = [];
@@ -1192,14 +1200,15 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
     if (emailConfig.approvalAutoEmail !== false) {
       const bulkSections = selectedGroups.map(bg => {
         const bgOrders = orders.filter(o => o.bulkGroupId === bg.id);
-        const bgCost = bgOrders.reduce((s, o) => s + (Number(o.totalCost) || 0), 0);
-        return { heading: `${bg.id} — ${bg.month} (By: ${bg.createdBy || 'N/A'})`, cols: ['No.', 'Material No.', 'Description', 'Qty', 'Total (SGD)'], rows: bgOrders.map((o, i) => [i+1, o.materialNo||'N/A', (o.description||'').slice(0,40), o.quantity||0, `S$${(Number(o.totalCost)||0).toFixed(2)}`]), totals: ['', '', `${bgOrders.length} items`, '', `S$${bgCost.toFixed(2)}`] };
+        const bgCost = bgOrders.reduce((s, o) => s + getEffectiveTotal(o), 0);
+        const bgTotalQty = bgOrders.reduce((s, o) => s + (Number(o.quantity) || 0), 0);
+        return { heading: `${bg.id} — ${bg.month} (By: ${bg.createdBy || 'N/A'})`, cols: ['No.', 'Material No.', 'Description', 'Qty', 'Unit Price', 'Total (SGD)'], rows: bgOrders.map((o, i) => [i+1, o.materialNo||'N/A', (o.description||'').slice(0,40), o.quantity||0, `S$${getEffectivePrice(o).toFixed(2)}`, `S$${getEffectiveTotal(o).toFixed(2)}`]), totals: ['', '', `${bgOrders.length} items`, `${bgTotalQty} units`, '', `S$${bgCost.toFixed(2)}`] };
       });
       const htmlEmail = buildApprovalHtml({
         title: '📋 Bulk Order Approval Request',
-        headerFields: [['Requested By', currentUser?.name||'System'], ['Date', now], ['Batches', selectedGroups.length], ['Total Items', linkedOrders.length], ['Total Cost', `S$${totalCost.toFixed(2)}`]],
+        headerFields: [['Requested By', currentUser?.name||'System'], ['Date', now], ['Batches', selectedGroups.length], ['Total Items', linkedOrders.length], ['Total Quantity', `${totalQty} units`], ['Total Cost', `S$${totalCost.toFixed(2)}`]],
         sections: bulkSections,
-        footer: `Grand Total: ${selectedGroups.length} batches | ${linkedOrders.length} items | S$${totalCost.toFixed(2)} — Miltenyi Inventory Hub SG`
+        footer: `Grand Total: ${selectedGroups.length} batches | ${linkedOrders.length} items | ${totalQty} units | S$${totalCost.toFixed(2)} — Miltenyi Inventory Hub SG`
       });
       const htmlSent = await trySendHtmlEmail(emailConfig.approverEmail, subject, htmlEmail);
       if (!htmlSent) {
@@ -1219,9 +1228,10 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
     if (emailConfig.approvalAutoWhatsApp !== false && waConnected) {
       const waSections = selectedGroups.map(bg => {
         const bgOrders = orders.filter(o => o.bulkGroupId === bg.id);
-        const bgCost = bgOrders.reduce((s, o) => s + (Number(o.totalCost) || 0), 0);
+        const bgCost = bgOrders.reduce((s, o) => s + getEffectiveTotal(o), 0);
+        const bgTotalQty = bgOrders.reduce((s, o) => s + (Number(o.quantity) || 0), 0);
         const bgRows = bgOrders.map((o, i) =>
-          `${String(i+1).padEnd(3)}│ ${(o.materialNo||'N/A').padEnd(16)}│ ${(o.description||'').slice(0,22).padEnd(22)}│ ${String(o.quantity||0).padStart(3)} │ S$${(Number(o.totalCost)||0).toFixed(2)}`
+          `${String(i+1).padEnd(3)}│ ${(o.materialNo||'N/A').padEnd(16)}│ ${(o.description||'').slice(0,22).padEnd(22)}│ ${String(o.quantity||0).padStart(3)} │ S$${getEffectiveTotal(o).toFixed(2)}`
         ).join('\n');
         return `*${bg.id} — ${bg.month}*\n` +
           '```\n' +
@@ -1229,14 +1239,14 @@ const [emailConfig, setEmailConfig] = useState({ senderEmail: 'inventory@milteny
           `───┼─────────────────┼────────────────────────┼─────┼──────────\n` +
           bgRows + '\n' +
           `───┼─────────────────┼────────────────────────┼─────┼──────────\n` +
-          `   │ Subtotal: ${String(bgOrders.length+' items').padEnd(22)}              │ S$${bgCost.toFixed(2)}\n` +
+          `   │ Subtotal: ${String(bgOrders.length+' items, '+bgTotalQty+' units').padEnd(30)} │ S$${bgCost.toFixed(2)}\n` +
           '```';
       }).join('\n\n');
-      const waTableBulk = waSections + `\n\n*Grand Total: ${selectedGroups.length} batches │ ${linkedOrders.length} items │ S$${totalCost.toFixed(2)}*`;
+      const waTableBulk = waSections + `\n\n*Grand Total: ${selectedGroups.length} batches │ ${linkedOrders.length} items │ ${totalQty} units │ S$${totalCost.toFixed(2)}*`;
       const waMsg = (waMessageTemplates.bulkApproval?.message || '*📋 Bulk Order Approval Request*\n\n{orderTable}\n\n_Reply *APPROVE* or *REJECT*_')
         .replace(/\{orderBy\}/g, currentUser?.name||'System').replace(/\{date\}/g, now)
         .replace(/\{batchCount\}/g, selectedGroups.length).replace(/\{itemCount\}/g, linkedOrders.length)
-        .replace(/\{totalCost\}/g, totalCost.toFixed(2)).replace(/\{orderTable\}/g, waTableBulk);
+        .replace(/\{totalQty\}/g, totalQty).replace(/\{totalCost\}/g, totalCost.toFixed(2)).replace(/\{orderTable\}/g, waTableBulk);
       const approverUser = users.find(u => u.email === emailConfig.approverEmail);
       const preSelected = new Set(approverUser ? [approverUser.id] : []);
       setWaRecipientPicker({
@@ -4936,7 +4946,7 @@ if(scheduledNotifs.emailEnabled){                    addNotifEntry({id:'N-'+Date
                   <textarea value={tmpl.body} onChange={e=>setEmailTemplates(prev=>({...prev,[key]:{...prev[key],body:e.target.value}}))} rows={8} style={{width:'100%',padding:'8px 10px',borderRadius:6,border:'1.5px solid #E2E8F0',fontSize:11,fontFamily:'monospace',resize:'vertical',boxSizing:'border-box',lineHeight:1.5}}/>
                 </div>
                 <div style={{padding:8,background:'#F0FDF4',borderRadius:6,fontSize:10,color:'#065F46'}}>
-                  <strong>Variables:</strong> {'{orderId}'}, {'{description}'}, {'{materialNo}'}, {'{quantity}'}, {'{totalCost}'}, {'{orderBy}'}, {'{date}'}, {'{month}'}, {'{batchId}'}, {'{itemCount}'}, {'{received}'}, {'{pending}'}, {'{backOrders}'}, {'{totalOrders}'}, {'{totalValue}'}
+                  <strong>Variables:</strong> {'{orderId}'}, {'{description}'}, {'{materialNo}'}, {'{quantity}'}, {'{totalQty}'}, {'{totalCost}'}, {'{orderBy}'}, {'{date}'}, {'{month}'}, {'{orderCount}'}, {'{batchCount}'}, {'{itemCount}'}, {'{received}'}, {'{pending}'}, {'{backOrders}'}, {'{totalOrders}'}, {'{totalValue}'}, {'{orderTable}'}
                 </div>
               </div>
             )}
@@ -4984,7 +4994,7 @@ if(scheduledNotifs.emailEnabled){                    addNotifEntry({id:'N-'+Date
                   <textarea value={tmpl.message||''} onChange={e=>setWaMessageTemplates(prev=>({...prev,[key]:{...prev[key],message:e.target.value}}))} rows={8} style={{width:'100%',padding:'8px 10px',borderRadius:6,border:'1.5px solid #E2E8F0',fontSize:11,fontFamily:'monospace',resize:'vertical',boxSizing:'border-box',lineHeight:1.5}}/>
                 </div>
                 <div style={{padding:8,background:'#ECFDF5',borderRadius:6,fontSize:10,color:'#065F46'}}>
-                  <strong>Variables:</strong> {'{orderBy}'}, {'{date}'}, {'{orderCount}'}, {'{totalCost}'}, {'{orderTable}'}, {'{batchCount}'}, {'{itemCount}'}, {'{items}'}, {'{item}'}, {'{month}'}, {'{totalItems}'}, {'{received}'}, {'{backOrders}'}, {'{verifiedBy}'}
+                  <strong>Variables:</strong> {'{orderBy}'}, {'{date}'}, {'{orderCount}'}, {'{totalQty}'}, {'{totalCost}'}, {'{orderTable}'}, {'{batchCount}'}, {'{itemCount}'}, {'{items}'}, {'{item}'}, {'{month}'}, {'{totalItems}'}, {'{received}'}, {'{backOrders}'}, {'{verifiedBy}'}
                 </div>
               </div>
             )}
@@ -4995,8 +5005,8 @@ if(scheduledNotifs.emailEnabled){                    addNotifEntry({id:'N-'+Date
     <div style={{marginTop:12,display:'flex',gap:8}}>
       <button className="bw" style={{fontSize:12,background:'#25D366',color:'#fff',border:'none'}} onClick={async ()=>{const ok=await api.setConfigKey('waMessageTemplates',waMessageTemplates);if(ok){notify('Templates Saved','WhatsApp templates saved to database','success');}else{notify('Save Failed','WhatsApp templates not saved to database','error');}}}>Save WhatsApp Templates</button>
       <button className="bs" style={{fontSize:12}} onClick={()=>{setWaMessageTemplates({
-        orderApproval: { label: 'Order Approval Request', message: '*📋 Order Approval Request*\n\nRequested By: {orderBy}\nDate: {date}\nOrders: {orderCount}\nTotal: *S${totalCost}*\n\n{orderTable}\n\n_Reply *APPROVE* or *REJECT*_\n_Miltenyi Inventory Hub SG_' },
-        bulkApproval: { label: 'Bulk Order Approval', message: '*📋 Bulk Order Approval Request*\n\nRequested By: {orderBy}\nDate: {date}\nBatches: {batchCount}\nItems: {itemCount}\nTotal: *S${totalCost}*\n\n{orderTable}\n\n_Reply *APPROVE* or *REJECT*_\n_Miltenyi Inventory Hub SG_' },
+        orderApproval: { label: 'Order Approval Request', message: '*📋 Order Approval Request*\n\nRequested By: {orderBy}\nDate: {date}\nOrders: {orderCount}\nTotal Qty: {totalQty} units\nTotal: *S${totalCost}*\n\n{orderTable}\n\n_Reply *APPROVE* or *REJECT*_\n_Miltenyi Inventory Hub SG_' },
+        bulkApproval: { label: 'Bulk Order Approval', message: '*📋 Bulk Order Approval Request*\n\nRequested By: {orderBy}\nDate: {date}\nBatches: {batchCount}\nItems: {itemCount}\nTotal Qty: {totalQty} units\nTotal: *S${totalCost}*\n\n{orderTable}\n\n_Reply *APPROVE* or *REJECT*_\n_Miltenyi Inventory Hub SG_' },
         backOrder: { label: 'Back Order Alert', message: '⚠️ *Back Order Alert*\n\nThe following items are on back order:\n{items}\n\nPlease follow up with HQ.\n\n_Miltenyi Biotec SG Service_' },
         deliveryArrived: { label: 'Delivery Arrived', message: '📦 *Delivery Arrived*\n\nA new shipment has arrived at the warehouse. Please verify the items against the order list.\n\nCheck the Inventory Hub for details.\n\n_Miltenyi Biotec SG Service_' },
         stockAlert: { label: 'Stock Level Warning', message: '🔔 *Stock Level Warning*\n\n{item} is running low.\nCurrent stock: Below threshold\n\nPlease initiate reorder.\n\n_Miltenyi Biotec SG Service_' },
