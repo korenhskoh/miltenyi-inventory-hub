@@ -60,7 +60,11 @@ let qrCode = null;
 let connectionStatus = 'disconnected';
 let sessionInfo = null;
 let waReconnectAttempts = 0;
-const WA_MAX_RECONNECTS = 10;
+let waConnectedSince = null; // track when connection was established
+let waReconnectTimer = null; // track pending reconnect timer
+let waHealthCheckTimer = null; // periodic health check
+const WA_STABLE_THRESHOLD = 2 * 60 * 1000; // 2 min = "stable" → reset retry counter
+const WA_HEALTH_CHECK_INTERVAL = 45 * 1000; // check every 45s
 
 // Baileys internal logger (keep silent — our own logger handles app logging)
 const baileysLogger = logger.child({ component: 'baileys' });
@@ -72,12 +76,66 @@ import { messageTemplates } from './messageTemplates.js';
 // WhatsApp Bot Agent (modular)
 import { handleBotMessage } from './waBot.js';
 
+// Cleanly tear down an existing socket
+function destroySocket() {
+  if (waHealthCheckTimer) {
+    clearInterval(waHealthCheckTimer);
+    waHealthCheckTimer = null;
+  }
+  if (sock) {
+    try {
+      sock.ev.removeAllListeners();
+    } catch (_e) {
+      /* ignore */
+    }
+    try {
+      sock.end(undefined);
+    } catch (_e) {
+      /* ignore */
+    }
+    sock = null;
+  }
+}
+
+// Schedule a reconnection with exponential backoff (3s → 60s, with jitter)
+function scheduleReconnect(reason) {
+  if (waReconnectTimer) clearTimeout(waReconnectTimer);
+  waReconnectAttempts++;
+  const baseDelay = Math.min(3000 * Math.pow(1.5, waReconnectAttempts - 1), 60000);
+  const jitter = Math.random() * 2000; // 0-2s jitter to avoid thundering herd
+  const delay = baseDelay + jitter;
+  logger.info(
+    { delaySec: (delay / 1000).toFixed(1), attempt: waReconnectAttempts, reason },
+    'WhatsApp scheduling reconnect',
+  );
+  waReconnectTimer = setTimeout(() => {
+    waReconnectTimer = null;
+    connectWhatsApp();
+  }, delay);
+}
+
 // Initialize WhatsApp Connection
 let isConnecting = false;
+let connectingTimeout = null;
 async function connectWhatsApp() {
   if (isConnecting) return;
   isConnecting = true;
+
+  // Safety: auto-reset isConnecting after 30s if connection hangs
+  if (connectingTimeout) clearTimeout(connectingTimeout);
+  connectingTimeout = setTimeout(() => {
+    if (isConnecting) {
+      logger.warn('WhatsApp connection attempt timed out (30s) — resetting');
+      isConnecting = false;
+      destroySocket();
+      connectionStatus = 'disconnected';
+      scheduleReconnect('connect_timeout');
+    }
+  }, 30000);
+
   try {
+    destroySocket(); // clean up any previous socket
+
     const { state, saveCreds } = await usePostgresAuthState();
     const { version } = await fetchLatestBaileysVersion();
 
@@ -87,6 +145,11 @@ async function connectWhatsApp() {
       logger: baileysLogger,
       printQRInTerminal: true,
       browser: ['Miltenyi Inventory Hub', 'Chrome', '120.0.0'],
+      keepAliveIntervalMs: 25000, // ping every 25s to keep connection alive
+      connectTimeoutMs: 20000, // fail fast if server unreachable
+      retryRequestDelayMs: 2000, // delay between retried requests
+      defaultQueryTimeoutMs: 30000, // timeout for individual queries
+      emitOwnEvents: false, // skip own-message events to reduce noise
     });
 
     // Handle connection updates
@@ -94,45 +157,63 @@ async function connectWhatsApp() {
       const { connection, lastDisconnect, qr } = update;
 
       if (qr) {
-        // Generate QR code as data URL
         qrCode = await QRCode.toDataURL(qr);
         connectionStatus = 'awaiting_scan';
         logger.info('QR code generated — scan with WhatsApp');
       }
 
       if (connection === 'close') {
-        const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
+        const statusCode = lastDisconnect?.error?.output?.statusCode;
+        const isLoggedOut = statusCode === DisconnectReason.loggedOut;
+        const isReplaced = statusCode === DisconnectReason.connectionReplaced;
+
         connectionStatus = 'disconnected';
         qrCode = null;
         sessionInfo = null;
         isConnecting = false;
+        if (connectingTimeout) {
+          clearTimeout(connectingTimeout);
+          connectingTimeout = null;
+        }
 
-        if (shouldReconnect && waReconnectAttempts < WA_MAX_RECONNECTS) {
-          waReconnectAttempts++;
-          const delay = Math.min(3000 * waReconnectAttempts, 30000); // 3s, 6s, 9s... max 30s
-          logger.info(
-            { delay: delay / 1000, attempt: waReconnectAttempts, max: WA_MAX_RECONNECTS },
-            'WhatsApp reconnecting',
-          );
-          setTimeout(connectWhatsApp, delay);
-        } else if (!shouldReconnect) {
+        // If was connected long enough, consider it stable → reset retry counter
+        if (waConnectedSince && Date.now() - waConnectedSince > WA_STABLE_THRESHOLD) {
+          logger.info('Connection was stable — resetting retry counter');
+          waReconnectAttempts = 0;
+        }
+        waConnectedSince = null;
+        destroySocket();
+
+        if (isLoggedOut) {
           logger.info('WhatsApp logged out by user — clearing auth');
           try {
             await dbQuery('DELETE FROM wa_auth');
           } catch (_e) {
             /* ignore */
           }
-          connectionStatus = 'disconnected';
+        } else if (isReplaced) {
+          logger.warn('WhatsApp connection replaced by another client — will retry in 60s');
+          waReconnectAttempts = 0;
+          waReconnectTimer = setTimeout(() => {
+            waReconnectTimer = null;
+            connectWhatsApp();
+          }, 60000);
         } else {
-          logger.info('WhatsApp reconnection stopped — max attempts reached');
-          connectionStatus = 'disconnected';
+          // All other disconnect reasons → auto-reconnect
+          logger.info({ statusCode, error: lastDisconnect?.error?.message }, 'WhatsApp disconnected');
+          scheduleReconnect(lastDisconnect?.error?.message || 'unknown');
         }
       } else if (connection === 'open') {
         logger.info('WhatsApp connected successfully');
         connectionStatus = 'connected';
         waReconnectAttempts = 0;
+        waConnectedSince = Date.now();
         qrCode = null;
         isConnecting = false;
+        if (connectingTimeout) {
+          clearTimeout(connectingTimeout);
+          connectingTimeout = null;
+        }
 
         // Get session info
         const user = sock.user;
@@ -142,6 +223,21 @@ async function connectWhatsApp() {
           connectedAt: new Date().toLocaleString(),
           platform: 'Baileys WhiskeySockets',
         };
+
+        // Start periodic health check
+        if (waHealthCheckTimer) clearInterval(waHealthCheckTimer);
+        waHealthCheckTimer = setInterval(() => {
+          if (connectionStatus === 'connected' && sock) {
+            // Baileys ws state: OPEN=1, CLOSING=2, CLOSED=3
+            const wsState = sock.ws?.readyState;
+            if (wsState !== undefined && wsState !== 1) {
+              logger.warn({ wsState }, 'WhatsApp WebSocket in bad state — triggering reconnect');
+              connectionStatus = 'disconnected';
+              destroySocket();
+              scheduleReconnect('ws_bad_state');
+            }
+          }
+        }, WA_HEALTH_CHECK_INTERVAL);
       }
     });
 
@@ -178,6 +274,12 @@ async function connectWhatsApp() {
     logger.error({ err: error }, 'WhatsApp connection error');
     connectionStatus = 'error';
     isConnecting = false;
+    if (connectingTimeout) {
+      clearTimeout(connectingTimeout);
+      connectingTimeout = null;
+    }
+    // Even on error, retry
+    scheduleReconnect('connect_error');
   }
 }
 
@@ -231,15 +333,13 @@ app.post('/api/whatsapp/connect', async (req, res) => {
 
     // Reset state for reconnect
     qrCode = null;
-    if (sock) {
-      try {
-        sock.ev.removeAllListeners();
-      } catch (_e) {
-        /* ignore */
-      }
-      sock = null;
+    if (waReconnectTimer) {
+      clearTimeout(waReconnectTimer);
+      waReconnectTimer = null;
     }
+    destroySocket();
     waReconnectAttempts = 0;
+    waConnectedSince = null;
 
     connectWhatsApp(); // fire and forget — uses saved auth if available
 
@@ -272,28 +372,30 @@ app.post('/api/whatsapp/connect', async (req, res) => {
 
 // Disconnect WhatsApp
 app.post('/api/whatsapp/disconnect', async (req, res) => {
+  // Cancel any pending reconnect
+  if (waReconnectTimer) {
+    clearTimeout(waReconnectTimer);
+    waReconnectTimer = null;
+  }
   if (sock) {
     try {
-      sock.ev.removeAllListeners();
-    } catch (_) {
-      /* ignore */
-    }
-    try {
       await sock.logout();
-    } catch (_) {
+    } catch (_e) {
       /* ignore */
     }
-    sock = null;
-    connectionStatus = 'disconnected';
-    qrCode = null;
-    sessionInfo = null;
-    isConnecting = false;
-    // Clear stored session from DB so next connect generates fresh QR
-    try {
-      await dbQuery('DELETE FROM wa_auth');
-    } catch (e) {
-      /* ignore */
-    }
+  }
+  destroySocket();
+  connectionStatus = 'disconnected';
+  qrCode = null;
+  sessionInfo = null;
+  isConnecting = false;
+  waReconnectAttempts = 0;
+  waConnectedSince = null;
+  // Clear stored session from DB so next connect generates fresh QR
+  try {
+    await dbQuery('DELETE FROM wa_auth');
+  } catch (_e) {
+    /* ignore */
   }
   res.json({ success: true, message: 'Disconnected' });
 });
