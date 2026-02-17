@@ -57,8 +57,9 @@ const authLimiter = rateLimit({
 // WhatsApp State
 let sock = null;
 let qrCode = null;
-let connectionStatus = 'disconnected';
+let connectionStatus = 'disconnected'; // 'disconnected' | 'awaiting_scan' | 'connected' | 'reconnecting'
 let sessionInfo = null;
+let lastSessionInfo = null; // keep session info during reconnects so UI doesn't flicker
 let waReconnectAttempts = 0;
 let waConnectedSince = null; // track when connection was established
 let waReconnectTimer = null; // track pending reconnect timer
@@ -98,9 +99,19 @@ function destroySocket() {
 }
 
 // Schedule a reconnection with exponential backoff (3s → 60s, with jitter)
+const WA_MAX_RECONNECTS = 10;
 function scheduleReconnect(reason) {
   if (waReconnectTimer) clearTimeout(waReconnectTimer);
   waReconnectAttempts++;
+
+  // After too many failures, give up and show disconnected
+  if (waReconnectAttempts > WA_MAX_RECONNECTS) {
+    logger.warn({ attempts: waReconnectAttempts, reason }, 'WhatsApp max reconnect attempts reached — giving up');
+    connectionStatus = 'disconnected';
+    lastSessionInfo = null;
+    return;
+  }
+
   const baseDelay = Math.min(3000 * Math.pow(1.5, waReconnectAttempts - 1), 60000);
   const jitter = Math.random() * 2000; // 0-2s jitter to avoid thundering herd
   const delay = baseDelay + jitter;
@@ -166,8 +177,16 @@ async function connectWhatsApp() {
         const statusCode = lastDisconnect?.error?.output?.statusCode;
         const isLoggedOut = statusCode === DisconnectReason.loggedOut;
         const isReplaced = statusCode === DisconnectReason.connectionReplaced;
+        const wasConnected = connectionStatus === 'connected';
 
-        connectionStatus = 'disconnected';
+        // Preserve session info during transient reconnects so UI doesn't flicker
+        if (wasConnected && !isLoggedOut) {
+          lastSessionInfo = sessionInfo;
+          connectionStatus = 'reconnecting';
+        } else {
+          lastSessionInfo = null;
+          connectionStatus = 'disconnected';
+        }
         qrCode = null;
         sessionInfo = null;
         isConnecting = false;
@@ -186,6 +205,8 @@ async function connectWhatsApp() {
 
         if (isLoggedOut) {
           logger.info('WhatsApp logged out by user — clearing auth');
+          connectionStatus = 'disconnected';
+          lastSessionInfo = null;
           try {
             await dbQuery('DELETE FROM wa_auth');
           } catch (_e) {
@@ -205,6 +226,7 @@ async function connectWhatsApp() {
       } else if (connection === 'open') {
         logger.info('WhatsApp connected successfully');
         connectionStatus = 'connected';
+        lastSessionInfo = null;
         waReconnectAttempts = 0;
         waConnectedSince = Date.now();
         qrCode = null;
@@ -231,7 +253,8 @@ async function connectWhatsApp() {
             const wsState = sock.ws?.readyState;
             if (wsState !== undefined && wsState !== 1) {
               logger.warn({ wsState }, 'WhatsApp WebSocket in bad state — triggering reconnect');
-              connectionStatus = 'disconnected';
+              lastSessionInfo = sessionInfo; // preserve for UI
+              connectionStatus = 'reconnecting';
               destroySocket();
               scheduleReconnect('ws_bad_state');
             }
@@ -299,6 +322,16 @@ function formatPhoneNumber(phone) {
 
 // Get connection status
 app.get('/api/whatsapp/status', (req, res) => {
+  // During transient reconnects, report as 'connected' so the UI doesn't flicker.
+  // Include lastSessionInfo so the frontend keeps showing session details.
+  if (connectionStatus === 'reconnecting' && lastSessionInfo) {
+    return res.json({
+      status: 'connected',
+      qrCode: null,
+      sessionInfo: lastSessionInfo,
+      reconnecting: true, // hint for debugging
+    });
+  }
   res.json({
     status: connectionStatus,
     qrCode: qrCode,
@@ -312,6 +345,14 @@ app.post('/api/whatsapp/connect', async (req, res) => {
 
   if (connectionStatus === 'connected') {
     return res.json({ success: true, message: 'Already connected', status: 'connected', sessionInfo });
+  }
+  if (connectionStatus === 'reconnecting') {
+    return res.json({
+      success: true,
+      message: 'Reconnecting — please wait',
+      status: 'connected',
+      sessionInfo: lastSessionInfo,
+    });
   }
 
   // If already awaiting scan with a QR, return it immediately
@@ -385,6 +426,7 @@ app.post('/api/whatsapp/disconnect', async (req, res) => {
   }
   destroySocket();
   connectionStatus = 'disconnected';
+  lastSessionInfo = null;
   qrCode = null;
   sessionInfo = null;
   isConnecting = false;

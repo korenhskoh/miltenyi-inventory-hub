@@ -1269,20 +1269,29 @@ export default function App() {
   }, []);
 
   // Periodic WhatsApp status sync (every 30s) — keeps sidebar indicator accurate
+  // Uses a miss counter so transient blips don't flicker the UI
+  const waStatusMisses = useRef(0);
   useEffect(() => {
     const iv = setInterval(async () => {
       try {
         const r = await fetch('/api/whatsapp/status');
         const d = await r.json();
-        if (d.status === 'connected' && !waConnected) {
-          setWaConnected(true);
-          setWaSessionInfo(d.sessionInfo);
-        } else if (d.status !== 'connected' && waConnected) {
-          setWaConnected(false);
-          setWaSessionInfo(null);
+        if (d.status === 'connected') {
+          waStatusMisses.current = 0;
+          if (!waConnected) {
+            setWaConnected(true);
+            setWaSessionInfo(d.sessionInfo);
+          }
+        } else if (waConnected) {
+          // Only flip to disconnected after 3 consecutive non-connected polls (~90s)
+          waStatusMisses.current++;
+          if (waStatusMisses.current >= 3) {
+            setWaConnected(false);
+            setWaSessionInfo(null);
+          }
         }
       } catch {
-        /* ignore */
+        /* ignore — network blip, don't count as a miss */
       }
     }, 30000);
     return () => clearInterval(iv);
