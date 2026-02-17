@@ -341,6 +341,93 @@ export default function App() {
     [dbSync],
   );
 
+  // ── State needed by sendArrivalReport (must be declared before the callback) ──
+  const [waNotifyRules, setWaNotifyRules] = useState({
+    orderCreated: true,
+    bulkOrderCreated: true,
+    partArrivalDone: true,
+    deliveryArrival: true,
+    backOrderUpdate: true,
+    lowStockAlert: false,
+    monthlySummary: false,
+    urgentRequest: true,
+  });
+  const [waMessageTemplates, setWaMessageTemplates] = useState({
+    orderApproval: {
+      label: 'Order Approval Request',
+      message:
+        '*📋 Order Approval Request*\n\nRequested By: {orderBy}\nDate: {date}\nOrders: {orderCount}\nTotal Qty: {totalQty} units\nTotal: *S${totalCost}*\n\n{orderTable}\n\n_Reply *APPROVE* or *REJECT*_\n_Miltenyi Inventory Hub SG_',
+    },
+    bulkApproval: {
+      label: 'Bulk Order Approval',
+      message:
+        '*📋 Bulk Order Approval Request*\n\nRequested By: {orderBy}\nDate: {date}\nBatches: {batchCount}\nItems: {itemCount}\nTotal Qty: {totalQty} units\nTotal: *S${totalCost}*\n\n{orderTable}\n\n_Reply *APPROVE* or *REJECT*_\n_Miltenyi Inventory Hub SG_',
+    },
+    backOrder: {
+      label: 'Back Order Alert',
+      message:
+        '⚠️ *Back Order Alert*\n\nThe following items are on back order:\n{items}\n\nPlease follow up with HQ.\n\n_Miltenyi Biotec SG Service_',
+    },
+    deliveryArrived: {
+      label: 'Delivery Arrived',
+      message:
+        '📦 *Delivery Arrived*\n\nA new shipment has arrived at the warehouse. Please verify the items against the order list.\n\nCheck the Inventory Hub for details.\n\n_Miltenyi Biotec SG Service_',
+    },
+    stockAlert: {
+      label: 'Stock Level Warning',
+      message:
+        '🔔 *Stock Level Warning*\n\n{item} is running low.\nCurrent stock: Below threshold\n\nPlease initiate reorder.\n\n_Miltenyi Biotec SG Service_',
+    },
+    monthlyUpdate: {
+      label: 'Monthly Update',
+      message:
+        '📊 *Monthly Inventory Update — {month}*\n\nAll received orders have been verified.\nBack orders: See Inventory Hub\n\nPlease review and confirm.\n\n_Miltenyi Biotec SG Service_',
+    },
+    partArrival: {
+      label: 'Part Arrival Verified',
+      message:
+        '✅ *Part Arrival Verified*\n\nMonth: {month}\nDate: {date}\nItems: {totalItems}\nReceived: {received}\nBack Orders: {backOrders}\nVerified By: {verifiedBy}\n\n{itemsList}\n\n_Miltenyi Biotec SG Service_',
+    },
+  });
+  const [emailConfig, setEmailConfig] = useState({
+    senderEmail: 'inventory@miltenyibiotec.com',
+    senderName: 'Miltenyi Inventory Hub',
+    smtpHost: '',
+    smtpPort: 587,
+    enabled: true,
+    approverEmail: '',
+    approvalEnabled: true,
+    approvalKeywords: ['approve', 'approved', 'yes', 'confirm', 'confirmed', 'ok', 'accept', 'accepted'],
+    approvalAutoEmail: true,
+    approvalAutoWhatsApp: true,
+  });
+  const [emailTemplates, setEmailTemplates] = useState({
+    orderApproval: {
+      subject: '[APPROVAL] Batch Order Request - {orderCount} Orders (S${totalCost})',
+      body: 'Order Approval Request\n\nRequested By: {orderBy}\nDate: {date}\nTotal Orders: {orderCount}\nTotal Quantity: {totalQty}\nTotal Cost: S${totalCost}\n\n{orderTable}\n\nReply APPROVE to approve all orders or REJECT to decline.\n\n-Miltenyi Inventory Hub SG',
+    },
+    bulkApproval: {
+      subject: '[APPROVAL] Bulk Order Batch - {batchCount} Batches (S${totalCost})',
+      body: 'Bulk Order Approval Request\n\nRequested By: {orderBy}\nDate: {date}\nBatches: {batchCount}\nTotal Items: {itemCount}\nTotal Cost: S${totalCost}\n\n{orderTable}\n\nReply APPROVE to approve or REJECT to decline.\n\n-Miltenyi Inventory Hub SG',
+    },
+    orderNotification: {
+      subject: 'New Order: {orderId} - {description}',
+      body: 'A new order has been created.\n\nOrder ID: {orderId}\nItem: {description}\nMaterial: {materialNo}\nQuantity: {quantity}\nTotal: S${totalCost}\nOrdered By: {orderBy}\nDate: {date}\n\n-Miltenyi Inventory Hub SG',
+    },
+    backOrderAlert: {
+      subject: 'Back Order Alert: {description}',
+      body: 'Back Order Alert\n\nThe following item is on back order:\n\nOrder ID: {orderId}\nItem: {description}\nOrdered: {quantity}\nReceived: {received}\nPending: {pending}\n\nPlease follow up with HQ.\n\n-Miltenyi Inventory Hub SG',
+    },
+    monthlySummary: {
+      subject: 'Monthly Summary - {month}',
+      body: 'Monthly Inventory Summary\n\nMonth: {month}\nTotal Orders: {totalOrders}\nReceived: {received}\nPending: {pending}\nBack Orders: {backOrders}\nTotal Value: S${totalValue}\n\n-Miltenyi Inventory Hub SG',
+    },
+    partArrivalDone: {
+      subject: 'Part Arrival Verified - {month}',
+      body: 'Part Arrival Verified\n\nMonth: {month}\nTotal Items: {totalItems}\nFully Received: {received}\nBack Orders: {backOrders}\nVerified By: {verifiedBy}\nDate: {date}\n\nItems:\n{itemsList}\n\n-Miltenyi Inventory Hub SG',
+    },
+  });
+
   // Helper: send auto-notification after arrival confirmation
   const sendArrivalReport = useCallback(
     async (confirmedOrders) => {
@@ -937,53 +1024,6 @@ export default function App() {
     }
   });
   const [waAutoReply, setWaAutoReply] = useState(false);
-  const [waNotifyRules, setWaNotifyRules] = useState({
-    orderCreated: true,
-    bulkOrderCreated: true,
-    partArrivalDone: true,
-    deliveryArrival: true,
-    backOrderUpdate: true,
-    lowStockAlert: false,
-    monthlySummary: false,
-    urgentRequest: true,
-  });
-  const [waMessageTemplates, setWaMessageTemplates] = useState({
-    orderApproval: {
-      label: 'Order Approval Request',
-      message:
-        '*📋 Order Approval Request*\n\nRequested By: {orderBy}\nDate: {date}\nOrders: {orderCount}\nTotal Qty: {totalQty} units\nTotal: *S${totalCost}*\n\n{orderTable}\n\n_Reply *APPROVE* or *REJECT*_\n_Miltenyi Inventory Hub SG_',
-    },
-    bulkApproval: {
-      label: 'Bulk Order Approval',
-      message:
-        '*📋 Bulk Order Approval Request*\n\nRequested By: {orderBy}\nDate: {date}\nBatches: {batchCount}\nItems: {itemCount}\nTotal Qty: {totalQty} units\nTotal: *S${totalCost}*\n\n{orderTable}\n\n_Reply *APPROVE* or *REJECT*_\n_Miltenyi Inventory Hub SG_',
-    },
-    backOrder: {
-      label: 'Back Order Alert',
-      message:
-        '⚠️ *Back Order Alert*\n\nThe following items are on back order:\n{items}\n\nPlease follow up with HQ.\n\n_Miltenyi Biotec SG Service_',
-    },
-    deliveryArrived: {
-      label: 'Delivery Arrived',
-      message:
-        '📦 *Delivery Arrived*\n\nA new shipment has arrived at the warehouse. Please verify the items against the order list.\n\nCheck the Inventory Hub for details.\n\n_Miltenyi Biotec SG Service_',
-    },
-    stockAlert: {
-      label: 'Stock Level Warning',
-      message:
-        '🔔 *Stock Level Warning*\n\n{item} is running low.\nCurrent stock: Below threshold\n\nPlease initiate reorder.\n\n_Miltenyi Biotec SG Service_',
-    },
-    monthlyUpdate: {
-      label: 'Monthly Update',
-      message:
-        '📊 *Monthly Inventory Update — {month}*\n\nAll received orders have been verified.\nBack orders: See Inventory Hub\n\nPlease review and confirm.\n\n_Miltenyi Biotec SG Service_',
-    },
-    partArrival: {
-      label: 'Part Arrival Verified',
-      message:
-        '✅ *Part Arrival Verified*\n\nMonth: {month}\nDate: {date}\nItems: {totalItems}\nReceived: {received}\nBack Orders: {backOrders}\nVerified By: {verifiedBy}\n\n{itemsList}\n\n_Miltenyi Biotec SG Service_',
-    },
-  });
   const [scheduledNotifs, setScheduledNotifs] = useState({
     enabled: true,
     frequency: 'weekly',
@@ -1000,44 +1040,6 @@ export default function App() {
       lowStockAlert: true,
       pendingApprovals: true,
       orderStats: true,
-    },
-  });
-  const [emailConfig, setEmailConfig] = useState({
-    senderEmail: 'inventory@miltenyibiotec.com',
-    senderName: 'Miltenyi Inventory Hub',
-    smtpHost: '',
-    smtpPort: 587,
-    enabled: true,
-    approverEmail: '',
-    approvalEnabled: true,
-    approvalKeywords: ['approve', 'approved', 'yes', 'confirm', 'confirmed', 'ok', 'accept', 'accepted'],
-    approvalAutoEmail: true,
-    approvalAutoWhatsApp: true,
-  });
-  const [emailTemplates, setEmailTemplates] = useState({
-    orderApproval: {
-      subject: '[APPROVAL] Batch Order Request - {orderCount} Orders (S${totalCost})',
-      body: 'Order Approval Request\n\nRequested By: {orderBy}\nDate: {date}\nTotal Orders: {orderCount}\nTotal Quantity: {totalQty}\nTotal Cost: S${totalCost}\n\n{orderTable}\n\nReply APPROVE to approve all orders or REJECT to decline.\n\n-Miltenyi Inventory Hub SG',
-    },
-    bulkApproval: {
-      subject: '[APPROVAL] Bulk Order Batch - {batchCount} Batches (S${totalCost})',
-      body: 'Bulk Order Approval Request\n\nRequested By: {orderBy}\nDate: {date}\nBatches: {batchCount}\nTotal Items: {itemCount}\nTotal Cost: S${totalCost}\n\n{orderTable}\n\nReply APPROVE to approve or REJECT to decline.\n\n-Miltenyi Inventory Hub SG',
-    },
-    orderNotification: {
-      subject: 'New Order: {orderId} - {description}',
-      body: 'A new order has been created.\n\nOrder ID: {orderId}\nItem: {description}\nMaterial: {materialNo}\nQuantity: {quantity}\nTotal: S${totalCost}\nOrdered By: {orderBy}\nDate: {date}\n\n-Miltenyi Inventory Hub SG',
-    },
-    backOrderAlert: {
-      subject: 'Back Order Alert: {description}',
-      body: 'Back Order Alert\n\nThe following item is on back order:\n\nOrder ID: {orderId}\nItem: {description}\nOrdered: {quantity}\nReceived: {received}\nPending: {pending}\n\nPlease follow up with HQ.\n\n-Miltenyi Inventory Hub SG',
-    },
-    monthlySummary: {
-      subject: 'Monthly Summary - {month}',
-      body: 'Monthly Inventory Summary\n\nMonth: {month}\nTotal Orders: {totalOrders}\nReceived: {received}\nPending: {pending}\nBack Orders: {backOrders}\nTotal Value: S${totalValue}\n\n-Miltenyi Inventory Hub SG',
-    },
-    partArrivalDone: {
-      subject: 'Part Arrival Verified - {month}',
-      body: 'Part Arrival Verified\n\nMonth: {month}\nTotal Items: {totalItems}\nFully Received: {received}\nBack Orders: {backOrders}\nVerified By: {verifiedBy}\nDate: {date}\n\nItems:\n{itemsList}\n\n-Miltenyi Inventory Hub SG',
     },
   });
   const [editingTemplate, setEditingTemplate] = useState(null);
@@ -8714,7 +8716,9 @@ export default function App() {
                   <AlertCircle size={16} />
                   <span>
                     Review the data below before importing. This will add {historyImportData.length} new orders
-                    {window.__pendingBulkGroups?.length ? ` + ${window.__pendingBulkGroups.length} bulk batches` : ''}{' '}
+                    {window.__pendingBulkGroups?.length
+                      ? ` + ${window.__pendingBulkGroups.length} bulk batches`
+                      : ''}{' '}
                     to the system.
                   </span>
                 </div>
