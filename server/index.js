@@ -445,7 +445,7 @@ app.post('/api/whatsapp/disconnect', async (req, res) => {
 app.post('/api/whatsapp/send', async (req, res) => {
   const { phone, template, data } = req.body;
 
-  if (connectionStatus !== 'connected') {
+  if (connectionStatus !== 'connected' || !sock) {
     return res.status(400).json({ success: false, error: 'WhatsApp not connected' });
   }
 
@@ -455,6 +455,7 @@ app.post('/api/whatsapp/send', async (req, res) => {
 
   try {
     const jid = formatPhoneNumber(phone);
+    logger.info({ phone, jid, template: template || 'custom' }, 'Preparing WhatsApp send');
 
     // Get message from template or use custom message
     let message;
@@ -466,10 +467,14 @@ app.post('/api/whatsapp/send', async (req, res) => {
       return res.status(400).json({ success: false, error: 'Template or message required' });
     }
 
+    if (!message) {
+      return res.status(400).json({ success: false, error: 'Message resolved to empty' });
+    }
+
     // Send message
     await sock.sendMessage(jid, { text: message });
 
-    logger.info({ phone }, 'WhatsApp message sent');
+    logger.info({ phone, jid }, 'WhatsApp message sent successfully');
     res.json({
       success: true,
       message: 'Message sent',
@@ -477,7 +482,7 @@ app.post('/api/whatsapp/send', async (req, res) => {
       template: template || 'custom',
     });
   } catch (error) {
-    logger.error({ err: error }, 'WhatsApp send error');
+    logger.error({ err: error, phone }, 'WhatsApp send error');
     res.status(500).json({ success: false, error: error.message });
   }
 });
@@ -486,7 +491,7 @@ app.post('/api/whatsapp/send', async (req, res) => {
 app.post('/api/whatsapp/broadcast', async (req, res) => {
   const { phones, template, data } = req.body;
 
-  if (connectionStatus !== 'connected') {
+  if (connectionStatus !== 'connected' || !sock) {
     return res.status(400).json({ success: false, error: 'WhatsApp not connected' });
   }
 

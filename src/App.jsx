@@ -2325,13 +2325,27 @@ export default function App() {
     setWaSending(true);
     const now = new Date().toISOString().slice(0, 10);
     let waSent = 0;
+    const failures = [];
     for (const u of recipients) {
       try {
-        await fetch(`${WA_API_URL}/send`, {
+        const res = await fetch(`${WA_API_URL}/send`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ phone: u.phone, template: 'custom', data: { message } }),
         });
+        const result = await res.json().catch(() => ({}));
+        if (!res.ok || !result.success) {
+          failures.push(`${u.name}: ${result.error || `HTTP ${res.status}`}`);
+          addNotifEntry({
+            id: `N-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+            type: 'whatsapp',
+            to: `${u.phone} (${u.name})`,
+            subject: subject || 'WhatsApp Notification',
+            date: now,
+            status: 'Failed',
+          });
+          continue;
+        }
         addNotifEntry({
           id: `N-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
           type: 'whatsapp',
@@ -2342,10 +2356,15 @@ export default function App() {
         });
         waSent++;
       } catch (e) {
-        console.log('WA send error:', e);
+        failures.push(`${u.name}: ${e.message}`);
       }
     }
-    notify('WhatsApp Sent', `Sent to ${waSent} of ${recipients.length} recipient(s)`, 'success');
+    if (waSent > 0) {
+      notify('WhatsApp Sent', `Sent to ${waSent} of ${recipients.length} recipient(s)`, 'success');
+    }
+    if (failures.length > 0) {
+      notify('WhatsApp Send Failed', failures.join(', '), 'error');
+    }
     setWaSending(false);
     setWaRecipientPicker(null);
   };
