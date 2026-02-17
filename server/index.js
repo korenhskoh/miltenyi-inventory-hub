@@ -143,7 +143,7 @@ async function connectWhatsApp() {
       version,
       auth: state,
       logger: baileysLogger,
-      printQRInTerminal: true,
+      // QR is handled via connection.update event — no terminal printing needed
       browser: ['Miltenyi Inventory Hub', 'Chrome', '120.0.0'],
       keepAliveIntervalMs: 25000, // ping every 25s to keep connection alive
       connectTimeoutMs: 20000, // fail fast if server unreachable
@@ -192,12 +192,11 @@ async function connectWhatsApp() {
             /* ignore */
           }
         } else if (isReplaced) {
-          logger.warn('WhatsApp connection replaced by another client — will retry in 60s');
-          waReconnectAttempts = 0;
-          waReconnectTimer = setTimeout(() => {
-            waReconnectTimer = null;
-            connectWhatsApp();
-          }, 60000);
+          logger.warn('WhatsApp connection replaced by another client — backing off');
+          // Don't immediately reconnect — the other client is active.
+          // Only retry after a long delay to avoid a reconnect loop.
+          waReconnectAttempts = 3; // start with higher backoff
+          scheduleReconnect('connection_replaced');
         } else {
           // All other disconnect reasons → auto-reconnect
           logger.info({ statusCode, error: lastDisconnect?.error?.message }, 'WhatsApp disconnected');
