@@ -15,6 +15,7 @@ import { query as dbQuery } from './db.js';
 import nodemailer from 'nodemailer';
 import { verifyToken, requireAdmin } from './middleware/auth.js';
 import { errorHandler } from './middleware/errorHandler.js';
+import { startScheduler, reloadScheduler, runScheduledReport } from './scheduler.js';
 
 // API Routes
 import ordersRouter from './routes/orders.js';
@@ -442,7 +443,7 @@ app.post('/api/whatsapp/disconnect', async (req, res) => {
 });
 
 // Send message with template
-app.post('/api/whatsapp/send', async (req, res) => {
+app.post('/api/whatsapp/send', verifyToken, async (req, res) => {
   const { phone, template, data } = req.body;
 
   if (connectionStatus !== 'connected' || !sock) {
@@ -488,7 +489,7 @@ app.post('/api/whatsapp/send', async (req, res) => {
 });
 
 // Send to multiple recipients
-app.post('/api/whatsapp/broadcast', async (req, res) => {
+app.post('/api/whatsapp/broadcast', verifyToken, async (req, res) => {
   const { phones, template, data } = req.body;
 
   if (connectionStatus !== 'connected' || !sock) {
@@ -641,6 +642,31 @@ app.get('/api/health', async (req, res) => {
   res.json({ status: 'ok', whatsapp: connectionStatus, database: dbOk ? 'connected' : 'error', pool: poolInfo });
 });
 
+// ── Scheduled Reports API ──
+// Provides WhatsApp context (sock + formatPhoneNumber) to scheduler
+const getWaContext = () => ({ sock, formatPhoneNumber });
+
+// Manual trigger: run scheduled report now
+app.post('/api/scheduled-report/run', verifyToken, requireAdmin, async (req, res) => {
+  try {
+    await runScheduledReport(getWaContext);
+    res.json({ success: true, message: 'Scheduled report executed' });
+  } catch (err) {
+    logger.error({ err }, 'Manual scheduled report failed');
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Reload scheduler config (call after Settings save)
+app.post('/api/scheduled-report/reload', verifyToken, async (req, res) => {
+  try {
+    await reloadScheduler(getWaContext);
+    res.json({ success: true, message: 'Scheduler reloaded' });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // Global error handler (must be after all routes)
 app.use(errorHandler);
 
@@ -683,6 +709,9 @@ async function start() {
     // Auto-connect WhatsApp on server start
     logger.info('Auto-connecting WhatsApp...');
     connectWhatsApp().catch((err) => logger.error({ err }, 'WhatsApp auto-connect failed'));
+
+    // Start scheduled report cron job
+    startScheduler(getWaContext).catch((err) => logger.error({ err }, 'Scheduler init failed'));
   });
 }
 

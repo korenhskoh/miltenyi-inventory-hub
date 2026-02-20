@@ -394,6 +394,8 @@ export default function App() {
     senderName: 'Miltenyi Inventory Hub',
     smtpHost: '',
     smtpPort: 587,
+    smtpUser: '',
+    smtpPass: '',
     enabled: true,
     approverEmail: '',
     approvalEnabled: true,
@@ -447,36 +449,41 @@ export default function App() {
 
       // WhatsApp auto-report
       if (waConnected && waNotifyRules.deliveryArrival) {
-        try {
-          const waMsg = (
-            waMessageTemplates.partArrival?.message ||
-            '\u2705 *Part Arrival Verified*\n\nMonth: {month}\nDate: {date}\nItems: {totalItems}\nReceived: {received}\nBack Orders: {backOrders}\nVerified By: {verifiedBy}\n\n{itemsList}'
-          )
-            .replace(/\{month\}/g, month)
-            .replace(/\{totalItems\}/g, confirmedOrders.length)
-            .replace(/\{received\}/g, received)
-            .replace(/\{backOrders\}/g, backOrders)
-            .replace(/\{verifiedBy\}/g, currentUser?.name || 'Admin')
-            .replace(/\{date\}/g, now)
-            .replace(/\{itemsList\}/g, itemsList);
-          const recipients = users.filter((u) => u.status === 'active' && u.phone);
-          for (const u of recipients) {
-            await fetch('/api/whatsapp/send', {
+        const waMsg = (
+          waMessageTemplates.partArrival?.message ||
+          '\u2705 *Part Arrival Verified*\n\nMonth: {month}\nDate: {date}\nItems: {totalItems}\nReceived: {received}\nBack Orders: {backOrders}\nVerified By: {verifiedBy}\n\n{itemsList}'
+        )
+          .replace(/\{month\}/g, month)
+          .replace(/\{totalItems\}/g, confirmedOrders.length)
+          .replace(/\{received\}/g, received)
+          .replace(/\{backOrders\}/g, backOrders)
+          .replace(/\{verifiedBy\}/g, currentUser?.name || 'Admin')
+          .replace(/\{date\}/g, now)
+          .replace(/\{itemsList\}/g, itemsList);
+        const recipients = users.filter((u) => u.status === 'active' && u.phone);
+        let waSent = 0;
+        for (const u of recipients) {
+          try {
+            const r = await fetch('/api/whatsapp/send', {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
+              headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${api.getToken()}` },
               body: JSON.stringify({ phone: u.phone, template: 'custom', data: { message: waMsg } }),
             });
+            const result = await r.json().catch(() => ({}));
+            if (r.ok && result.success) waSent++;
+          } catch (e) {
+            /* non-blocking per-user failure */
           }
+        }
+        if (recipients.length > 0) {
           addNotifEntry({
             id: `N-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
             type: 'whatsapp',
             to: `${recipients.length} user(s)`,
             subject: `Arrival Confirmed: ${confirmedOrders.length} item(s) - ${received} full, ${backOrders} B/O`,
             date: now,
-            status: 'Delivered',
+            status: waSent === recipients.length ? 'Delivered' : waSent > 0 ? 'Partial' : 'Failed',
           });
-        } catch (e) {
-          /* WA send error — non-blocking */
         }
       }
 
@@ -499,7 +506,7 @@ export default function App() {
           const html = body.replace(/\n/g, '<br>');
           await fetch('/api/send-email', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${api.getToken()}` },
             body: JSON.stringify({
               to: emailConfig.approverEmail || emailConfig.senderEmail,
               subject,
@@ -507,8 +514,8 @@ export default function App() {
               smtp: {
                 host: emailConfig.smtpHost,
                 port: emailConfig.smtpPort,
-                user: emailConfig.senderEmail,
-                pass: '',
+                user: emailConfig.smtpUser || emailConfig.senderEmail,
+                pass: emailConfig.smtpPass || '',
                 from: `"${emailConfig.senderName}" <${emailConfig.senderEmail}>`,
               },
             }),
@@ -527,6 +534,46 @@ export default function App() {
       }
     },
     [waConnected, waNotifyRules, waMessageTemplates, emailConfig, emailTemplates, currentUser, users, addNotifEntry],
+  );
+
+  // Helper: send event-driven WA notification when waNotifyRules flag is enabled
+  const sendAutoWaNotify = useCallback(
+    async (ruleKey, templateKey, data, subject) => {
+      if (!waConnected || !waNotifyRules[ruleKey]) return;
+      const tpl = waMessageTemplates[templateKey];
+      let message = tpl?.message || data.message || '';
+      // Replace all placeholders in the template
+      Object.entries(data).forEach(([k, v]) => {
+        message = message.replace(new RegExp(`\\{${k}\\}`, 'g'), v ?? '');
+      });
+      if (!message) return;
+      const recipients = users.filter((u) => u.status === 'active' && u.phone);
+      let sent = 0;
+      for (const u of recipients) {
+        try {
+          const r = await fetch('/api/whatsapp/send', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${api.getToken()}` },
+            body: JSON.stringify({ phone: u.phone, template: 'custom', data: { message } }),
+          });
+          const result = await r.json().catch(() => ({}));
+          if (r.ok && result.success) sent++;
+        } catch (e) {
+          /* non-blocking */
+        }
+      }
+      if (recipients.length > 0) {
+        addNotifEntry({
+          id: `N-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+          type: 'whatsapp',
+          to: `${recipients.length} user(s)`,
+          subject: subject || `Auto-notification: ${ruleKey}`,
+          date: new Date().toISOString().slice(0, 10),
+          status: sent === recipients.length ? 'Delivered' : sent > 0 ? 'Partial' : 'Failed',
+        });
+      }
+    },
+    [waConnected, waNotifyRules, waMessageTemplates, users, addNotifEntry],
   );
 
   // Helper: confirm arrival for a single order — only sets Received when full qty; keeps current status for partial
@@ -1596,6 +1643,21 @@ export default function App() {
       'success',
     );
     logAction('create', 'order', o.id, { description: o.description, quantity: o.quantity, totalCost: o.totalCost });
+    // Auto-notify: order created
+    sendAutoWaNotify(
+      'orderCreated',
+      'orderApproval',
+      {
+        orderId: o.id,
+        description: (o.description || '').slice(0, 40),
+        materialNo: o.materialNo || 'N/A',
+        quantity: o.quantity,
+        totalCost: (o.totalCost || 0).toFixed(2),
+        orderBy: currentUser?.name || 'System',
+        date: o.orderDate,
+      },
+      `New Order: ${o.description}`,
+    );
   };
 
   // ── Duplicate Order ──
@@ -2312,6 +2374,8 @@ export default function App() {
   // ── WhatsApp Baileys functions ──
   // WhatsApp API Base URL
   const WA_API_URL = '/api/whatsapp';
+  // Auth headers for WA API calls
+  const waHeaders = () => ({ 'Content-Type': 'application/json', Authorization: `Bearer ${api.getToken()}` });
 
   // Send WhatsApp to selected recipients from picker modal
   const sendWaPickerMessages = async () => {
@@ -2330,7 +2394,7 @@ export default function App() {
       try {
         const res = await fetch(`${WA_API_URL}/send`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: waHeaders(),
           body: JSON.stringify({ phone: u.phone, template: 'custom', data: { message } }),
         });
         const result = await res.json().catch(() => ({}));
@@ -2481,7 +2545,7 @@ export default function App() {
     try {
       const res = await fetch(`${WA_API_URL}/send`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: waHeaders(),
         body: JSON.stringify({
           phone,
           template: waTemplate !== 'custom' ? waTemplate : null,
@@ -2586,7 +2650,7 @@ export default function App() {
       try {
         await fetch(`${WA_API_URL}/send`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: waHeaders(),
           body: JSON.stringify({ phone, template, data }),
         });
       } catch (err) {
@@ -2694,6 +2758,20 @@ export default function App() {
       'success',
     );
     logAction('create', 'bulk_group', bg.id, { month: bulkMonth, items: newOrders.length, totalCost: bg.totalCost });
+    // Auto-notify: bulk order created
+    sendAutoWaNotify(
+      'bulkOrderCreated',
+      'bulkApproval',
+      {
+        batchCount: 1,
+        itemCount: newOrders.length,
+        totalQty: newOrders.reduce((s, o) => s + (o.quantity || 0), 0),
+        totalCost: totalCost.toFixed(2),
+        orderBy: bulkOrderBy || currentUser?.name || 'System',
+        date: new Date().toISOString().slice(0, 10),
+      },
+      `Bulk Order: ${newOrders.length} items for ${bulkMonth}`,
+    );
   };
 
   // ── Auth Handlers ──

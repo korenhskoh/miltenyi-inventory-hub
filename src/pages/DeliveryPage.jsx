@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { CheckCircle, AlertCircle, Clock, AlertTriangle, Mail, MessageSquare, Check } from 'lucide-react';
 import { fmt, fmtDate, applySortData, toggleSort } from '../utils.js';
 import { Pill, ArrivalBadge, ExportDropdown, SortTh } from '../components/ui.jsx';
+import api from '../api.js';
 
 const DeliveryPage = ({
   orders,
@@ -538,7 +539,10 @@ const DeliveryPage = ({
                                 )) {
                                   await fetch(`${WA_API_URL}/send`, {
                                     method: 'POST',
-                                    headers: { 'Content-Type': 'application/json' },
+                                    headers: {
+                                      'Content-Type': 'application/json',
+                                      Authorization: `Bearer ${api.getToken()}`,
+                                    },
                                     body: JSON.stringify({
                                       phone: user.phone,
                                       template: 'custom',
@@ -608,7 +612,10 @@ const DeliveryPage = ({
                                   .replace(/\{itemsList\}/g, completeItemsList);
                                 await fetch(`${WA_API_URL}/send`, {
                                   method: 'POST',
-                                  headers: { 'Content-Type': 'application/json' },
+                                  headers: {
+                                    'Content-Type': 'application/json',
+                                    Authorization: `Bearer ${api.getToken()}`,
+                                  },
                                   body: JSON.stringify({
                                     phone: users.find((u) => u.name === bg.createdBy)?.phone || '+65 9111 2222',
                                     template: 'custom',
@@ -889,7 +896,7 @@ const DeliveryPage = ({
                       for (const user of users.filter((u) => u.role !== 'admin' && u.status === 'active' && u.phone)) {
                         await fetch(`${WA_API_URL}/send`, {
                           method: 'POST',
-                          headers: { 'Content-Type': 'application/json' },
+                          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${api.getToken()}` },
                           body: JSON.stringify({ phone: user.phone, template: 'custom', data: { message: arrMsg } }),
                         });
                       }
@@ -949,7 +956,7 @@ const DeliveryPage = ({
                       for (const user of users.filter((u) => u.role !== 'admin' && u.status === 'active' && u.phone)) {
                         await fetch(`${WA_API_URL}/send`, {
                           method: 'POST',
-                          headers: { 'Content-Type': 'application/json' },
+                          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${api.getToken()}` },
                           body: JSON.stringify({ phone: user.phone, template: 'custom', data: { message: complMsg } }),
                         });
                       }
