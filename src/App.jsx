@@ -2821,6 +2821,7 @@ export default function App() {
     setIsSubmitting(false);
     if (result && result.user) {
       setCurrentUser(result.user);
+      setActiveModule(null); // show module picker on fresh login
       api.resetAuthError(); // allow future session-expired toasts
       await loadAppData(); // fetch all data from DB after login
       notify(
@@ -2833,6 +2834,7 @@ export default function App() {
       const localUser = users.find((u) => u.username === loginForm.username && u.status === 'active');
       if (localUser && loginForm.password === 'admin123' && localUser.role === 'admin') {
         setCurrentUser(localUser);
+        setActiveModule(null); // show module picker on fresh login
         notify(`Welcome back, ${localUser.name}`, 'Admin access granted (offline mode)', 'success');
       } else {
         notify('Login Failed', 'Invalid credentials or account not approved', 'warning');
@@ -4684,6 +4686,7 @@ export default function App() {
           <button
             onClick={() => {
               setCurrentUser(null);
+              setActiveModule(null);
               localStorage.removeItem('mih_token');
               localStorage.removeItem('mih_currentUser');
             }}
