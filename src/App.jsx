@@ -83,6 +83,12 @@ import {
   PanelRightOpen,
   PanelRightClose,
   Briefcase,
+  LayoutGrid,
+  Wrench,
+  ArrowRight,
+  Activity,
+  FileBarChart,
+  HardDrive,
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import api from './api.js';
@@ -144,7 +150,17 @@ export default function App() {
   const [pendingUsers, setPendingUsers] = useState([]);
 
   // ── App State ──
-  const [page, setPage] = useState('dashboard');
+  const [activeModule, setActiveModule] = useState(() => {
+    try {
+      return localStorage.getItem('mih_activeModule') || null;
+    } catch {
+      return null;
+    }
+  });
+  const [page, setPage] = useState(() => {
+    const mod = localStorage.getItem('mih_activeModule');
+    return mod === 'service' ? 'service' : 'dashboard';
+  });
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [orders, setOrders] = useState([]);
   const [search, setSearch] = useState('');
@@ -1131,10 +1147,21 @@ export default function App() {
     }
   }, [currentUser]);
 
+  // ── Persist activeModule to localStorage ──
+  useEffect(() => {
+    try {
+      if (activeModule) localStorage.setItem('mih_activeModule', activeModule);
+      else localStorage.removeItem('mih_activeModule');
+    } catch {
+      /* ignore */
+    }
+  }, [activeModule]);
+
   // ── Auto-logout on token expiry ──
   useEffect(() => {
     api.onAuthError(() => {
       setCurrentUser(null);
+      setActiveModule(null);
       notify('Session Expired', 'Please log in again', 'warning');
     });
   }, []);
@@ -1263,6 +1290,7 @@ export default function App() {
           } else {
             // Token invalid/expired — clear session silently (no toast on first load)
             setCurrentUser(null);
+            setActiveModule(null);
             api.logout();
             api.resetAuthError(); // suppress any 401 toasts from data-load calls below
             return; // skip data loading — not authenticated
@@ -2911,24 +2939,26 @@ export default function App() {
 
   // ── Nav ──
   const allNavItems = [
-    { id: 'dashboard', label: 'Dashboard', icon: Home, perm: 'dashboard' },
-    { id: 'catalog', label: 'Parts Catalog', icon: Database, perm: 'catalog' },
-    { id: 'allorders', label: 'All Orders', icon: ShoppingCart, perm: 'orders' },
-    { id: 'orders', label: 'Single Orders', icon: Package, perm: 'orders' },
-    { id: 'bulkorders', label: 'Bulk Orders', icon: Layers, perm: 'bulkOrders' },
-    { id: 'analytics', label: 'Analytics', icon: BarChart3, perm: 'analytics' },
-    { id: 'forecasting', label: 'Forecasting', icon: TrendingUp, perm: 'analytics' },
-    { id: 'stockcheck', label: 'Stock Check', icon: ClipboardList, perm: 'stockCheck' },
-    { id: 'delivery', label: 'Part Arrival', icon: Truck, perm: 'delivery' },
-    { id: 'service', label: 'Service Module', icon: Briefcase, perm: 'dashboard' },
-    { id: 'whatsapp', label: 'WhatsApp', icon: MessageSquare, perm: 'whatsapp' },
-    { id: 'notifications', label: 'Notifications', icon: Bell, perm: 'notifications' },
-    { id: 'audit', label: 'Audit Trail', icon: Shield, perm: 'auditTrail' },
-    { id: 'aibot', label: 'AI Bot Admin', icon: Bot, perm: 'aiBot' },
-    { id: 'users', label: 'User Management', icon: Users, perm: 'users' },
-    { id: 'settings', label: 'Settings', icon: Settings, perm: 'settings' },
+    { id: 'dashboard', label: 'Dashboard', icon: Home, perm: 'dashboard', module: 'inventory' },
+    { id: 'catalog', label: 'Parts Catalog', icon: Database, perm: 'catalog', module: 'inventory' },
+    { id: 'allorders', label: 'All Orders', icon: ShoppingCart, perm: 'orders', module: 'inventory' },
+    { id: 'orders', label: 'Single Orders', icon: Package, perm: 'orders', module: 'inventory' },
+    { id: 'bulkorders', label: 'Bulk Orders', icon: Layers, perm: 'bulkOrders', module: 'inventory' },
+    { id: 'analytics', label: 'Analytics', icon: BarChart3, perm: 'analytics', module: 'inventory' },
+    { id: 'forecasting', label: 'Forecasting', icon: TrendingUp, perm: 'analytics', module: 'inventory' },
+    { id: 'stockcheck', label: 'Stock Check', icon: ClipboardList, perm: 'stockCheck', module: 'inventory' },
+    { id: 'delivery', label: 'Part Arrival', icon: Truck, perm: 'delivery', module: 'inventory' },
+    { id: 'service', label: 'Service', icon: Briefcase, perm: 'dashboard', module: 'service' },
+    { id: 'whatsapp', label: 'WhatsApp', icon: MessageSquare, perm: 'whatsapp', module: 'shared' },
+    { id: 'notifications', label: 'Notifications', icon: Bell, perm: 'notifications', module: 'shared' },
+    { id: 'audit', label: 'Audit Trail', icon: Shield, perm: 'auditTrail', module: 'shared' },
+    { id: 'aibot', label: 'AI Bot Admin', icon: Bot, perm: 'aiBot', module: 'shared' },
+    { id: 'users', label: 'User Management', icon: Users, perm: 'users', module: 'shared' },
+    { id: 'settings', label: 'Settings', icon: Settings, perm: 'settings', module: 'shared' },
   ];
-  const navItems = allNavItems.filter((n) => hasPermission(n.perm));
+  const navItems = allNavItems.filter(
+    (n) => (n.module === activeModule || n.module === 'shared') && hasPermission(n.perm),
+  );
 
   // ════════════════════════════ AI BOT PROCESSING ════════════════════════════
   const processAiMessage = async (userMessage) => {
@@ -4423,9 +4453,272 @@ export default function App() {
     );
   }
 
+  // ════════════════════════════ MODULE PICKER ══════════════════════
+  if (!activeModule) {
+    const moduleCards = [
+      {
+        key: 'inventory',
+        label: 'Inventory',
+        desc: 'Manage orders, parts and stock levels',
+        icon: Package,
+        defaultPage: 'dashboard',
+        gradient: 'linear-gradient(135deg, #006837, #00A550)',
+        glow: 'rgba(11,122,62,',
+        accent: '#4ade80',
+        features: [
+          { icon: ShoppingCart, text: 'Orders & Approvals' },
+          { icon: Database, text: 'Parts Catalog' },
+          { icon: ClipboardList, text: 'Stock Check' },
+          { icon: BarChart3, text: 'Analytics & Forecasting' },
+          { icon: Truck, text: 'Part Arrival Tracking' },
+        ],
+      },
+      {
+        key: 'service',
+        label: 'Service',
+        desc: 'Track machines, maintenance & contracts',
+        icon: Wrench,
+        defaultPage: 'service',
+        gradient: 'linear-gradient(135deg, #4f46e5, #818cf8)',
+        glow: 'rgba(99,102,241,',
+        accent: '#a5b4fc',
+        features: [
+          { icon: HardDrive, text: 'Machine Registry' },
+          { icon: Activity, text: 'Maintenance Schedules' },
+          { icon: FileBarChart, text: 'Contract Management' },
+          { icon: Search, text: 'Serial Number Lookup' },
+        ],
+      },
+    ];
+
+    return (
+      <div
+        style={{
+          fontFamily: "'DM Sans','Segoe UI',system-ui,sans-serif",
+          minHeight: '100vh',
+          background: '#0f172a',
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: 24,
+          color: '#f1f5f9',
+          position: 'relative',
+          overflow: 'hidden',
+        }}
+      >
+        <style>{`
+          @keyframes mpFadeUp{from{opacity:0;transform:translateY(24px)}to{opacity:1;transform:translateY(0)}}
+          @keyframes mpFloat{0%,100%{transform:translateY(0)}50%{transform:translateY(-6px)}}
+          @keyframes mpGlow{0%,100%{opacity:.3}50%{opacity:.6}}
+          .mp-card{position:relative;width:320px;padding:32px 28px 28px;border-radius:20px;cursor:pointer;transition:all .3s cubic-bezier(.4,0,.2,1);text-align:left;overflow:hidden;backdrop-filter:blur(12px)}
+          .mp-card:hover{transform:translateY(-8px) scale(1.02)}
+          .mp-card::before{content:'';position:absolute;inset:0;border-radius:20px;padding:1px;background:linear-gradient(135deg,rgba(255,255,255,.15),rgba(255,255,255,.03));-webkit-mask:linear-gradient(#fff 0 0) content-box,linear-gradient(#fff 0 0);mask:linear-gradient(#fff 0 0) content-box,linear-gradient(#fff 0 0);-webkit-mask-composite:xor;mask-composite:exclude;pointer-events:none}
+          .mp-feat{display:flex;align-items:center;gap:10px;padding:6px 0;font-size:13px;color:#94a3b8;transition:color .2s}
+          .mp-card:hover .mp-feat{color:#cbd5e1}
+          .mp-enter{display:inline-flex;align-items:center;gap:6px;margin-top:16px;padding:8px 18px;border-radius:10px;font-size:13px;font-weight:600;border:none;cursor:pointer;transition:all .2s;font-family:inherit}
+          .mp-enter:hover{transform:translateX(4px)}
+          @media(max-width:700px){.mp-cards{flex-direction:column!important}.mp-card{width:100%!important;max-width:360px}}
+        `}</style>
+
+        {/* Background glow orbs */}
+        <div
+          style={{
+            position: 'absolute',
+            top: '20%',
+            left: '15%',
+            width: 300,
+            height: 300,
+            borderRadius: '50%',
+            background: 'radial-gradient(circle, rgba(11,122,62,.08) 0%, transparent 70%)',
+            animation: 'mpGlow 4s ease-in-out infinite',
+            pointerEvents: 'none',
+          }}
+        />
+        <div
+          style={{
+            position: 'absolute',
+            bottom: '15%',
+            right: '15%',
+            width: 350,
+            height: 350,
+            borderRadius: '50%',
+            background: 'radial-gradient(circle, rgba(99,102,241,.08) 0%, transparent 70%)',
+            animation: 'mpGlow 4s ease-in-out infinite 2s',
+            pointerEvents: 'none',
+          }}
+        />
+
+        {/* Header */}
+        <div
+          style={{
+            textAlign: 'center',
+            marginBottom: 48,
+            animation: 'mpFadeUp .6s ease-out',
+            position: 'relative',
+            zIndex: 1,
+          }}
+        >
+          <div
+            style={{
+              width: 60,
+              height: 60,
+              borderRadius: 16,
+              background: 'linear-gradient(135deg, #006837, #00A550)',
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              marginBottom: 16,
+              boxShadow: '0 8px 32px rgba(11,122,62,.25)',
+            }}
+          >
+            {customLogo ? (
+              <img
+                src={customLogo}
+                alt="Logo"
+                style={{ width: '100%', height: '100%', objectFit: 'contain', borderRadius: 16 }}
+              />
+            ) : (
+              <Package size={28} color="#fff" />
+            )}
+          </div>
+          <h1 style={{ fontSize: 28, fontWeight: 700, margin: 0, letterSpacing: '-0.5px' }}>Miltenyi Hub</h1>
+          <p style={{ fontSize: 14, color: '#64748b', marginTop: 8 }}>
+            Welcome back, <span style={{ color: '#cbd5e1', fontWeight: 500 }}>{currentUser?.name || 'User'}</span>
+          </p>
+          <p style={{ fontSize: 12, color: '#475569', marginTop: 4 }}>Select a module to get started</p>
+        </div>
+
+        {/* Module cards */}
+        <div
+          className="mp-cards"
+          style={{
+            display: 'flex',
+            gap: 24,
+            flexWrap: 'wrap',
+            justifyContent: 'center',
+            position: 'relative',
+            zIndex: 1,
+          }}
+        >
+          {moduleCards.map((mod, idx) => {
+            const Icon = mod.icon;
+            return (
+              <div
+                key={mod.key}
+                className="mp-card"
+                onClick={() => {
+                  setActiveModule(mod.key);
+                  setPage(mod.defaultPage);
+                }}
+                style={{
+                  background: `linear-gradient(135deg, ${mod.glow}0.1), ${mod.glow}0.04))`,
+                  animation: `mpFadeUp .6s ease-out ${0.15 + idx * 0.12}s both`,
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.boxShadow = `0 20px 60px ${mod.glow}0.2), 0 0 0 1px ${mod.glow}0.2)`;
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.boxShadow = '';
+                }}
+              >
+                {/* Icon */}
+                <div
+                  style={{
+                    width: 56,
+                    height: 56,
+                    borderRadius: 14,
+                    background: mod.gradient,
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    marginBottom: 16,
+                    boxShadow: `0 8px 24px ${mod.glow}0.3)`,
+                  }}
+                >
+                  <Icon size={26} color="#fff" />
+                </div>
+
+                {/* Title & desc */}
+                <h2 style={{ fontSize: 22, fontWeight: 700, margin: '0 0 4px', color: mod.accent }}>{mod.label}</h2>
+                <p style={{ fontSize: 13, color: '#64748b', margin: '0 0 16px', lineHeight: 1.4 }}>{mod.desc}</p>
+
+                {/* Feature list */}
+                <div style={{ borderTop: '1px solid rgba(255,255,255,.06)', paddingTop: 12 }}>
+                  {mod.features.map((f, fi) => {
+                    const FIcon = f.icon;
+                    return (
+                      <div key={fi} className="mp-feat">
+                        <FIcon size={14} style={{ opacity: 0.5, flexShrink: 0 }} />
+                        <span>{f.text}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* Enter button */}
+                <button className="mp-enter" style={{ background: mod.gradient, color: '#fff' }} tabIndex={-1}>
+                  Open {mod.label} <ArrowRight size={14} />
+                </button>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Footer */}
+        <div
+          style={{
+            marginTop: 48,
+            animation: 'mpFadeUp .6s ease-out .4s both',
+            position: 'relative',
+            zIndex: 1,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 16,
+          }}
+        >
+          <span style={{ fontSize: 12, color: '#334155' }}>
+            Signed in as {currentUser?.role === 'admin' ? 'Admin' : 'User'}
+          </span>
+          <span style={{ color: '#1e293b' }}>|</span>
+          <button
+            onClick={() => {
+              setCurrentUser(null);
+              localStorage.removeItem('mih_token');
+              localStorage.removeItem('mih_currentUser');
+            }}
+            style={{
+              background: 'none',
+              border: 'none',
+              color: '#64748b',
+              fontSize: 12,
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 5,
+              fontFamily: 'inherit',
+              padding: 0,
+              transition: 'color .2s',
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.color = '#ef4444';
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.color = '#64748b';
+            }}
+          >
+            <LogOut size={12} /> Sign out
+          </button>
+        </div>
+        <Toast items={notifs} onDismiss={(i) => setNotifs((p) => p.filter((_, j) => j !== i))} />
+      </div>
+    );
+  }
+
   // ════════════════════════════ MAIN APP RENDER ══════════════════════
   return (
     <div
+      className={activeModule === 'service' ? 'svc' : ''}
       style={{
         fontFamily: "'DM Sans','Segoe UI',system-ui,sans-serif",
         background: '#F4F6F8',
@@ -4455,6 +4748,8 @@ export default function App() {
         .tr{transition:background .15s;cursor:pointer} .tr:hover{background:#F0FDF4!important}
         .ni{display:flex;align-items:center;gap:10px;padding:10px 16px;border-radius:10px;cursor:pointer;transition:all .15s;font-size:13px;font-weight:500;color:#64748B;margin:2px 0}
         .ni:hover{background:rgba(11,122,62,.06);color:#0B7A3E} .ni.a{background:linear-gradient(135deg,rgba(11,122,62,.1),rgba(0,165,80,.08));color:#0B7A3E;font-weight:600}
+        .svc .ni:hover{background:rgba(99,102,241,.06);color:#6366f1} .svc .ni.a{background:linear-gradient(135deg,rgba(99,102,241,.1),rgba(129,140,248,.08));color:#6366f1}
+        .svc .bp{background:linear-gradient(135deg,#4f46e5,#6366f1 50%,#818cf8)} .svc .bp:hover{box-shadow:0 4px 12px rgba(99,102,241,.3)}
         .mo{position:fixed;inset:0;background:rgba(0,0,0,.4);backdrop-filter:blur(4px);z-index:1000;display:flex;align-items:center;justify-content:center;animation:fadeIn .2s}
         .th{padding:12px 14px;text-align:left;font-weight:600;color:#64748B;font-size:11px;text-transform:uppercase;letter-spacing:.5px;border-bottom:2px solid #E8ECF0;white-space:nowrap}
         .td{padding:10px 14px} .mono{font-family:'JetBrains Mono',monospace}
@@ -4496,23 +4791,32 @@ export default function App() {
               width: 36,
               height: 36,
               borderRadius: 10,
-              background: customLogo ? '#fff' : 'linear-gradient(135deg,#006837,#00A550)',
+              background: customLogo
+                ? '#fff'
+                : activeModule === 'service'
+                  ? 'linear-gradient(135deg,#4f46e5,#818cf8)'
+                  : 'linear-gradient(135deg,#006837,#00A550)',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
               flexShrink: 0,
               overflow: 'hidden',
+              transition: 'background .3s',
             }}
           >
             {customLogo ? (
               <img src={customLogo} alt="Logo" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+            ) : activeModule === 'service' ? (
+              <Wrench size={18} color="#fff" />
             ) : (
               <Package size={18} color="#fff" />
             )}
           </div>
           {sidebarOpen && (
-            <div>
-              <div style={{ fontWeight: 700, fontSize: 14, color: '#006837' }}>Miltenyi</div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontWeight: 700, fontSize: 14, color: activeModule === 'service' ? '#6366f1' : '#006837' }}>
+                Miltenyi
+              </div>
               <div
                 style={{
                   fontSize: 10,
@@ -4522,8 +4826,38 @@ export default function App() {
                   textTransform: 'uppercase',
                 }}
               >
-                Inventory Hub SG
+                {activeModule === 'service' ? 'Service Module' : 'Inventory Hub SG'}
               </div>
+            </div>
+          )}
+          {sidebarOpen && (
+            <div
+              title="Switch module"
+              onClick={() => setActiveModule(null)}
+              style={{
+                width: 30,
+                height: 30,
+                borderRadius: 8,
+                background: activeModule === 'service' ? 'rgba(99,102,241,.08)' : 'rgba(11,122,62,.06)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                cursor: 'pointer',
+                flexShrink: 0,
+                transition: 'all 0.2s',
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.background =
+                  activeModule === 'service' ? 'rgba(99,102,241,.15)' : 'rgba(11,122,62,.12)';
+                e.currentTarget.style.transform = 'scale(1.08)';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background =
+                  activeModule === 'service' ? 'rgba(99,102,241,.08)' : 'rgba(11,122,62,.06)';
+                e.currentTarget.style.transform = '';
+              }}
+            >
+              <LayoutGrid size={14} color={activeModule === 'service' ? '#6366f1' : '#0B7A3E'} />
             </div>
           )}
         </div>
@@ -4700,6 +5034,7 @@ export default function App() {
                 onClick={() => {
                   api.logout();
                   setCurrentUser(null);
+                  setActiveModule(null);
                   setLoginForm({ username: '', password: '' });
                 }}
               >
