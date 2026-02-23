@@ -4,6 +4,7 @@ import { snakeToCamel, camelToSnake } from '../utils.js';
 import { pickAllowed } from '../validation.js';
 import { paginate, envelope } from '../pagination.js';
 import { asyncHandler } from '../middleware/errorHandler.js';
+import { requireAdmin } from '../middleware/auth.js';
 
 const router = Router();
 
@@ -72,8 +73,8 @@ router.delete('/:id', async (req, res) => {
   }
 });
 
-// DELETE / - delete all notification logs
-router.delete('/', async (req, res) => {
+// DELETE / - delete all notification logs (admin only)
+router.delete('/', requireAdmin, async (req, res) => {
   try {
     await query('DELETE FROM notif_log');
     res.json({ success: true });

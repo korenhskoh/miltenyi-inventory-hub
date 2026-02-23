@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { CheckCircle, AlertCircle, Clock, AlertTriangle, Mail, MessageSquare, Check } from 'lucide-react';
-import { fmt, fmtDate, applySortData, toggleSort } from '../utils.js';
+import { fmt, fmtDate, applySortData, toggleSort, fillTemplate } from '../utils.js';
 import { Pill, ArrivalBadge, ExportDropdown, SortTh } from '../components/ui.jsx';
 import api from '../api.js';
 
@@ -521,17 +521,19 @@ const DeliveryPage = ({
                                 .slice(0, 5)
                                 .map((o) => `\u2022 ${o.description.slice(0, 30)}: ${o.qtyReceived}/${o.quantity}`)
                                 .join('\n') + (bgOrders.length > 5 ? `\n...and ${bgOrders.length - 5} more` : '');
-                            const arrMsg = (
+                            const arrMsg = fillTemplate(
                               waMessageTemplates.partArrival?.message ||
-                              '\u2705 *Part Arrival Verified*\n\nMonth: {month}\nDate: {date}\nItems: {totalItems}\nReceived: {received}\nBack Orders: {backOrders}\nVerified By: {verifiedBy}\n\n{itemsList}'
-                            )
-                              .replace(/\{month\}/g, bg.month)
-                              .replace(/\{totalItems\}/g, bgOrders.length)
-                              .replace(/\{received\}/g, received)
-                              .replace(/\{backOrders\}/g, backorder)
-                              .replace(/\{verifiedBy\}/g, currentUser?.name || 'Admin')
-                              .replace(/\{date\}/g, new Date().toISOString().slice(0, 10))
-                              .replace(/\{itemsList\}/g, itemsList);
+                                '\u2705 *Part Arrival Verified*\n\nMonth: {month}\nDate: {date}\nItems: {totalItems}\nReceived: {received}\nBack Orders: {backOrders}\nVerified By: {verifiedBy}\n\n{itemsList}',
+                              {
+                                month: bg.month,
+                                totalItems: bgOrders.length,
+                                received,
+                                backOrders: backorder,
+                                verifiedBy: currentUser?.name || 'Admin',
+                                date: new Date().toISOString().slice(0, 10),
+                                itemsList,
+                              },
+                            );
                             try {
                               if (waNotifyRules.partArrivalDone) {
                                 for (const user of users.filter(
@@ -599,17 +601,19 @@ const DeliveryPage = ({
                                     .slice(0, 5)
                                     .map((o) => `\u2022 ${o.description.slice(0, 30)}: ${o.qtyReceived}/${o.quantity}`)
                                     .join('\n') + (bgOrders.length > 5 ? `\n...and ${bgOrders.length - 5} more` : '');
-                                const completeMsg = (
+                                const completeMsg = fillTemplate(
                                   waMessageTemplates.partArrival?.message ||
-                                  '\u2705 *Part Arrival Verified*\n\nMonth: {month}\nDate: {date}\nItems: {totalItems}\nReceived: {received}\nBack Orders: {backOrders}\nVerified By: {verifiedBy}\n\n{itemsList}'
-                                )
-                                  .replace(/\{month\}/g, bg.month)
-                                  .replace(/\{totalItems\}/g, bgOrders.length)
-                                  .replace(/\{received\}/g, bgOrders.length)
-                                  .replace(/\{backOrders\}/g, 0)
-                                  .replace(/\{verifiedBy\}/g, currentUser?.name || 'Admin')
-                                  .replace(/\{date\}/g, new Date().toISOString().slice(0, 10))
-                                  .replace(/\{itemsList\}/g, completeItemsList);
+                                    '\u2705 *Part Arrival Verified*\n\nMonth: {month}\nDate: {date}\nItems: {totalItems}\nReceived: {received}\nBack Orders: {backOrders}\nVerified By: {verifiedBy}\n\n{itemsList}',
+                                  {
+                                    month: bg.month,
+                                    totalItems: bgOrders.length,
+                                    received: bgOrders.length,
+                                    backOrders: 0,
+                                    verifiedBy: currentUser?.name || 'Admin',
+                                    date: new Date().toISOString().slice(0, 10),
+                                    itemsList: completeItemsList,
+                                  },
+                                );
                                 await fetch(`${WA_API_URL}/send`, {
                                   method: 'POST',
                                   headers: {
@@ -880,17 +884,19 @@ const DeliveryPage = ({
                       .slice(0, 5)
                       .map((o) => `\u2022 ${o.description.slice(0, 30)}: ${o.qtyReceived || 0}/${o.quantity}`)
                       .join('\n') + (indivOrders.length > 5 ? `\n...and ${indivOrders.length - 5} more` : '');
-                  const arrMsg = (
+                  const arrMsg = fillTemplate(
                     waMessageTemplates.partArrival?.message ||
-                    '\u2705 *Part Arrival Verified*\n\nMonth: {month}\nDate: {date}\nItems: {totalItems}\nReceived: {received}\nBack Orders: {backOrders}\nVerified By: {verifiedBy}\n\n{itemsList}'
-                  )
-                    .replace(/\{month\}/g, 'Single Orders')
-                    .replace(/\{totalItems\}/g, indivOrders.length)
-                    .replace(/\{received\}/g, received)
-                    .replace(/\{backOrders\}/g, backorder)
-                    .replace(/\{verifiedBy\}/g, currentUser?.name || 'Admin')
-                    .replace(/\{date\}/g, new Date().toISOString().slice(0, 10))
-                    .replace(/\{itemsList\}/g, itemsList);
+                      '\u2705 *Part Arrival Verified*\n\nMonth: {month}\nDate: {date}\nItems: {totalItems}\nReceived: {received}\nBack Orders: {backOrders}\nVerified By: {verifiedBy}\n\n{itemsList}',
+                    {
+                      month: 'Single Orders',
+                      totalItems: indivOrders.length,
+                      received,
+                      backOrders: backorder,
+                      verifiedBy: currentUser?.name || 'Admin',
+                      date: new Date().toISOString().slice(0, 10),
+                      itemsList,
+                    },
+                  );
                   try {
                     if (waNotifyRules.partArrivalDone) {
                       for (const user of users.filter((u) => u.role !== 'admin' && u.status === 'active' && u.phone)) {
@@ -942,17 +948,19 @@ const DeliveryPage = ({
                           .slice(0, 5)
                           .map((o) => `\u2022 ${o.description.slice(0, 30)}: ${o.qtyReceived || 0}/${o.quantity}`)
                           .join('\n') + (indivOrders.length > 5 ? `\n...and ${indivOrders.length - 5} more` : '');
-                      const complMsg = (
+                      const complMsg = fillTemplate(
                         waMessageTemplates.partArrival?.message ||
-                        '\u2705 *Part Arrival Verified*\n\nMonth: {month}\nDate: {date}\nItems: {totalItems}\nReceived: {received}\nBack Orders: {backOrders}\nVerified By: {verifiedBy}\n\n{itemsList}'
-                      )
-                        .replace(/\{month\}/g, 'Single Orders')
-                        .replace(/\{totalItems\}/g, indivOrders.length)
-                        .replace(/\{received\}/g, indivOrders.length)
-                        .replace(/\{backOrders\}/g, 0)
-                        .replace(/\{verifiedBy\}/g, currentUser?.name || 'Admin')
-                        .replace(/\{date\}/g, new Date().toISOString().slice(0, 10))
-                        .replace(/\{itemsList\}/g, complItemsList);
+                          '\u2705 *Part Arrival Verified*\n\nMonth: {month}\nDate: {date}\nItems: {totalItems}\nReceived: {received}\nBack Orders: {backOrders}\nVerified By: {verifiedBy}\n\n{itemsList}',
+                        {
+                          month: 'Single Orders',
+                          totalItems: indivOrders.length,
+                          received: indivOrders.length,
+                          backOrders: 0,
+                          verifiedBy: currentUser?.name || 'Admin',
+                          date: new Date().toISOString().slice(0, 10),
+                          itemsList: complItemsList,
+                        },
+                      );
                       for (const user of users.filter((u) => u.role !== 'admin' && u.status === 'active' && u.phone)) {
                         await fetch(`${WA_API_URL}/send`, {
                           method: 'POST',

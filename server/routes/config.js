@@ -1,10 +1,17 @@
 import { Router } from 'express';
 import { query } from '../db.js';
+import logger from '../logger.js';
 
 const router = Router();
 
 // Keys that are shared globally (not per-user)
 const GLOBAL_KEYS = new Set(['aiBotConfig', 'waAutoReply']);
+
+// Post-save hooks keyed by config key — registered by the server at startup
+const postSaveHooks = {};
+export function registerConfigHook(key, fn) {
+  postSaveHooks[key] = fn;
+}
 
 function effectiveUserId(key, reqUser) {
   return GLOBAL_KEYS.has(key) ? '__global__' : reqUser.id;
@@ -20,7 +27,7 @@ router.get('/', async (req, res) => {
        FROM app_config
        WHERE user_id = $1 OR user_id = '__global__'
        ORDER BY key, CASE WHEN user_id = $1 THEN 0 ELSE 1 END`,
-      [userId]
+      [userId],
     );
     const configObj = {};
     for (const row of result.rows) {
@@ -37,17 +44,11 @@ router.get('/:key', async (req, res) => {
   try {
     const { key } = req.params;
     const userId = effectiveUserId(key, req.user);
-    const result = await query(
-      'SELECT * FROM app_config WHERE key = $1 AND user_id = $2',
-      [key, userId]
-    );
+    const result = await query('SELECT * FROM app_config WHERE key = $1 AND user_id = $2', [key, userId]);
 
     // Fallback to global if per-user not found
     if (result.rows.length === 0 && userId !== '__global__') {
-      const fallback = await query(
-        'SELECT * FROM app_config WHERE key = $1 AND user_id = \'__global__\'',
-        [key]
-      );
+      const fallback = await query("SELECT * FROM app_config WHERE key = $1 AND user_id = '__global__'", [key]);
       if (fallback.rows.length === 0) {
         return res.status(404).json({ error: 'Config key not found' });
       }
@@ -84,6 +85,16 @@ router.put('/:key', async (req, res) => {
       RETURNING *
     `;
     const result = await query(sql, [key, userId, JSON.stringify(value)]);
+
+    // Fire post-save hook if registered (e.g. reload scheduler, reset SMTP transporter)
+    if (postSaveHooks[key]) {
+      try {
+        await postSaveHooks[key](value);
+      } catch (hookErr) {
+        logger.error({ err: hookErr, key }, `Config post-save hook failed for key: ${key}`);
+      }
+    }
+
     res.json({ key: result.rows[0].key, value: result.rows[0].value });
   } catch (e) {
     res.status(500).json({ error: e.message });

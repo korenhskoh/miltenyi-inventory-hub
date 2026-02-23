@@ -82,11 +82,12 @@ import {
   Brain,
   PanelRightOpen,
   PanelRightClose,
+  Briefcase,
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import api from './api.js';
 import { PARTS_CATALOG, PRICE_CONFIG_DEFAULT, CATEGORIES, DEFAULT_USERS, MONTH_OPTIONS } from './constants.js';
-import { fmt, fmtDate, fmtNum, applySortData, toggleSort, exportToFile, exportToPDF } from './utils.js';
+import { fmt, fmtDate, fmtNum, applySortData, toggleSort, exportToFile, exportToPDF, fillTemplate } from './utils.js';
 import {
   STATUS_CFG,
   Badge,
@@ -108,6 +109,7 @@ import ForecastingPage from './pages/ForecastingPage.jsx';
 import StockCheckPage from './pages/StockCheckPage.jsx';
 import AllOrdersPage from './pages/AllOrdersPage.jsx';
 import AiBotPage from './pages/AiBotPage.jsx';
+import ServicePage from './pages/ServicePage.jsx';
 
 // UI components, constants, and utils imported from separate files
 
@@ -449,17 +451,19 @@ export default function App() {
 
       // WhatsApp auto-report
       if (waConnected && waNotifyRules.deliveryArrival) {
-        const waMsg = (
+        const waMsg = fillTemplate(
           waMessageTemplates.partArrival?.message ||
-          '\u2705 *Part Arrival Verified*\n\nMonth: {month}\nDate: {date}\nItems: {totalItems}\nReceived: {received}\nBack Orders: {backOrders}\nVerified By: {verifiedBy}\n\n{itemsList}'
-        )
-          .replace(/\{month\}/g, month)
-          .replace(/\{totalItems\}/g, confirmedOrders.length)
-          .replace(/\{received\}/g, received)
-          .replace(/\{backOrders\}/g, backOrders)
-          .replace(/\{verifiedBy\}/g, currentUser?.name || 'Admin')
-          .replace(/\{date\}/g, now)
-          .replace(/\{itemsList\}/g, itemsList);
+            '\u2705 *Part Arrival Verified*\n\nMonth: {month}\nDate: {date}\nItems: {totalItems}\nReceived: {received}\nBack Orders: {backOrders}\nVerified By: {verifiedBy}\n\n{itemsList}',
+          {
+            month,
+            totalItems: confirmedOrders.length,
+            received,
+            backOrders,
+            verifiedBy: currentUser?.name || 'Admin',
+            date: now,
+            itemsList,
+          },
+        );
         const recipients = users.filter((u) => u.status === 'active' && u.phone);
         let waSent = 0;
         for (const u of recipients) {
@@ -541,11 +545,7 @@ export default function App() {
     async (ruleKey, templateKey, data, subject) => {
       if (!waConnected || !waNotifyRules[ruleKey]) return;
       const tpl = waMessageTemplates[templateKey];
-      let message = tpl?.message || data.message || '';
-      // Replace all placeholders in the template
-      Object.entries(data).forEach(([k, v]) => {
-        message = message.replace(new RegExp(`\\{${k}\\}`, 'g'), v ?? '');
-      });
+      const message = fillTemplate(tpl?.message || data.message || '', data);
       if (!message) return;
       const recipients = users.filter((u) => u.status === 'active' && u.phone);
       let sent = 0;
@@ -1302,7 +1302,7 @@ export default function App() {
 
       // 4. Check WhatsApp connection status on load
       try {
-        const waRes = await fetch('/api/whatsapp/status');
+        const waRes = await fetch('/api/whatsapp/status', { headers: { Authorization: `Bearer ${api.getToken()}` } });
         const waData = await waRes.json();
         if (waData.status === 'connected') {
           setWaConnected(true);
@@ -1321,7 +1321,7 @@ export default function App() {
   useEffect(() => {
     const iv = setInterval(async () => {
       try {
-        const r = await fetch('/api/whatsapp/status');
+        const r = await fetch('/api/whatsapp/status', { headers: { Authorization: `Bearer ${api.getToken()}` } });
         const d = await r.json();
         if (d.status === 'connected') {
           waStatusMisses.current = 0;
@@ -1423,6 +1423,11 @@ export default function App() {
             if (cfg.waAutoReply !== undefined) setWaAutoReply(cfg.waAutoReply);
             if (Array.isArray(cfg.waAllowedSenders)) setWaAllowedSenders(cfg.waAllowedSenders);
           }
+          break;
+        }
+        case 'service': {
+          const m = await api.getMachines();
+          if (m) setMachines(m);
           break;
         }
         case 'catalog': {
@@ -1994,16 +1999,21 @@ export default function App() {
       `TOTAL: ${selected.length} orders | ${totalQty} units | S$${totalCost.toFixed(2)}`,
     ].join('\n');
 
-    // Compose email
+    // Compose email — build data object with ALL available fields for template substitution
     const tmpl = emailTemplates.orderApproval || {};
-    const replacePlaceholders = (s) =>
-      (s || '')
-        .replace(/\{orderBy\}/g, currentUser?.name || 'System')
-        .replace(/\{date\}/g, now)
-        .replace(/\{orderCount\}/g, selected.length)
-        .replace(/\{totalQty\}/g, totalQty)
-        .replace(/\{totalCost\}/g, totalCost.toFixed(2))
-        .replace(/\{orderTable\}/g, table);
+    const templateData = {
+      orderBy: currentUser?.name || 'System',
+      date: now,
+      orderCount: selected.length,
+      totalQty,
+      totalCost: totalCost.toFixed(2),
+      orderTable: table,
+      orderId: selected[0]?.id || '',
+      description: selected.map((o) => o.description || '').join(', '),
+      materialNo: selected.map((o) => o.materialNo || '').join(', '),
+      quantity: selected.reduce((s, o) => s + (Number(o.quantity) || 0), 0),
+    };
+    const replacePlaceholders = (s) => fillTemplate(s, templateData);
     const subject = replacePlaceholders(
       tmpl.subject || '[APPROVAL] Batch Order Request - {orderCount} Orders (S${totalCost})',
     );
@@ -2079,16 +2089,11 @@ export default function App() {
         `───┼─────────────────┼────────────────────────┼─────┼──────────\n` +
         `   │ ${selected.length} order(s)       │ TOTAL                  │ ${String(totalQty).padStart(3)} │ S$${totalCost.toFixed(2)}\n` +
         '```';
-      const waMsg = (
+      const waMsg = fillTemplate(
         waMessageTemplates.orderApproval?.message ||
-        '*📋 Order Approval Request*\n\n{orderTable}\n\n_Reply *APPROVE* or *REJECT*_'
-      )
-        .replace(/\{orderBy\}/g, currentUser?.name || 'System')
-        .replace(/\{date\}/g, now)
-        .replace(/\{orderCount\}/g, selected.length)
-        .replace(/\{totalCost\}/g, totalCost.toFixed(2))
-        .replace(/\{totalQty\}/g, totalQty)
-        .replace(/\{orderTable\}/g, waTable);
+          '*📋 Order Approval Request*\n\n{orderTable}\n\n_Reply *APPROVE* or *REJECT*_',
+        { ...templateData, orderTable: waTable },
+      );
       // Pre-select the approver user
       const approverUser = users.find((u) => u.email === emailConfig.approverEmail);
       const preSelected = new Set(approverUser ? [approverUser.id] : []);
@@ -2181,15 +2186,18 @@ export default function App() {
 
     // Compose email
     const tmplB = emailTemplates.bulkApproval || {};
-    const replaceBulk = (s) =>
-      (s || '')
-        .replace(/\{orderBy\}/g, currentUser?.name || 'System')
-        .replace(/\{date\}/g, now)
-        .replace(/\{batchCount\}/g, selectedGroups.length)
-        .replace(/\{itemCount\}/g, linkedOrders.length)
-        .replace(/\{totalQty\}/g, totalQty)
-        .replace(/\{totalCost\}/g, totalCost.toFixed(2))
-        .replace(/\{orderTable\}/g, table);
+    const bulkTemplateData = {
+      orderBy: currentUser?.name || 'System',
+      date: now,
+      batchCount: selectedGroups.length,
+      itemCount: linkedOrders.length,
+      totalQty,
+      totalCost: totalCost.toFixed(2),
+      orderTable: table,
+      month: selectedGroups.map((bg) => bg.month).join(', '),
+      orderCount: linkedOrders.length,
+    };
+    const replaceBulk = (s) => fillTemplate(s, bulkTemplateData);
     const subject = replaceBulk(tmplB.subject || '[APPROVAL] Bulk Order Batch - {batchCount} Batches (S${totalCost})');
 
     const sentChannels = [];
@@ -2282,17 +2290,11 @@ export default function App() {
       const waTableBulk =
         waSections +
         `\n\n*Grand Total: ${selectedGroups.length} batches │ ${linkedOrders.length} items │ ${totalQty} units │ S$${totalCost.toFixed(2)}*`;
-      const waMsg = (
+      const waMsg = fillTemplate(
         waMessageTemplates.bulkApproval?.message ||
-        '*📋 Bulk Order Approval Request*\n\n{orderTable}\n\n_Reply *APPROVE* or *REJECT*_'
-      )
-        .replace(/\{orderBy\}/g, currentUser?.name || 'System')
-        .replace(/\{date\}/g, now)
-        .replace(/\{batchCount\}/g, selectedGroups.length)
-        .replace(/\{itemCount\}/g, linkedOrders.length)
-        .replace(/\{totalQty\}/g, totalQty)
-        .replace(/\{totalCost\}/g, totalCost.toFixed(2))
-        .replace(/\{orderTable\}/g, waTableBulk);
+          '*📋 Bulk Order Approval Request*\n\n{orderTable}\n\n_Reply *APPROVE* or *REJECT*_',
+        { ...bulkTemplateData, orderTable: waTableBulk },
+      );
       const approverUser = users.find((u) => u.email === emailConfig.approverEmail);
       const preSelected = new Set(approverUser ? [approverUser.id] : []);
       setWaRecipientPicker({
@@ -2436,7 +2438,7 @@ export default function App() {
   // Poll for WhatsApp status
   const pollWaStatus = async () => {
     try {
-      const res = await fetch(`${WA_API_URL}/status`);
+      const res = await fetch(`${WA_API_URL}/status`, { headers: { Authorization: `Bearer ${api.getToken()}` } });
       const data = await res.json();
 
       if (data.status === 'connected' && !waConnected) {
@@ -2465,7 +2467,10 @@ export default function App() {
     setWaQrCode('');
     setWaQrVisible(true); // show QR panel immediately with loading state
     try {
-      const res = await fetch(`${WA_API_URL}/connect`, { method: 'POST' });
+      const res = await fetch(`${WA_API_URL}/connect`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${api.getToken()}` },
+      });
       const data = await res.json();
 
       if (data.success) {
@@ -2525,7 +2530,10 @@ export default function App() {
 
   const handleWaDisconnect = async () => {
     try {
-      await fetch(`${WA_API_URL}/disconnect`, { method: 'POST' });
+      await fetch(`${WA_API_URL}/disconnect`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${api.getToken()}` },
+      });
       setWaConnected(false);
       setWaSessionInfo(null);
       setWaQrCode('');
@@ -2912,6 +2920,7 @@ export default function App() {
     { id: 'forecasting', label: 'Forecasting', icon: TrendingUp, perm: 'analytics' },
     { id: 'stockcheck', label: 'Stock Check', icon: ClipboardList, perm: 'stockCheck' },
     { id: 'delivery', label: 'Part Arrival', icon: Truck, perm: 'delivery' },
+    { id: 'service', label: 'Service Module', icon: Briefcase, perm: 'dashboard' },
     { id: 'whatsapp', label: 'WhatsApp', icon: MessageSquare, perm: 'whatsapp' },
     { id: 'notifications', label: 'Notifications', icon: Bell, perm: 'notifications' },
     { id: 'audit', label: 'Audit Trail', icon: Shield, perm: 'auditTrail' },
@@ -5103,6 +5112,11 @@ export default function App() {
                 </div>
               </div>
             </div>
+          )}
+
+          {/* SERVICE MODULE */}
+          {page === 'service' && (
+            <ServicePage isAdmin={isAdmin} notify={notify} machines={machines} setMachines={setMachines} />
           )}
 
           {/* ALL ORDERS */}

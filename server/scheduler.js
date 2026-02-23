@@ -4,6 +4,9 @@ import nodemailer from 'nodemailer';
 import logger from './logger.js';
 
 let cronJob = null;
+let isRunning = false; // prevent overlapping executions
+let smtpTransporter = null; // cached transporter, invalidated on config change
+let transporterInUse = false; // guard against reset during active send
 
 /**
  * Load scheduled notification config from DB
@@ -34,37 +37,50 @@ async function loadEmailConfig() {
 }
 
 /**
- * Generate report data from database
+ * Generate report data from database using efficient aggregate queries
  */
 async function generateReportData(reportTypes) {
   const data = {};
   try {
     if (reportTypes.monthlySummary || reportTypes.orderStats) {
-      const orders = await dbQuery('SELECT * FROM orders ORDER BY order_date DESC LIMIT 500');
-      const rows = orders.rows || [];
-      data.totalOrders = rows.length;
-      data.received = rows.filter((o) => o.status === 'Received').length;
-      data.pending = rows.filter((o) => o.status === 'Pending Approval').length;
-      data.approved = rows.filter((o) => o.approval_status === 'approved').length;
-      data.totalValue = rows.reduce((s, o) => s + (Number(o.total_cost) || 0), 0);
+      const stats = await dbQuery(`
+        SELECT
+          COUNT(*)::int AS total_orders,
+          COUNT(*) FILTER (WHERE status = 'Received')::int AS received,
+          COUNT(*) FILTER (WHERE status = 'Pending Approval')::int AS pending,
+          COUNT(*) FILTER (WHERE approval_status = 'approved')::int AS approved,
+          COALESCE(SUM(total_cost), 0) AS total_value
+        FROM orders
+      `);
+      const row = stats.rows[0] || {};
+      data.totalOrders = row.total_orders || 0;
+      data.received = row.received || 0;
+      data.pending = row.pending || 0;
+      data.approved = row.approved || 0;
+      data.totalValue = Number(row.total_value) || 0;
     }
     if (reportTypes.backOrderReport) {
-      const backOrders = await dbQuery('SELECT * FROM orders WHERE back_order < 0');
-      data.backOrders = (backOrders.rows || []).length;
-      data.backOrderItems = (backOrders.rows || [])
-        .slice(0, 10)
-        .map((o) => `- ${o.description || o.material_no}: ${Math.abs(o.back_order)} pending`)
+      const countResult = await dbQuery('SELECT COUNT(*)::int AS cnt FROM orders WHERE back_order < 0');
+      data.backOrders = countResult.rows[0]?.cnt || 0;
+      const topItems = await dbQuery(
+        'SELECT description, material_no, back_order FROM orders WHERE back_order < 0 ORDER BY back_order ASC LIMIT 10',
+      );
+      data.backOrderItems = (topItems.rows || [])
+        .map((o) => `- ${o.description || o.material_no}: ${Math.abs(Number(o.back_order))} pending`)
         .join('\n');
     }
     if (reportTypes.pendingApprovals) {
-      const approvals = await dbQuery("SELECT * FROM pending_approvals WHERE status = 'pending'");
-      data.pendingApprovals = (approvals.rows || []).length;
+      const result = await dbQuery("SELECT COUNT(*)::int AS cnt FROM pending_approvals WHERE status = 'pending'");
+      data.pendingApprovals = result.rows[0]?.cnt || 0;
     }
     if (reportTypes.lowStockAlert) {
-      // Stock checks with discrepancies
-      const checks = await dbQuery('SELECT * FROM stock_checks ORDER BY created_at DESC LIMIT 5');
-      data.recentStockChecks = (checks.rows || []).length;
-      data.discrepancies = (checks.rows || []).reduce((s, c) => s + (Number(c.disc) || 0), 0);
+      const result = await dbQuery(`
+        SELECT COUNT(*)::int AS check_count, COALESCE(SUM(disc), 0) AS total_disc
+        FROM (SELECT disc FROM stock_checks ORDER BY created_at DESC LIMIT 5) recent
+      `);
+      const row = result.rows[0] || {};
+      data.recentStockChecks = row.check_count || 0;
+      data.discrepancies = Number(row.total_disc) || 0;
     }
   } catch (e) {
     logger.error({ err: e }, 'Error generating report data');
@@ -73,7 +89,7 @@ async function generateReportData(reportTypes) {
 }
 
 /**
- * Format report as plain text and HTML
+ * Format report as plain text and proper HTML email
  */
 function formatReport(data) {
   const now = new Date().toLocaleDateString('en-SG', { day: '2-digit', month: 'short', year: 'numeric' });
@@ -102,9 +118,85 @@ function formatReport(data) {
     '— Miltenyi Inventory Hub SG',
   ].join('\n');
 
-  const html = text.replace(/\n/g, '<br>').replace(/---(.+?)---/g, '<strong>$1</strong>');
+  const row = (label, value) =>
+    `<tr><td style="padding:6px 12px;color:#64748B;font-size:13px">${label}</td><td style="padding:6px 12px;font-weight:600;font-size:13px">${value}</td></tr>`;
+  const section = (title, rows) => `
+    <div style="margin-bottom:16px">
+      <div style="background:#0B7A3E;color:#fff;padding:8px 12px;border-radius:6px 6px 0 0;font-size:13px;font-weight:600">${title}</div>
+      <table style="width:100%;border-collapse:collapse;background:#F8FAFB;border:1px solid #E2E8F0;border-top:none">${rows}</table>
+    </div>`;
+
+  const html = `
+    <div style="font-family:system-ui,-apple-system,sans-serif;max-width:560px;margin:0 auto;color:#1A202C">
+      <div style="background:#0B7A3E;padding:16px 20px;border-radius:8px 8px 0 0">
+        <h1 style="margin:0;font-size:18px;color:#fff">Miltenyi Inventory Hub</h1>
+        <p style="margin:4px 0 0;font-size:12px;color:#D1FAE5">Scheduled Report — ${now}</p>
+      </div>
+      <div style="padding:16px 20px;background:#fff;border:1px solid #E2E8F0;border-top:none;border-radius:0 0 8px 8px">
+        ${section(
+          'Order Summary',
+          [
+            row('Total Orders', data.totalOrders ?? 'N/A'),
+            row('Received', data.received ?? 'N/A'),
+            row('Pending Approval', data.pending ?? 'N/A'),
+            row('Approved', data.approved ?? 'N/A'),
+            row('Total Value', `S$${(data.totalValue || 0).toFixed(2)}`),
+          ].join(''),
+        )}
+        ${section(
+          'Back Orders',
+          [
+            row('Items with Back Orders', data.backOrders ?? 'N/A'),
+            data.backOrderItems
+              ? `<tr><td colspan="2" style="padding:6px 12px;font-size:12px;color:#64748B;white-space:pre-line">${data.backOrderItems}</td></tr>`
+              : '',
+          ].join(''),
+        )}
+        ${section('Pending Approvals', row('Awaiting Approval', data.pendingApprovals ?? 'N/A'))}
+        ${section(
+          'Stock Health',
+          [
+            row('Recent Stock Checks', data.recentStockChecks ?? 'N/A'),
+            row('Discrepancies', data.discrepancies ?? 0),
+          ].join(''),
+        )}
+        <p style="margin:16px 0 0;font-size:11px;color:#94A3B8;text-align:center">Miltenyi Inventory Hub SG</p>
+      </div>
+    </div>`;
 
   return { text, html };
+}
+
+/**
+ * Get or create a reusable SMTP transporter
+ */
+function getTransporter(emailConfig) {
+  if (smtpTransporter) return smtpTransporter;
+  smtpTransporter = nodemailer.createTransport({
+    host: emailConfig.smtpHost,
+    port: emailConfig.smtpPort || 587,
+    secure: (emailConfig.smtpPort || 587) === 465,
+    auth: emailConfig.smtpUser ? { user: emailConfig.smtpUser, pass: emailConfig.smtpPass || '' } : undefined,
+    pool: true, // reuse connections
+    maxConnections: 3,
+  });
+  return smtpTransporter;
+}
+
+/**
+ * Invalidate cached transporter (call when email config changes).
+ * Defers close if a send is in progress — the next getTransporter() call will create a fresh one.
+ */
+export function resetTransporter() {
+  if (smtpTransporter) {
+    if (transporterInUse) {
+      // Mark for replacement — current send keeps its reference, next call creates new one
+      smtpTransporter = null;
+    } else {
+      smtpTransporter.close();
+      smtpTransporter = null;
+    }
+  }
 }
 
 /**
@@ -112,14 +204,9 @@ function formatReport(data) {
  */
 async function sendEmailReport(emailConfig, recipients, report) {
   if (!emailConfig?.smtpHost || !recipients?.length) return false;
+  transporterInUse = true;
   try {
-    const transporter = nodemailer.createTransport({
-      host: emailConfig.smtpHost,
-      port: emailConfig.smtpPort || 587,
-      secure: (emailConfig.smtpPort || 587) === 465,
-      auth: emailConfig.smtpUser ? { user: emailConfig.smtpUser, pass: emailConfig.smtpPass || '' } : undefined,
-      tls: { rejectUnauthorized: false },
-    });
+    const transporter = getTransporter(emailConfig);
     const to = recipients.join(', ');
     await transporter.sendMail({
       from: `"${emailConfig.senderName || 'Miltenyi Inventory Hub'}" <${emailConfig.senderEmail || 'noreply@miltenyibiotec.com'}>`,
@@ -132,7 +219,11 @@ async function sendEmailReport(emailConfig, recipients, report) {
     return true;
   } catch (e) {
     logger.error({ err: e }, 'Failed to send scheduled email report');
+    // Reset transporter on failure so next attempt creates a fresh one
+    resetTransporter();
     return false;
+  } finally {
+    transporterInUse = false;
   }
 }
 
@@ -171,92 +262,115 @@ async function logReport(channel, to, status) {
 }
 
 /**
- * Update lastRun timestamp in config
+ * Update lastRun timestamp in config (single atomic UPDATE, no read-then-write race)
  */
 async function updateLastRun() {
   try {
-    const config = await loadScheduledConfig();
-    if (config) {
-      config.lastRun = new Date().toISOString();
-      await dbQuery(
-        `INSERT INTO app_config (user_id, key, value) VALUES ('__global__', 'scheduledNotifs', $1)
-         ON CONFLICT (user_id, key) DO UPDATE SET value = $1`,
-        [JSON.stringify(config)],
-      );
-    }
+    await dbQuery(
+      `UPDATE app_config
+       SET value = jsonb_set(value::jsonb, '{lastRun}', to_jsonb($1::text))::json
+       WHERE user_id = '__global__' AND key = 'scheduledNotifs'`,
+      [new Date().toISOString()],
+    );
   } catch (e) {
     logger.error({ err: e }, 'Failed to update lastRun');
   }
 }
 
 /**
- * Execute the scheduled report
+ * Execute the scheduled report (with duplicate-run guard)
  */
+const REPORT_TIMEOUT_MS = 5 * 60 * 1000; // 5-minute hard limit
+
 async function runScheduledReport(getWaContext) {
-  logger.info('Running scheduled report...');
-  const config = await loadScheduledConfig();
-  if (!config || !config.enabled) {
-    logger.info('Scheduled reports disabled — skipping');
+  if (isRunning) {
+    logger.warn('Scheduled report already in progress — skipping duplicate run');
     return;
   }
+  isRunning = true;
+  const startTime = Date.now();
 
-  const emailConfig = await loadEmailConfig();
-  const reportData = await generateReportData(config.reports || {});
-  const report = formatReport(reportData);
+  // Safety timeout — force-release the running flag if execution hangs
+  const safetyTimer = setTimeout(() => {
+    if (isRunning) {
+      logger.error({ durationMs: Date.now() - startTime }, 'Scheduled report timed out — releasing lock');
+      isRunning = false;
+    }
+  }, REPORT_TIMEOUT_MS);
 
-  // Gather recipients
-  let emailRecipients = [];
-  let waRecipients = [];
   try {
-    // Get active users with email/phone
-    const usersResult = await dbQuery("SELECT email, phone FROM users WHERE status = 'active'");
-    const activeUsers = usersResult.rows || [];
-    if (config.emailEnabled) {
-      emailRecipients =
-        (config.recipients || []).length > 0
-          ? config.recipients
-          : activeUsers.filter((u) => u.email).map((u) => u.email);
+    logger.info('Running scheduled report...');
+    const config = await loadScheduledConfig();
+    if (!config || !config.enabled) {
+      logger.info('Scheduled reports disabled — skipping');
+      return;
     }
-    if (config.whatsappEnabled) {
-      waRecipients = activeUsers.filter((u) => u.phone).map((u) => u.phone);
+
+    const emailConfig = await loadEmailConfig();
+    const reportData = await generateReportData(config.reports || {});
+    const report = formatReport(reportData);
+
+    // Gather recipients
+    let emailRecipients = [];
+    let waRecipients = [];
+    try {
+      const usersResult = await dbQuery("SELECT email, phone FROM users WHERE status = 'active'");
+      const activeUsers = usersResult.rows || [];
+      if (config.emailEnabled) {
+        emailRecipients =
+          (config.recipients || []).length > 0
+            ? config.recipients
+            : activeUsers.filter((u) => u.email).map((u) => u.email);
+      }
+      if (config.whatsappEnabled) {
+        waRecipients = activeUsers.filter((u) => u.phone).map((u) => u.phone);
+      }
+    } catch (e) {
+      logger.error({ err: e }, 'Failed to load recipients for scheduled report');
     }
-  } catch (e) {
-    logger.error({ err: e }, 'Failed to load recipients for scheduled report');
-  }
 
-  // Send via email
-  if (config.emailEnabled && emailRecipients.length > 0 && emailConfig) {
-    const ok = await sendEmailReport(emailConfig, emailRecipients, report);
-    await logReport('email', emailRecipients.join(', '), ok ? 'Sent' : 'Failed');
-  }
-
-  // Send via WhatsApp
-  if (config.whatsappEnabled && waRecipients.length > 0) {
-    const { sock, formatPhoneNumber } = getWaContext();
-    if (sock) {
-      const sent = await sendWaReport(sock, formatPhoneNumber, waRecipients, report);
-      await logReport('whatsapp', `${waRecipients.length} user(s)`, sent > 0 ? 'Delivered' : 'Failed');
-    } else {
-      logger.warn('WhatsApp not connected — skipping WA scheduled report');
+    // Send via email
+    if (config.emailEnabled && emailRecipients.length > 0 && emailConfig) {
+      const ok = await sendEmailReport(emailConfig, emailRecipients, report);
+      await logReport('email', emailRecipients.join(', '), ok ? 'Sent' : 'Failed');
     }
-  }
 
-  await updateLastRun();
-  logger.info('Scheduled report completed');
+    // Send via WhatsApp
+    if (config.whatsappEnabled && waRecipients.length > 0) {
+      const { sock, formatPhoneNumber } = getWaContext();
+      if (sock) {
+        const sent = await sendWaReport(sock, formatPhoneNumber, waRecipients, report);
+        await logReport('whatsapp', `${waRecipients.length} user(s)`, sent > 0 ? 'Delivered' : 'Failed');
+      } else {
+        logger.warn('WhatsApp not connected — skipping WA scheduled report');
+      }
+    }
+
+    await updateLastRun();
+    logger.info({ durationMs: Date.now() - startTime }, 'Scheduled report completed');
+  } finally {
+    clearTimeout(safetyTimer);
+    isRunning = false;
+  }
 }
 
 /**
  * Build cron expression from config
  */
 function buildCronExpression(config) {
-  const [hour, minute] = (config.time || '09:00').split(':').map(Number);
+  const [rawHour, rawMinute] = (config.time || '09:00').split(':').map(Number);
+  const hour = Math.max(0, Math.min(23, rawHour || 9));
+  const minute = Math.max(0, Math.min(59, rawMinute || 0));
+  const dayOfWeek = Math.max(0, Math.min(6, config.dayOfWeek ?? 1));
+  const dayOfMonth = Math.max(1, Math.min(31, config.dayOfMonth ?? 1));
+
   switch (config.frequency) {
     case 'daily':
       return `${minute} ${hour} * * *`;
     case 'weekly':
-      return `${minute} ${hour} * * ${config.dayOfWeek || 1}`;
+      return `${minute} ${hour} * * ${dayOfWeek}`;
     case 'monthly':
-      return `${minute} ${hour} ${config.dayOfMonth || 1} * *`;
+      return `${minute} ${hour} ${dayOfMonth} * *`;
     default:
       return `${minute} ${hour} * * 1`; // default weekly Monday
   }
@@ -266,7 +380,6 @@ function buildCronExpression(config) {
  * Start the scheduler — call once after DB init
  */
 export async function startScheduler(getWaContext) {
-  // Initial setup from config
   const config = await loadScheduledConfig();
   if (!config) {
     logger.info('No scheduledNotifs config found — scheduler idle');
@@ -274,6 +387,13 @@ export async function startScheduler(getWaContext) {
   }
 
   const cronExpr = buildCronExpression(config);
+
+  // Validate cron expression before scheduling
+  if (!cron.validate(cronExpr)) {
+    logger.error({ cronExpr }, 'Invalid cron expression — scheduler not started');
+    return;
+  }
+
   logger.info({ cronExpr, frequency: config.frequency, enabled: config.enabled }, 'Scheduler initialized');
 
   if (cronJob) {
@@ -281,9 +401,14 @@ export async function startScheduler(getWaContext) {
     cronJob = null;
   }
 
-  cronJob = cron.schedule(cronExpr, () => {
-    runScheduledReport(getWaContext).catch((e) => logger.error({ err: e }, 'Scheduled report error'));
-  });
+  // Schedule with Asia/Singapore timezone so reports fire at the right local time
+  cronJob = cron.schedule(
+    cronExpr,
+    () => {
+      runScheduledReport(getWaContext).catch((e) => logger.error({ err: e }, 'Scheduled report error'));
+    },
+    { timezone: config.timezone || 'Asia/Singapore' },
+  );
 
   if (!config.enabled) {
     cronJob.stop();
@@ -306,3 +431,4 @@ export async function reloadScheduler(getWaContext) {
  * Run report on demand (for testing or manual trigger)
  */
 export { runScheduledReport };
+// resetTransporter is also exported above for use when email config changes

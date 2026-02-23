@@ -465,9 +465,10 @@ async function setConfigKey(key, value) {
 
 async function getCatalog() {
   try {
-    const res = handleResponse(await fetch(`${BASE}/api/catalog`, { headers: authHeadersGet() }));
+    const res = handleResponse(await fetch(`${BASE}/api/catalog/all`, { headers: authHeadersGet() }));
     if (!res.ok) return null;
-    return unwrapList(await res.json());
+    const json = await res.json();
+    return Array.isArray(json) ? json : (json?.data ?? []);
   } catch {
     return null;
   }
@@ -637,11 +638,26 @@ async function clearAuditLog() {
 
 // ─── Machines (protected) ───
 
-async function getMachines() {
+async function getMachines(filters = {}) {
   try {
-    const res = handleResponse(await fetch(`${BASE}/api/machines`, { headers: authHeadersGet() }));
+    const params = new URLSearchParams();
+    for (const [k, v] of Object.entries(filters)) {
+      if (v !== '' && v !== null && v !== undefined && v !== 'All') params.append(k, v);
+    }
+    const qs = params.toString();
+    const res = handleResponse(await fetch(`${BASE}/api/machines${qs ? `?${qs}` : ''}`, { headers: authHeadersGet() }));
     if (!res.ok) return null;
     return unwrapList(await res.json());
+  } catch {
+    return null;
+  }
+}
+
+async function getMachineSummary() {
+  try {
+    const res = handleResponse(await fetch(`${BASE}/api/machines/summary`, { headers: authHeadersGet() }));
+    if (!res.ok) return null;
+    return await res.json();
   } catch {
     return null;
   }
@@ -687,6 +703,22 @@ async function deleteMachine(id) {
     return res.ok;
   } catch {
     return false;
+  }
+}
+
+async function bulkImportMachines(machines) {
+  try {
+    const res = handleResponse(
+      await fetch(`${BASE}/api/machines/bulk`, {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify({ machines }),
+      }),
+    );
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
   }
 }
 
@@ -757,9 +789,11 @@ const api = {
   createAuditEntry,
   clearAuditLog,
   getMachines,
+  getMachineSummary,
   createMachine,
   updateMachine,
   deleteMachine,
+  bulkImportMachines,
   sendEmail,
 };
 

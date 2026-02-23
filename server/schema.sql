@@ -10,14 +10,13 @@ CREATE TABLE IF NOT EXISTS users (
   permissions JSONB DEFAULT '{}',
   created DATE DEFAULT CURRENT_DATE
 );
-
 CREATE TABLE IF NOT EXISTS orders (
   id VARCHAR(50) PRIMARY KEY,
   material_no VARCHAR(30),
   description TEXT,
   quantity INTEGER DEFAULT 1,
-  list_price NUMERIC(12,2) DEFAULT 0,
-  total_cost NUMERIC(12,2) DEFAULT 0,
+  list_price NUMERIC(12, 2) DEFAULT 0,
+  total_cost NUMERIC(12, 2) DEFAULT 0,
   order_date DATE,
   order_by VARCHAR(100),
   remark TEXT,
@@ -35,17 +34,15 @@ CREATE TABLE IF NOT EXISTS orders (
   bulk_group_id VARCHAR(50),
   created_at TIMESTAMP DEFAULT NOW()
 );
-
 CREATE TABLE IF NOT EXISTS bulk_groups (
   id VARCHAR(50) PRIMARY KEY,
   month VARCHAR(30),
   created_by VARCHAR(100),
   items INTEGER DEFAULT 0,
-  total_cost NUMERIC(12,2) DEFAULT 0,
+  total_cost NUMERIC(12, 2) DEFAULT 0,
   status VARCHAR(30) DEFAULT 'Pending',
   date DATE DEFAULT CURRENT_DATE
 );
-
 CREATE TABLE IF NOT EXISTS stock_checks (
   id VARCHAR(50) PRIMARY KEY,
   date DATE,
@@ -55,7 +52,6 @@ CREATE TABLE IF NOT EXISTS stock_checks (
   status VARCHAR(30) DEFAULT 'In Progress',
   notes TEXT
 );
-
 CREATE TABLE IF NOT EXISTS notif_log (
   id VARCHAR(50) PRIMARY KEY,
   type VARCHAR(20),
@@ -64,7 +60,6 @@ CREATE TABLE IF NOT EXISTS notif_log (
   date DATE DEFAULT CURRENT_DATE,
   status VARCHAR(30)
 );
-
 CREATE TABLE IF NOT EXISTS pending_approvals (
   id VARCHAR(50) PRIMARY KEY,
   order_id VARCHAR(50),
@@ -72,23 +67,21 @@ CREATE TABLE IF NOT EXISTS pending_approvals (
   description TEXT,
   requested_by VARCHAR(100),
   quantity INTEGER,
-  total_cost NUMERIC(12,2),
+  total_cost NUMERIC(12, 2),
   sent_date DATE,
   status VARCHAR(20) DEFAULT 'pending',
   action_date DATE,
   order_ids JSONB
 );
-
 CREATE TABLE IF NOT EXISTS parts_catalog (
   material_no VARCHAR(30) PRIMARY KEY,
   description TEXT,
   category VARCHAR(100),
-  sg_price NUMERIC(12,2) DEFAULT 0,
-  dist_price NUMERIC(12,2) DEFAULT 0,
-  transfer_price NUMERIC(12,2) DEFAULT 0,
-  rsp_eur NUMERIC(12,2) DEFAULT 0
+  sg_price NUMERIC(12, 2) DEFAULT 0,
+  dist_price NUMERIC(12, 2) DEFAULT 0,
+  transfer_price NUMERIC(12, 2) DEFAULT 0,
+  rsp_eur NUMERIC(12, 2) DEFAULT 0
 );
-
 CREATE TABLE IF NOT EXISTS app_config (
   key VARCHAR(50) NOT NULL,
   user_id VARCHAR(20) NOT NULL DEFAULT '__global__',
@@ -96,35 +89,39 @@ CREATE TABLE IF NOT EXISTS app_config (
   updated_at TIMESTAMP DEFAULT NOW(),
   PRIMARY KEY (key, user_id)
 );
-
 CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status);
 CREATE INDEX IF NOT EXISTS idx_orders_month ON orders(month);
 CREATE INDEX IF NOT EXISTS idx_orders_order_by ON orders(order_by);
 CREATE INDEX IF NOT EXISTS idx_pending_approvals_status ON pending_approvals(status);
-
 CREATE TABLE IF NOT EXISTS wa_auth (
   key_type VARCHAR(50) NOT NULL,
   key_id VARCHAR(100) NOT NULL,
   value TEXT NOT NULL,
   PRIMARY KEY (key_type, key_id)
 );
-
 -- Migrations for existing databases
-ALTER TABLE users ADD COLUMN IF NOT EXISTS permissions JSONB DEFAULT '{}';
-ALTER TABLE app_config ADD COLUMN IF NOT EXISTS user_id VARCHAR(20) DEFAULT '__global__';
-DO $$ BEGIN
-  IF EXISTS (
-    SELECT 1 FROM information_schema.table_constraints
-    WHERE table_name='app_config' AND constraint_type='PRIMARY KEY' AND constraint_name='app_config_pkey'
-  ) THEN
-    IF (SELECT COUNT(*) FROM information_schema.key_column_usage
-        WHERE table_name='app_config' AND constraint_name='app_config_pkey') = 1 THEN
-      ALTER TABLE app_config DROP CONSTRAINT app_config_pkey;
-      ALTER TABLE app_config ADD PRIMARY KEY (key, user_id);
-    END IF;
-  END IF;
+ALTER TABLE users
+ADD COLUMN IF NOT EXISTS permissions JSONB DEFAULT '{}';
+ALTER TABLE app_config
+ADD COLUMN IF NOT EXISTS user_id VARCHAR(20) DEFAULT '__global__';
+DO $$ BEGIN IF EXISTS (
+  SELECT 1
+  FROM information_schema.table_constraints
+  WHERE table_name = 'app_config'
+    AND constraint_type = 'PRIMARY KEY'
+    AND constraint_name = 'app_config_pkey'
+) THEN IF (
+  SELECT COUNT(*)
+  FROM information_schema.key_column_usage
+  WHERE table_name = 'app_config'
+    AND constraint_name = 'app_config_pkey'
+) = 1 THEN
+ALTER TABLE app_config DROP CONSTRAINT app_config_pkey;
+ALTER TABLE app_config
+ADD PRIMARY KEY (key, user_id);
+END IF;
+END IF;
 END $$;
-
 -- Audit trail for tracking all user actions
 CREATE TABLE IF NOT EXISTS audit_log (
   id SERIAL PRIMARY KEY,
@@ -140,7 +137,6 @@ CREATE TABLE IF NOT EXISTS audit_log (
 CREATE INDEX IF NOT EXISTS idx_audit_log_user ON audit_log(user_id);
 CREATE INDEX IF NOT EXISTS idx_audit_log_action ON audit_log(action);
 CREATE INDEX IF NOT EXISTS idx_audit_log_created ON audit_log(created_at);
-
 -- Machines table for fleet tracking & forecasting
 CREATE TABLE IF NOT EXISTS machines (
   id SERIAL PRIMARY KEY,
@@ -152,20 +148,56 @@ CREATE TABLE IF NOT EXISTS machines (
   notes TEXT,
   created_at TIMESTAMP DEFAULT NOW()
 );
-
 -- Migration: Add bulk_group_id for explicit bulk group linking
-ALTER TABLE orders ADD COLUMN IF NOT EXISTS bulk_group_id VARCHAR(50);
+ALTER TABLE orders
+ADD COLUMN IF NOT EXISTS bulk_group_id VARCHAR(50);
 -- NOTE: Backfill migration removed — it ran on every server start and
 -- incorrectly linked single orders to bulk groups by month match.
 -- Orders are now linked to bulk groups only via explicit user action.
 CREATE INDEX IF NOT EXISTS idx_orders_bulk_group_id ON orders(bulk_group_id);
-
 -- Migration: Widen VARCHAR ID columns for timestamp-based IDs (ORD-<13digits>-<4chars> = 22+ chars)
-ALTER TABLE users ALTER COLUMN id TYPE VARCHAR(50);
-ALTER TABLE orders ALTER COLUMN id TYPE VARCHAR(50);
-ALTER TABLE orders ALTER COLUMN bulk_group_id TYPE VARCHAR(50);
-ALTER TABLE bulk_groups ALTER COLUMN id TYPE VARCHAR(50);
-ALTER TABLE stock_checks ALTER COLUMN id TYPE VARCHAR(50);
-ALTER TABLE notif_log ALTER COLUMN id TYPE VARCHAR(50);
-ALTER TABLE pending_approvals ALTER COLUMN id TYPE VARCHAR(50);
-ALTER TABLE pending_approvals ALTER COLUMN order_id TYPE VARCHAR(50);
+ALTER TABLE users
+ALTER COLUMN id TYPE VARCHAR(50);
+ALTER TABLE orders
+ALTER COLUMN id TYPE VARCHAR(50);
+ALTER TABLE orders
+ALTER COLUMN bulk_group_id TYPE VARCHAR(50);
+ALTER TABLE bulk_groups
+ALTER COLUMN id TYPE VARCHAR(50);
+ALTER TABLE stock_checks
+ALTER COLUMN id TYPE VARCHAR(50);
+ALTER TABLE notif_log
+ALTER COLUMN id TYPE VARCHAR(50);
+ALTER TABLE pending_approvals
+ALTER COLUMN id TYPE VARCHAR(50);
+ALTER TABLE pending_approvals
+ALTER COLUMN order_id TYPE VARCHAR(50);
+-- Migration: Extend machines table for full Service module
+ALTER TABLE machines
+ADD COLUMN IF NOT EXISTS serial_number VARCHAR(100);
+ALTER TABLE machines
+ADD COLUMN IF NOT EXISTS customer_name VARCHAR(200);
+ALTER TABLE machines
+ADD COLUMN IF NOT EXISTS customer_contact VARCHAR(200);
+ALTER TABLE machines
+ADD COLUMN IF NOT EXISTS customer_email VARCHAR(255);
+ALTER TABLE machines
+ADD COLUMN IF NOT EXISTS maintenance_period_months INTEGER DEFAULT 12;
+ALTER TABLE machines
+ADD COLUMN IF NOT EXISTS last_maintenance_date DATE;
+ALTER TABLE machines
+ADD COLUMN IF NOT EXISTS next_maintenance_date DATE;
+ALTER TABLE machines
+ADD COLUMN IF NOT EXISTS contract_start DATE;
+ALTER TABLE machines
+ADD COLUMN IF NOT EXISTS contract_end DATE;
+ALTER TABLE machines
+ADD COLUMN IF NOT EXISTS contract_type VARCHAR(80);
+ALTER TABLE machines
+ADD COLUMN IF NOT EXISTS remark TEXT;
+ALTER TABLE machines
+ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT NOW();
+CREATE INDEX IF NOT EXISTS idx_machines_modality ON machines(modality);
+CREATE INDEX IF NOT EXISTS idx_machines_customer ON machines(customer_name);
+CREATE INDEX IF NOT EXISTS idx_machines_next_maint ON machines(next_maintenance_date);
+CREATE INDEX IF NOT EXISTS idx_machines_contract_end ON machines(contract_end);

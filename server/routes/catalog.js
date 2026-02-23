@@ -22,6 +22,16 @@ router.get(
   }),
 );
 
+// GET /all - fetch entire catalog without pagination (for frontend cache)
+router.get(
+  '/all',
+  asyncHandler(async (req, res) => {
+    const dataResult = await query('SELECT * FROM parts_catalog ORDER BY material_no');
+    const rows = dataResult.rows.map(snakeToCamel);
+    res.json(rows);
+  }),
+);
+
 // POST / - bulk upsert parts in a single transaction
 router.post('/', async (req, res) => {
   try {

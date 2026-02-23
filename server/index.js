@@ -15,7 +15,7 @@ import { query as dbQuery } from './db.js';
 import nodemailer from 'nodemailer';
 import { verifyToken, requireAdmin } from './middleware/auth.js';
 import { errorHandler } from './middleware/errorHandler.js';
-import { startScheduler, reloadScheduler, runScheduledReport } from './scheduler.js';
+import { startScheduler, reloadScheduler, runScheduledReport, resetTransporter } from './scheduler.js';
 
 // API Routes
 import ordersRouter from './routes/orders.js';
@@ -25,7 +25,7 @@ import authRouter from './routes/auth.js';
 import stockChecksRouter from './routes/stockChecks.js';
 import notificationsRouter from './routes/notifications.js';
 import approvalsRouter from './routes/approvals.js';
-import configRouter from './routes/config.js';
+import configRouter, { registerConfigHook } from './routes/config.js';
 import catalogRouter from './routes/catalog.js';
 import migrateRouter from './routes/migrate.js';
 import auditLogRouter from './routes/auditLog.js';
@@ -308,8 +308,16 @@ async function connectWhatsApp() {
 
 // Format phone number for WhatsApp
 function formatPhoneNumber(phone) {
+  if (!phone || typeof phone !== 'string') {
+    throw new Error('Invalid phone number: must be a non-empty string');
+  }
   // Remove spaces, dashes, and plus sign
   let cleaned = phone.replace(/[\s\-+()]/g, '');
+
+  // Validate: only digits, 7–15 digits (ITU-T E.164)
+  if (!/^\d{7,15}$/.test(cleaned)) {
+    throw new Error(`Invalid phone number format: ${phone}`);
+  }
 
   // Add country code if not present (default Singapore +65)
   if (!cleaned.startsWith('65') && cleaned.length === 8) {
@@ -322,7 +330,7 @@ function formatPhoneNumber(phone) {
 // ============ API ENDPOINTS ============
 
 // Get connection status
-app.get('/api/whatsapp/status', (req, res) => {
+app.get('/api/whatsapp/status', verifyToken, (req, res) => {
   // During transient reconnects, report as 'connected' so the UI doesn't flicker.
   // Include lastSessionInfo so the frontend keeps showing session details.
   if (connectionStatus === 'reconnecting' && lastSessionInfo) {
@@ -341,7 +349,7 @@ app.get('/api/whatsapp/status', (req, res) => {
 });
 
 // Connect WhatsApp (generate QR or restore session)
-app.post('/api/whatsapp/connect', async (req, res) => {
+app.post('/api/whatsapp/connect', verifyToken, async (req, res) => {
   const forceNew = req.body?.forceNew === true;
 
   if (connectionStatus === 'connected') {
@@ -412,7 +420,7 @@ app.post('/api/whatsapp/connect', async (req, res) => {
 });
 
 // Disconnect WhatsApp
-app.post('/api/whatsapp/disconnect', async (req, res) => {
+app.post('/api/whatsapp/disconnect', verifyToken, async (req, res) => {
   // Cancel any pending reconnect
   if (waReconnectTimer) {
     clearTimeout(waReconnectTimer);
@@ -511,11 +519,13 @@ app.post('/api/whatsapp/broadcast', verifyToken, async (req, res) => {
     }
 
     const results = [];
+    let successCount = 0;
     for (const phone of phones) {
       try {
         const jid = formatPhoneNumber(phone);
         await sock.sendMessage(jid, { text: message });
         results.push({ phone, success: true });
+        successCount++;
         // Small delay between messages to avoid rate limiting
         await new Promise((resolve) => setTimeout(resolve, 1000));
       } catch (err) {
@@ -523,14 +533,16 @@ app.post('/api/whatsapp/broadcast', verifyToken, async (req, res) => {
       }
     }
 
-    res.json({ success: true, results });
+    const allOk = successCount === phones.length;
+    const status = allOk ? 200 : successCount > 0 ? 207 : 500;
+    res.status(status).json({ success: allOk, successCount, totalCount: phones.length, results });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
 // Get available templates
-app.get('/api/whatsapp/templates', (req, res) => {
+app.get('/api/whatsapp/templates', verifyToken, (req, res) => {
   res.json({
     templates: Object.keys(messageTemplates).map((key) => ({
       id: key,
@@ -610,7 +622,7 @@ app.post('/api/send-email', verifyToken, async (req, res) => {
       port: smtp.port || 587,
       secure: (smtp.port || 587) === 465,
       auth: smtp.user ? { user: smtp.user, pass: smtp.pass } : undefined,
-      tls: { rejectUnauthorized: false },
+      tls: { rejectUnauthorized: process.env.NODE_ENV === 'production' },
     });
     await transporter.sendMail({
       from: smtp.from || `"Miltenyi Inventory Hub" <${smtp.user || 'noreply@miltenyibiotec.com'}>`,
@@ -645,6 +657,10 @@ app.get('/api/health', async (req, res) => {
 // ── Scheduled Reports API ──
 // Provides WhatsApp context (sock + formatPhoneNumber) to scheduler
 const getWaContext = () => ({ sock, formatPhoneNumber });
+
+// Auto-reload scheduler & reset SMTP transporter when config changes via Settings
+registerConfigHook('scheduledNotifs', () => reloadScheduler(getWaContext));
+registerConfigHook('emailConfig', () => resetTransporter());
 
 // Manual trigger: run scheduled report now
 app.post('/api/scheduled-report/run', verifyToken, requireAdmin, async (req, res) => {
