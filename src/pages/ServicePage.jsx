@@ -713,7 +713,6 @@ function Registry({
   filterMaint,
   setFilterMaint,
   uniqueModalities,
-  isAdmin,
   handleExport,
   setShowImport,
   setEditMachine,
@@ -775,26 +774,22 @@ function Registry({
           <button className="svc-btn svc-btn--ghost svc-btn--sm" onClick={handleExport} title="Export to Excel">
             <Download size={14} /> Export
           </button>
-          {isAdmin && (
-            <>
-              <button
-                className="svc-btn svc-btn--ghost svc-btn--sm"
-                onClick={() => setShowImport(true)}
-                title="Import from Excel"
-              >
-                <Upload size={14} /> Import
-              </button>
-              <button
-                className="svc-btn svc-btn--primary svc-btn--sm"
-                onClick={() => {
-                  setEditMachine(null);
-                  setShowModal(true);
-                }}
-              >
-                <Plus size={14} /> Add Machine
-              </button>
-            </>
-          )}
+          <button
+            className="svc-btn svc-btn--ghost svc-btn--sm"
+            onClick={() => setShowImport(true)}
+            title="Import from Excel"
+          >
+            <Upload size={14} /> Import
+          </button>
+          <button
+            className="svc-btn svc-btn--primary svc-btn--sm"
+            onClick={() => {
+              setEditMachine(null);
+              setShowModal(true);
+            }}
+          >
+            <Plus size={14} /> Add Machine
+          </button>
         </div>
       </div>
 
@@ -822,16 +817,13 @@ function Registry({
               <th>Contract End</th>
               <th>Contract Status</th>
               <th>Remark</th>
-              {isAdmin && <th>Actions</th>}
+              <th>Actions</th>
             </tr>
           </thead>
           <tbody>
             {filtered.length === 0 ? (
               <tr>
-                <td
-                  colSpan={isAdmin ? 15 : 14}
-                  style={{ textAlign: 'center', padding: '40px 0', color: 'var(--svc-text-muted)' }}
-                >
+                <td colSpan={15} style={{ textAlign: 'center', padding: '40px 0', color: 'var(--svc-text-muted)' }}>
                   {loading ? 'Loading machines\u2026' : 'No machines found. Add one to get started.'}
                 </td>
               </tr>
@@ -873,29 +865,27 @@ function Registry({
                       <ContractBadge status={cs} />
                     </td>
                     <td className="svc-remark">{m.remark || '\u2014'}</td>
-                    {isAdmin && (
-                      <td>
-                        <div className="svc-row-actions">
-                          <button
-                            className="svc-icon-btn svc-icon-btn--edit"
-                            title="Edit"
-                            onClick={() => {
-                              setEditMachine(m);
-                              setShowModal(true);
-                            }}
-                          >
-                            <Edit3 size={14} />
-                          </button>
-                          <button
-                            className="svc-icon-btn svc-icon-btn--delete"
-                            title="Delete"
-                            onClick={() => setDeleteMachine(m)}
-                          >
-                            <Trash2 size={14} />
-                          </button>
-                        </div>
-                      </td>
-                    )}
+                    <td>
+                      <div className="svc-row-actions">
+                        <button
+                          className="svc-icon-btn svc-icon-btn--edit"
+                          title="Edit"
+                          onClick={() => {
+                            setEditMachine(m);
+                            setShowModal(true);
+                          }}
+                        >
+                          <Edit3 size={14} />
+                        </button>
+                        <button
+                          className="svc-icon-btn svc-icon-btn--delete"
+                          title="Delete"
+                          onClick={() => setDeleteMachine(m)}
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
+                    </td>
                   </tr>
                 );
               })
@@ -909,7 +899,7 @@ function Registry({
 
 // ─── Main ServicePage ─────────────────────────────────────────────────────────
 
-export default function ServicePage({ isAdmin, notify, machines, setMachines }) {
+export default function ServicePage({ notify, machines, setMachines }) {
   const [subPage, setSubPage] = useState('dashboard'); // 'dashboard' | 'machines'
   const [summary, setSummary] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -933,8 +923,8 @@ export default function ServicePage({ isAdmin, notify, machines, setMachines }) 
   }, [setMachines]);
 
   useEffect(() => {
-    void loadData();
-  }, [loadData]); // eslint-disable-line react-hooks/set-state-in-effect
+    void loadData(); // eslint-disable-line react-hooks/set-state-in-effect
+  }, [loadData]);
 
   // Filter machines client-side for instant feedback
   const filtered = useMemo(() => {
@@ -1083,7 +1073,6 @@ export default function ServicePage({ isAdmin, notify, machines, setMachines }) 
             filterMaint={filterMaint}
             setFilterMaint={setFilterMaint}
             uniqueModalities={uniqueModalities}
-            isAdmin={isAdmin}
             handleExport={handleExport}
             setShowImport={setShowImport}
             setEditMachine={setEditMachine}
