@@ -798,8 +798,8 @@ function Registry({
         {loading ? 'Loading\u2026' : `${filtered.length} machine${filtered.length !== 1 ? 's' : ''} found`}
       </div>
 
-      {/* Table */}
-      <div className="svc-table-wrapper">
+      {/* Desktop Table */}
+      <div className="svc-table-wrapper svc-desktop-only">
         <table className="svc-table">
           <thead>
             <tr>
@@ -892,6 +892,82 @@ function Registry({
             )}
           </tbody>
         </table>
+      </div>
+
+      {/* Mobile Card List */}
+      <div className="svc-mobile-only">
+        {filtered.length === 0 ? (
+          <div className="svc-mobile-empty">
+            {loading ? 'Loading machines\u2026' : 'No machines found. Add one to get started.'}
+          </div>
+        ) : (
+          filtered.map((m, i) => {
+            const cs = contractStatus(m);
+            const ms = maintenanceStatus(m);
+            return (
+              <div key={m.id} className={`svc-mcard ${cs === 'Expired' || ms === 'Overdue' ? 'svc-mcard--alert' : ''}`}>
+                <div className="svc-mcard__head">
+                  <div className="svc-mcard__title">
+                    <span className="svc-mcard__num">#{i + 1}</span>
+                    <span className="svc-mcard__name">{m.name || m.modality || 'Machine'}</span>
+                  </div>
+                  <div className="svc-mcard__actions">
+                    <button
+                      className="svc-icon-btn svc-icon-btn--edit"
+                      onClick={() => {
+                        setEditMachine(m);
+                        setShowModal(true);
+                      }}
+                    >
+                      <Edit3 size={15} />
+                    </button>
+                    <button className="svc-icon-btn svc-icon-btn--delete" onClick={() => setDeleteMachine(m)}>
+                      <Trash2 size={15} />
+                    </button>
+                  </div>
+                </div>
+                {m.serialNumber && (
+                  <div className="svc-mcard__serial">
+                    <span className="svc-mono">{m.serialNumber}</span>
+                  </div>
+                )}
+                <div className="svc-mcard__badges">
+                  <MaintBadge status={ms} />
+                  <ContractBadge status={cs} />
+                </div>
+                <div className="svc-mcard__grid">
+                  <div className="svc-mcard__field">
+                    <span className="svc-mcard__label">Modality</span>
+                    <span className="svc-mcard__val">{m.modality || '\u2014'}</span>
+                  </div>
+                  <div className="svc-mcard__field">
+                    <span className="svc-mcard__label">Customer</span>
+                    <span className="svc-mcard__val">{m.customerName || '\u2014'}</span>
+                  </div>
+                  {m.location && (
+                    <div className="svc-mcard__field">
+                      <span className="svc-mcard__label">Location</span>
+                      <span className="svc-mcard__val">{m.location}</span>
+                    </div>
+                  )}
+                  <div className="svc-mcard__field">
+                    <span className="svc-mcard__label">Next Maint.</span>
+                    <span className="svc-mcard__val">{fmtDate(m.nextMaintenanceDate)}</span>
+                  </div>
+                  <div className="svc-mcard__field">
+                    <span className="svc-mcard__label">Contract</span>
+                    <span className="svc-mcard__val">{m.contractType || '\u2014'}</span>
+                  </div>
+                  <div className="svc-mcard__field">
+                    <span className="svc-mcard__label">Contract End</span>
+                    <span className="svc-mcard__val">{fmtDate(m.contractEnd)}</span>
+                  </div>
+                </div>
+                {m.remark && <div className="svc-mcard__remark">{m.remark}</div>}
+              </div>
+            );
+          })
+        )}
       </div>
     </div>
   );
@@ -1337,4 +1413,124 @@ const SERVICE_CSS = `
 /* Spin */
 .svc-spin { animation: svc-spin 1s linear infinite; }
 @keyframes svc-spin { to { transform: rotate(360deg); } }
+
+/* ─── Responsive: show/hide ─── */
+.svc-mobile-only { display: none; }
+
+/* ─── Mobile card styles ─── */
+.svc-mobile-empty {
+  text-align: center; padding: 40px 16px;
+  color: var(--svc-text-muted); font-size: 14px;
+}
+.svc-mcard {
+  background: var(--svc-surface);
+  border: 1px solid var(--svc-border);
+  border-radius: 12px;
+  padding: 14px;
+  margin-bottom: 10px;
+  transition: box-shadow 0.15s;
+}
+.svc-mcard--alert { border-left: 3px solid #ef4444; }
+.svc-mcard__head {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 6px;
+}
+.svc-mcard__title {
+  display: flex; align-items: center; gap: 8px;
+  min-width: 0; flex: 1;
+}
+.svc-mcard__num {
+  font-size: 11px; color: var(--svc-text-subtle); font-weight: 600;
+  flex-shrink: 0;
+}
+.svc-mcard__name {
+  font-size: 14px; font-weight: 600; color: var(--svc-text);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.svc-mcard__actions { display: flex; gap: 2px; flex-shrink: 0; }
+.svc-mcard__serial { margin-bottom: 8px; }
+.svc-mcard__badges { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
+.svc-mcard__grid {
+  display: grid; grid-template-columns: 1fr 1fr;
+  gap: 8px 12px;
+}
+.svc-mcard__field { display: flex; flex-direction: column; gap: 1px; }
+.svc-mcard__label { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--svc-text-subtle); }
+.svc-mcard__val { font-size: 13px; color: var(--svc-text); }
+.svc-mcard__remark {
+  margin-top: 8px; padding-top: 8px;
+  border-top: 1px solid var(--svc-border);
+  font-size: 12px; color: var(--svc-text-muted);
+  font-style: italic;
+}
+
+/* ─── Mobile breakpoint ─── */
+@media (max-width: 768px) {
+  .svc-desktop-only { display: none; }
+  .svc-mobile-only  { display: block; }
+
+  .svc-page { font-size: 13px; }
+
+  /* Sub-nav compact */
+  .svc-subnav { padding: 8px 12px; gap: 2px; }
+  .svc-subnav-btn { padding: 6px 12px; font-size: 12.5px; }
+
+  /* Dashboard compact */
+  .svc-dashboard { padding: 14px 12px; }
+  .svc-dash-grid { grid-template-columns: 1fr 1fr; gap: 10px; }
+  .svc-card { padding: 12px 14px; gap: 10px; }
+  .svc-card__icon { width: 36px; height: 36px; border-radius: 8px; }
+  .svc-card__icon svg { width: 16px; height: 16px; }
+  .svc-card__value { font-size: 22px; }
+  .svc-card__label { font-size: 11px; }
+  .svc-section-heading { font-size: 13px; }
+  .svc-alerts-section { padding: 12px; }
+
+  /* Registry compact */
+  .svc-registry { padding: 12px; }
+
+  /* Toolbar: stack vertically */
+  .svc-toolbar {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+  }
+  .svc-search-wrap { min-width: unset; width: 100%; }
+  .svc-filters {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px;
+    width: 100%;
+  }
+  .svc-filter-group { width: 100%; }
+  .svc-filter-group .svc-select { width: 100%; }
+  .svc-filters .svc-select { width: 100%; }
+  .svc-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 6px;
+    width: 100%;
+  }
+  .svc-actions .svc-btn { justify-content: center; font-size: 12px; padding: 7px 6px; }
+
+  /* Modal full-width on mobile */
+  .svc-modal-overlay { padding: 16px 8px; align-items: flex-start; }
+  .svc-modal { max-width: 100%; border-radius: 12px; }
+  .svc-modal__header { padding: 14px 14px; }
+  .svc-modal__header h2 { font-size: 15px; }
+  .svc-modal__body { padding: 14px; }
+
+  /* Alert table scroll */
+  .svc-alert-table-wrapper { margin: 0 -12px; padding: 0 12px; }
+}
+
+/* ─── Small phone breakpoint ─── */
+@media (max-width: 400px) {
+  .svc-dash-grid { grid-template-columns: 1fr; }
+  .svc-card__value { font-size: 20px; }
+  .svc-mcard__grid { grid-template-columns: 1fr; }
+  .svc-actions { grid-template-columns: 1fr 1fr; }
+  .svc-subnav-btn { padding: 6px 10px; font-size: 12px; }
+  .svc-filters { grid-template-columns: 1fr; }
+}
 `;
