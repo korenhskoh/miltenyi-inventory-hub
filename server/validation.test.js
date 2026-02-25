@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { pickAllowed, requireFields } from './validation.js';
+import { pickAllowed, requireFields, sanitizeDates } from './validation.js';
 
 describe('pickAllowed', () => {
   it('keeps only allowed fields from input object', () => {
@@ -53,5 +53,61 @@ describe('requireFields', () => {
   it('returns null when required list is empty', () => {
     const err = requireFields({}, []);
     expect(err).toBeNull();
+  });
+});
+
+describe('sanitizeDates', () => {
+  it('removes empty string date fields', () => {
+    const obj = { order_date: '', description: 'Test', arrival_date: '2026-02-25' };
+    const result = sanitizeDates(obj, ['order_date', 'arrival_date']);
+    expect(result).not.toHaveProperty('order_date');
+    expect(result).toHaveProperty('arrival_date', '2026-02-25');
+    expect(result).toHaveProperty('description', 'Test');
+  });
+
+  it('removes undefined date fields', () => {
+    const obj = { order_date: undefined, status: 'Pending' };
+    const result = sanitizeDates(obj, ['order_date']);
+    expect(result).not.toHaveProperty('order_date');
+    expect(result).toHaveProperty('status', 'Pending');
+  });
+
+  it('keeps valid date values untouched', () => {
+    const obj = { order_date: '2026-01-15', arrival_date: '2026-02-01' };
+    const result = sanitizeDates(obj, ['order_date', 'arrival_date']);
+    expect(result).toEqual({ order_date: '2026-01-15', arrival_date: '2026-02-01' });
+  });
+
+  it('keeps null date values (only removes empty string and undefined)', () => {
+    const obj = { order_date: null };
+    const result = sanitizeDates(obj, ['order_date']);
+    expect(result).toHaveProperty('order_date', null);
+  });
+
+  it('ignores date fields not present in the object', () => {
+    const obj = { description: 'Test' };
+    const result = sanitizeDates(obj, ['order_date', 'arrival_date']);
+    expect(result).toEqual({ description: 'Test' });
+  });
+
+  it('returns the same object reference (mutates in place)', () => {
+    const obj = { order_date: '' };
+    const result = sanitizeDates(obj, ['order_date']);
+    expect(result).toBe(obj);
+  });
+
+  it('handles empty dateFields array', () => {
+    const obj = { order_date: '', status: 'Pending' };
+    const result = sanitizeDates(obj, []);
+    expect(result).toEqual({ order_date: '', status: 'Pending' });
+  });
+
+  it('handles multiple empty date fields', () => {
+    const obj = { order_date: '', arrival_date: '', approval_sent_date: undefined, status: 'OK' };
+    const result = sanitizeDates(obj, ['order_date', 'arrival_date', 'approval_sent_date']);
+    expect(result).not.toHaveProperty('order_date');
+    expect(result).not.toHaveProperty('arrival_date');
+    expect(result).not.toHaveProperty('approval_sent_date');
+    expect(result).toHaveProperty('status', 'OK');
   });
 });
