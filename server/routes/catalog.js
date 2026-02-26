@@ -100,4 +100,22 @@ router.delete('/', async (req, res) => {
   }
 });
 
+// POST /lookup — bulk price lookup by material numbers
+router.post(
+  '/lookup',
+  asyncHandler(async (req, res) => {
+    const { materialNos } = req.body;
+    if (!Array.isArray(materialNos) || materialNos.length === 0) {
+      return res.status(400).json({ error: 'materialNos array is required' });
+    }
+    const limited = materialNos.slice(0, 500);
+    const placeholders = limited.map((_, i) => `$${i + 1}`).join(', ');
+    const result = await query(`SELECT * FROM parts_catalog WHERE material_no IN (${placeholders})`, limited);
+    const found = result.rows.map(snakeToCamel);
+    const foundSet = new Set(result.rows.map((r) => r.material_no));
+    const notFound = limited.filter((mn) => !foundSet.has(mn));
+    res.json({ found, notFound });
+  }),
+);
+
 export default router;

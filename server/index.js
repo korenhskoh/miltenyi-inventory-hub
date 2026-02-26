@@ -30,6 +30,7 @@ import catalogRouter from './routes/catalog.js';
 import migrateRouter from './routes/migrate.js';
 import auditLogRouter from './routes/auditLog.js';
 import machinesRouter from './routes/machines.js';
+import localInventoryRouter from './routes/local-inventory.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -604,6 +605,7 @@ app.use('/api/pending-approvals', verifyToken, approvalsRouter);
 app.use('/api/catalog', verifyToken, catalogRouter);
 app.use('/api/audit-log', verifyToken, auditLogRouter);
 app.use('/api/machines', verifyToken, machinesRouter);
+app.use('/api/local-inventory', verifyToken, localInventoryRouter);
 
 // Admin-only routes (require JWT + admin role)
 app.use('/api/users', verifyToken, requireAdmin, usersRouter);

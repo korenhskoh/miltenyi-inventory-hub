@@ -201,3 +201,35 @@ CREATE INDEX IF NOT EXISTS idx_machines_modality ON machines(modality);
 CREATE INDEX IF NOT EXISTS idx_machines_customer ON machines(customer_name);
 CREATE INDEX IF NOT EXISTS idx_machines_next_maint ON machines(next_maintenance_date);
 CREATE INDEX IF NOT EXISTS idx_machines_contract_end ON machines(contract_end);
+
+-- Local Inventory table for service spare parts tracking
+CREATE TABLE IF NOT EXISTS local_inventory (
+  id SERIAL PRIMARY KEY,
+  material_no VARCHAR(30) NOT NULL,
+  description TEXT,
+  lots_number VARCHAR(100),
+  category VARCHAR(100),
+  quantity INTEGER DEFAULT 0,
+  updated_at TIMESTAMP DEFAULT NOW(),
+  created_at TIMESTAMP DEFAULT NOW()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_local_inv_unique
+  ON local_inventory(material_no, COALESCE(lots_number, '__none__'));
+CREATE INDEX IF NOT EXISTS idx_local_inventory_category ON local_inventory(category);
+
+-- Inventory transaction log for tracking all quantity changes
+CREATE TABLE IF NOT EXISTS inventory_transactions (
+  id SERIAL PRIMARY KEY,
+  inventory_id INTEGER REFERENCES local_inventory(id) ON DELETE CASCADE,
+  material_no VARCHAR(30) NOT NULL,
+  lots_number VARCHAR(100),
+  quantity_change INTEGER NOT NULL,
+  quantity_after INTEGER NOT NULL,
+  type VARCHAR(20) NOT NULL CHECK (type IN ('charge_out','import','adjustment','arrival')),
+  user_id VARCHAR(50),
+  user_name VARCHAR(100),
+  notes TEXT,
+  created_at TIMESTAMP DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_inv_txn_material ON inventory_transactions(material_no);
+CREATE INDEX IF NOT EXISTS idx_inv_txn_created ON inventory_transactions(created_at);

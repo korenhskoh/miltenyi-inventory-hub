@@ -738,6 +738,154 @@ async function sendEmail({ to, subject, html, smtp }) {
   }
 }
 
+// ─── Local Inventory ───
+
+async function getLocalInventory(filters = {}) {
+  try {
+    const params = new URLSearchParams();
+    for (const [k, v] of Object.entries(filters)) {
+      if (v !== '' && v !== null && v !== undefined && v !== 'All') params.append(k, v);
+    }
+    const qs = params.toString();
+    const res = handleResponse(
+      await fetch(`${BASE}/api/local-inventory${qs ? `?${qs}` : ''}`, { headers: authHeadersGet() }),
+    );
+    if (!res.ok) return null;
+    return unwrapList(await res.json());
+  } catch {
+    return null;
+  }
+}
+
+async function getLocalInventorySummary() {
+  try {
+    const res = handleResponse(await fetch(`${BASE}/api/local-inventory/summary`, { headers: authHeadersGet() }));
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
+async function getInventoryTransactions(inventoryId) {
+  try {
+    const res = handleResponse(
+      await fetch(`${BASE}/api/local-inventory/${inventoryId}/transactions`, { headers: authHeadersGet() }),
+    );
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
+async function createInventoryItem(item) {
+  try {
+    const res = handleResponse(
+      await fetch(`${BASE}/api/local-inventory`, {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify(item),
+      }),
+    );
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
+async function bulkImportInventory(items) {
+  try {
+    const res = handleResponse(
+      await fetch(`${BASE}/api/local-inventory/bulk`, {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify({ items }),
+      }),
+    );
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
+async function chargeOutInventory(items) {
+  try {
+    const res = handleResponse(
+      await fetch(`${BASE}/api/local-inventory/charge-out`, {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify({ items }),
+      }),
+    );
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
+async function adjustInventory(items) {
+  try {
+    const res = handleResponse(
+      await fetch(`${BASE}/api/local-inventory/adjust`, {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify({ items }),
+      }),
+    );
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
+async function updateInventoryItem(id, updates) {
+  try {
+    const res = handleResponse(
+      await fetch(`${BASE}/api/local-inventory/${id}`, {
+        method: 'PUT',
+        headers: authHeaders(),
+        body: JSON.stringify(updates),
+      }),
+    );
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
+async function deleteInventoryItem(id) {
+  try {
+    const res = handleResponse(
+      await fetch(`${BASE}/api/local-inventory/${id}`, { method: 'DELETE', headers: authHeadersGet() }),
+    );
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+async function lookupPartPrices(materialNos) {
+  try {
+    const res = handleResponse(
+      await fetch(`${BASE}/api/catalog/lookup`, {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify({ materialNos }),
+      }),
+    );
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
 // ─── Export ───
 
 const api = {
@@ -795,6 +943,16 @@ const api = {
   deleteMachine,
   bulkImportMachines,
   sendEmail,
+  getLocalInventory,
+  getLocalInventorySummary,
+  getInventoryTransactions,
+  createInventoryItem,
+  bulkImportInventory,
+  chargeOutInventory,
+  adjustInventory,
+  updateInventoryItem,
+  deleteInventoryItem,
+  lookupPartPrices,
 };
 
 export default api;
