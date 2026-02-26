@@ -2956,6 +2956,7 @@ export default function App() {
   const allNavItems = [
     { id: 'dashboard', label: 'Dashboard', icon: Home, perm: 'dashboard', module: 'inventory' },
     { id: 'catalog', label: 'Parts Catalog', icon: Database, perm: 'catalog', module: 'inventory' },
+    { id: 'localinventory', label: 'Local Inventory', icon: Warehouse, perm: 'dashboard', module: 'inventory' },
     { id: 'allorders', label: 'All Orders', icon: ShoppingCart, perm: 'orders', module: 'inventory' },
     { id: 'orders', label: 'Single Orders', icon: Package, perm: 'orders', module: 'inventory' },
     { id: 'bulkorders', label: 'Bulk Orders', icon: Layers, perm: 'bulkOrders', module: 'inventory' },
@@ -2964,7 +2965,6 @@ export default function App() {
     { id: 'stockcheck', label: 'Stock Check', icon: ClipboardList, perm: 'stockCheck', module: 'inventory' },
     { id: 'delivery', label: 'Part Arrival', icon: Truck, perm: 'delivery', module: 'inventory' },
     { id: 'service', label: 'Service', icon: Briefcase, perm: 'dashboard', module: 'service' },
-    { id: 'localinventory', label: 'Local Inventory', icon: Warehouse, perm: 'dashboard', module: 'service' },
     { id: 'whatsapp', label: 'WhatsApp', icon: MessageSquare, perm: 'whatsapp', module: 'shared' },
     { id: 'notifications', label: 'Notifications', icon: Bell, perm: 'notifications', module: 'shared' },
     { id: 'audit', label: 'Audit Trail', icon: Shield, perm: 'auditTrail', module: 'shared' },

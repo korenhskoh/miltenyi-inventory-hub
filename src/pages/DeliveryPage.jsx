@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, Fragment } from 'react';
 import {
   CheckCircle,
   AlertCircle,
@@ -61,6 +61,8 @@ const DeliveryPage = ({
   // Sort state for single/bulk arrival tables (default: newest approved first)
   const [singleArrivalSort, setSingleArrivalSort] = useState({ key: 'approvalSentDate', dir: 'desc' });
   const [bulkArrivalSort, setBulkArrivalSort] = useState({ key: 'approvalSentDate', dir: 'desc' });
+  // Sort state for bulk group rows (table header sort)
+  const [bulkGroupSort, setBulkGroupSort] = useState({ key: 'approvedDate', dir: 'desc' });
   const [allPageSize, setAllPageSize] = useState(50);
   const [allPage, setAllPage] = useState(0);
 
@@ -211,8 +213,35 @@ const DeliveryPage = ({
           if (arrivalOrderByFilter !== 'All' && !bgOrds.some((o) => o.orderBy === arrivalOrderByFilter)) return false;
           return true;
         });
-        const bulkTotalPages = Math.max(1, Math.ceil(filteredBulkGroups.length / bulkPageSize));
-        const bulkPageItems = filteredBulkGroups.slice(bulkPage * bulkPageSize, (bulkPage + 1) * bulkPageSize);
+
+        // Enrich bulk groups with computed fields for sorting
+        const enriched = filteredBulkGroups.map((bg) => {
+          const bgOrds = orders.filter(
+            (o) =>
+              o.bulkGroupId === bg.id &&
+              o.approvalStatus === 'approved' &&
+              (arrivalOrderByFilter === 'All' || o.orderBy === arrivalOrderByFilter),
+          );
+          const fullyReceived = bgOrds.filter((o) => o.qtyReceived >= o.quantity && o.quantity > 0).length;
+          const hasBackOrder = bgOrds.some((o) => o.backOrder < 0);
+          // Latest approval date from the group's orders
+          const approvedDate = bgOrds.reduce((latest, o) => {
+            if (!o.approvalSentDate) return latest;
+            return !latest || o.approvalSentDate > latest ? o.approvalSentDate : latest;
+          }, null);
+          return {
+            ...bg,
+            _bgOrders: bgOrds,
+            _itemCount: bgOrds.length,
+            _fullyReceived: fullyReceived,
+            _hasBackOrder: hasBackOrder,
+            approvedDate,
+          };
+        });
+
+        const sorted = applySortData(enriched, bulkGroupSort);
+        const bulkTotalPages = Math.max(1, Math.ceil(sorted.length / bulkPageSize));
+        const bulkPageItems = sorted.slice(bulkPage * bulkPageSize, (bulkPage + 1) * bulkPageSize);
         return (
           <div className="card" style={{ padding: '20px 24px', marginBottom: 20 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
@@ -247,86 +276,88 @@ const DeliveryPage = ({
                 )}
               </div>
             </div>
-            <div style={{ display: 'grid', gap: 12 }}>
-              {bulkPageItems.map((bg) => {
-                const bgOrders = orders.filter(
-                  (o) =>
-                    o.bulkGroupId === bg.id &&
-                    o.approvalStatus === 'approved' &&
-                    (arrivalOrderByFilter === 'All' || o.orderBy === arrivalOrderByFilter),
-                );
-                const fullyReceived = bgOrders.filter((o) => o.qtyReceived >= o.quantity && o.quantity > 0).length;
-                const pending = bgOrders.filter((o) => o.qtyReceived < o.quantity).length;
-                const hasBackOrder = bgOrders.some((o) => o.backOrder < 0);
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5 }}>
+              <thead>
+                <tr style={{ background: '#F8FAFB' }}>
+                  <th className="th" style={{ width: 36 }}></th>
+                  <SortTh label="Group ID" sortKey="id" sortCfg={bulkGroupSort} onSort={(k) => toggleSort(setBulkGroupSort, k)} />
+                  <SortTh label="Month" sortKey="month" sortCfg={bulkGroupSort} onSort={(k) => toggleSort(setBulkGroupSort, k)} />
+                  <SortTh label="Items" sortKey="_itemCount" sortCfg={bulkGroupSort} onSort={(k) => toggleSort(setBulkGroupSort, k)} style={{ width: 70 }} />
+                  <SortTh label="Total Cost" sortKey="totalCost" sortCfg={bulkGroupSort} onSort={(k) => toggleSort(setBulkGroupSort, k)} />
+                  <SortTh label="Approved" sortKey="approvedDate" sortCfg={bulkGroupSort} onSort={(k) => toggleSort(setBulkGroupSort, k)} />
+                  <th className="th" style={{ width: 120 }}>Progress</th>
+                  <th className="th" style={{ width: 110 }}>Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {bulkPageItems.length === 0 ? (
+                  <tr>
+                    <td colSpan={8} style={{ textAlign: 'center', padding: 40, color: '#94A3B8', fontSize: 13 }}>
+                      No bulk groups match the selected filters
+                    </td>
+                  </tr>
+                ) : bulkPageItems.map((bg) => {
+                const bgOrders = bg._bgOrders;
+                const fullyReceived = bg._fullyReceived;
+                const hasBackOrder = bg._hasBackOrder;
                 const unapprovedCount = bgOrders.filter((o) => o.approvalStatus !== 'approved').length;
+                const isExpanded = selectedBulkForArrival === bg.id;
                 return (
-                  <div
-                    key={bg.id}
-                    style={{
-                      padding: '16px 20px',
-                      border: '1px solid #E2E8F0',
-                      borderRadius: 12,
-                      background: selectedBulkForArrival === bg.id ? '#E6F4ED' : '#fff',
-                    }}
-                  >
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                        <div
-                          style={{
-                            width: 40,
-                            height: 40,
-                            borderRadius: 10,
-                            background:
-                              fullyReceived === bgOrders.length ? '#D1FAE5' : hasBackOrder ? '#FEE2E2' : '#FEF3C7',
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                          }}
+                  <Fragment key={bg.id}>
+                    <tr
+                      style={{
+                        borderBottom: '1px solid #F0F2F5',
+                        background: isExpanded ? '#E6F4ED' : 'transparent',
+                        cursor: 'pointer',
+                      }}
+                      onClick={() => {
+                        setSelectedBulkForArrival(isExpanded ? null : bg.id);
+                        setArrivalItems(bgOrders);
+                      }}
+                    >
+                      <td className="td" style={{ textAlign: 'center' }}>
+                        {fullyReceived === bgOrders.length ? (
+                          <CheckCircle size={16} color="#059669" />
+                        ) : hasBackOrder ? (
+                          <AlertCircle size={16} color="#DC2626" />
+                        ) : (
+                          <Clock size={16} color="#D97706" />
+                        )}
+                      </td>
+                      <td className="td mono" style={{ fontSize: 11, fontWeight: 600, color: '#4338CA' }}>{bg.id}</td>
+                      <td className="td" style={{ fontWeight: 600 }}>{bg.month}</td>
+                      <td className="td" style={{ textAlign: 'center', fontWeight: 600 }}>{bgOrders.length}</td>
+                      <td className="td mono" style={{ fontSize: 11 }}>{fmt(bg.totalCost)}</td>
+                      <td className="td" style={{ fontSize: 11, color: bg.approvedDate ? '#1A202C' : '#94A3B8' }}>
+                        {bg.approvedDate ? fmtDate(bg.approvedDate) : '\u2014'}
+                      </td>
+                      <td className="td">
+                        <Pill
+                          bg={fullyReceived === bgOrders.length ? '#D1FAE5' : hasBackOrder ? '#FEE2E2' : '#FEF3C7'}
+                          color={fullyReceived === bgOrders.length ? '#059669' : hasBackOrder ? '#DC2626' : '#D97706'}
                         >
-                          {fullyReceived === bgOrders.length ? (
-                            <CheckCircle size={20} color="#059669" />
-                          ) : hasBackOrder ? (
-                            <AlertCircle size={20} color="#DC2626" />
-                          ) : (
-                            <Clock size={20} color="#D97706" />
-                          )}
-                        </div>
-                        <div>
-                          <div style={{ fontWeight: 700, fontSize: 14 }}>{bg.month} Bulk Order</div>
-                          <div style={{ fontSize: 12, color: '#64748B' }}>
-                            {bg.id} • {bgOrders.length} items • {fmt(bg.totalCost)}
-                          </div>
-                        </div>
-                      </div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                        <div style={{ textAlign: 'right', marginRight: 12 }}>
-                          <div style={{ fontSize: 11, color: '#94A3B8' }}>Progress</div>
-                          <div
-                            style={{
-                              fontSize: 14,
-                              fontWeight: 700,
-                              color: fullyReceived === bgOrders.length ? '#059669' : '#D97706',
-                            }}
-                          >
-                            {fullyReceived}/{bgOrders.length} received
-                          </div>
-                        </div>
+                          {fullyReceived}/{bgOrders.length} received
+                        </Pill>
+                      </td>
+                      <td className="td" onClick={(e) => e.stopPropagation()}>
                         <button
-                          className={selectedBulkForArrival === bg.id ? 'bp' : 'bs'}
+                          className={isExpanded ? 'bp' : 'bs'}
                           onClick={() => {
-                            setSelectedBulkForArrival(selectedBulkForArrival === bg.id ? null : bg.id);
+                            setSelectedBulkForArrival(isExpanded ? null : bg.id);
                             setArrivalItems(bgOrders);
                           }}
-                          style={{ padding: '8px 16px' }}
+                          style={{ padding: '5px 12px', fontSize: 11 }}
                         >
-                          {selectedBulkForArrival === bg.id ? 'Hide' : 'Check Items'}
+                          {isExpanded ? 'Hide' : 'Check Items'}
                         </button>
-                      </div>
-                    </div>
+                      </td>
+                    </tr>
 
                     {/* Expanded Items List */}
-                    {selectedBulkForArrival === bg.id && (
-                      <div style={{ marginTop: 16, borderTop: '1px solid #E8ECF0', paddingTop: 16 }}>
+                    {isExpanded && (
+                    <tr>
+                      <td colSpan={8} style={{ padding: 0 }}>
+                      <div style={{ padding: '16px 20px', background: '#F8FAFB', borderBottom: '2px solid #E2E8F0' }}>
                         {unapprovedCount > 0 && (
                           <div
                             style={{
@@ -735,11 +766,14 @@ const DeliveryPage = ({
                           </button>
                         </div>
                       </div>
+                      </td>
+                    </tr>
                     )}
-                  </div>
+                  </Fragment>
                 );
               })}
-            </div>
+              </tbody>
+            </table>
             {/* Bulk pagination */}
             {bulkTotalPages > 1 && (
               <div
