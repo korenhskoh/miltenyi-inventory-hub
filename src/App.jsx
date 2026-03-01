@@ -618,6 +618,7 @@ export default function App() {
         backOrder: val - order.quantity,
         status,
         arrivalDate: new Date().toISOString().slice(0, 10),
+        arrivalCheckedBy: currentUser?.name || 'System',
       };
       const updatedOrder = { ...order, ...updates };
       const updatedOrders = orders.map((x) => (x.id === orderId ? updatedOrder : x));
@@ -637,8 +638,12 @@ export default function App() {
       logAction('Confirm Arrival', 'order', orderId, { qtyReceived: val, status });
       notify('Arrival Confirmed', `${order.description || orderId}: ${val}/${order.quantity} received`, 'success');
       sendArrivalReport([updatedOrder]);
+      // Auto-add received quantity to local inventory
+      if (val > 0 && order.materialNo) {
+        api.arrivalToInventory([{ materialNo: order.materialNo, description: order.description, quantity: val }]);
+      }
     },
-    [orders, pendingArrival, checkBulkGroupCompletion, dbSync, logAction, notify, sendArrivalReport],
+    [orders, pendingArrival, currentUser, checkBulkGroupCompletion, dbSync, logAction, notify, sendArrivalReport],
   );
 
   // Helper: batch confirm — confirms all provided orderIds (or all with pending values)
@@ -660,6 +665,7 @@ export default function App() {
           backOrder: val - order.quantity,
           status,
           arrivalDate: new Date().toISOString().slice(0, 10),
+          arrivalCheckedBy: currentUser?.name || 'System',
         };
         const updatedOrder = { ...order, ...upd };
         updatedOrders = updatedOrders.map((x) => (x.id === orderId ? updatedOrder : x));
@@ -682,8 +688,13 @@ export default function App() {
       logAction('Batch Confirm Arrival', 'order', confirmedIds.join(','), { count: confirmedIds.length });
       notify('Arrival Confirmed', `${confirmedIds.length} order(s) status updated`, 'success');
       sendArrivalReport(confirmedOrdersList);
+      // Auto-add received quantities to local inventory
+      const arrivalItems = confirmedOrdersList
+        .filter((o) => o.materialNo && (o.qtyReceived || 0) > 0)
+        .map((o) => ({ materialNo: o.materialNo, description: o.description, quantity: o.qtyReceived }));
+      if (arrivalItems.length > 0) api.arrivalToInventory(arrivalItems);
     },
-    [orders, pendingArrival, checkBulkGroupCompletion, dbSync, logAction, notify, sendArrivalReport],
+    [orders, pendingArrival, currentUser, checkBulkGroupCompletion, dbSync, logAction, notify, sendArrivalReport],
   );
 
   const isAdmin = currentUser?.role === 'admin';
@@ -4739,7 +4750,7 @@ export default function App() {
       style={{
         fontFamily: "'DM Sans','Segoe UI',system-ui,sans-serif",
         background: '#F4F6F8',
-        minHeight: '100vh',
+        minHeight: '100dvh',
         display: 'flex',
         color: '#1A202C',
       }}
@@ -4801,6 +4812,7 @@ export default function App() {
             display: 'flex',
             alignItems: 'center',
             gap: 10,
+            flexShrink: 0,
           }}
         >
           <div
@@ -4936,7 +4948,7 @@ export default function App() {
             </div>
           ))}
         </nav>
-        <div style={{ padding: '12px 10px', borderTop: '1px solid #F0F2F5' }}>
+        <div style={{ padding: '12px 10px', borderTop: '1px solid #F0F2F5', flexShrink: 0 }}>
           <div className="ni" onClick={() => setSidebarOpen(!sidebarOpen)}>
             <Menu size={18} />
             {sidebarOpen && <span style={{ fontSize: 12 }}>Collapse</span>}
@@ -4945,7 +4957,7 @@ export default function App() {
       </aside>
 
       {/* MAIN */}
-      <main style={{ flex: 1, overflow: 'auto', maxHeight: '100vh' }}>
+      <main style={{ flex: 1, overflow: 'auto', maxHeight: '100dvh' }}>
         <header
           className="app-header"
           style={{

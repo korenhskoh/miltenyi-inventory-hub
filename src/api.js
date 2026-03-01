@@ -843,6 +843,22 @@ async function adjustInventory(items) {
   }
 }
 
+async function arrivalToInventory(items) {
+  try {
+    const res = handleResponse(
+      await fetch(`${BASE}/api/local-inventory/arrival`, {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify({ items }),
+      }),
+    );
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
 async function updateInventoryItem(id, updates) {
   try {
     const res = handleResponse(
@@ -950,6 +966,7 @@ const api = {
   bulkImportInventory,
   chargeOutInventory,
   adjustInventory,
+  arrivalToInventory,
   updateInventoryItem,
   deleteInventoryItem,
   lookupPartPrices,

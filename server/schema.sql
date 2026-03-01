@@ -32,8 +32,10 @@ CREATE TABLE IF NOT EXISTS orders (
   month VARCHAR(30),
   year VARCHAR(4),
   bulk_group_id VARCHAR(50),
+  arrival_checked_by VARCHAR(100),
   created_at TIMESTAMP DEFAULT NOW()
 );
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS arrival_checked_by VARCHAR(100);
 CREATE TABLE IF NOT EXISTS bulk_groups (
   id VARCHAR(50) PRIMARY KEY,
   month VARCHAR(30),

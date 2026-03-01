@@ -371,6 +371,71 @@ router.put(
   }),
 );
 
+// POST /arrival — auto-add quantities from confirmed part arrivals
+router.post(
+  '/arrival',
+  asyncHandler(async (req, res) => {
+    const { items } = req.body;
+    if (!Array.isArray(items) || items.length === 0) return res.status(400).json({ error: 'items array required' });
+
+    const processed = [];
+    const skipped = [];
+
+    await query('BEGIN');
+    try {
+      for (const item of items) {
+        const materialNo = item.materialNo || item.material_no;
+        const qty = Math.abs(parseInt(item.quantity) || 0);
+        if (!materialNo || qty === 0) {
+          skipped.push({ materialNo, reason: 'missing materialNo or zero quantity' });
+          continue;
+        }
+
+        const description = item.description || null;
+        const lotsNumber = item.lotsNumber || item.lots_number || null;
+
+        // Upsert: if exists add to quantity, if not create new entry
+        const result = await query(
+          `INSERT INTO local_inventory (material_no, description, lots_number, quantity)
+           VALUES ($1, $2, $3, $4)
+           ON CONFLICT (material_no, COALESCE(lots_number, '__none__'))
+           DO UPDATE SET quantity = local_inventory.quantity + $4,
+                         description = COALESCE(EXCLUDED.description, local_inventory.description),
+                         updated_at = NOW()
+           RETURNING *, (xmax = 0) AS is_insert`,
+          [materialNo, description, lotsNumber, qty],
+        );
+
+        const row = result.rows[0];
+
+        // Log arrival transaction
+        await query(
+          `INSERT INTO inventory_transactions (inventory_id, material_no, lots_number, quantity_change, quantity_after, type, user_id, user_name, notes)
+           VALUES ($1, $2, $3, $4, $5, 'arrival', $6, $7, $8)`,
+          [
+            row.id,
+            materialNo,
+            lotsNumber,
+            qty,
+            row.quantity,
+            req.user?.id || null,
+            req.user?.username || null,
+            `Part arrival confirmed`,
+          ],
+        );
+
+        processed.push({ materialNo, quantity: qty, newTotal: row.quantity, isNew: row.is_insert });
+      }
+      await query('COMMIT');
+    } catch (e) {
+      await query('ROLLBACK');
+      return res.status(500).json({ error: e.message });
+    }
+
+    res.json({ success: true, processed: processed.length, skipped, items: processed });
+  }),
+);
+
 // DELETE /:id — delete inventory item
 router.delete(
   '/:id',

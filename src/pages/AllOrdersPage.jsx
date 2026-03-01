@@ -75,6 +75,7 @@ const AllOrdersPage = ({
               { key: 'status', label: 'Status' },
               { key: 'orderType', label: 'Type' },
               { key: 'month', label: 'Month' },
+              { key: 'arrivalCheckedBy', label: 'Checked By' },
             ]}
             filename="all-orders"
             title="All Orders Export"
@@ -318,6 +319,7 @@ const AllOrdersPage = ({
                   { l: 'Date', k: 'orderDate' },
                   { l: 'Status', k: 'status' },
                   { l: 'Arrival', k: 'arrivalDate' },
+                  { l: 'Checked By', k: 'arrivalCheckedBy' },
                 ].map((h) => (
                   <SortTh
                     key={h.k}
@@ -333,7 +335,7 @@ const AllOrdersPage = ({
             <tbody>
               {allOrdersCombined.length === 0 ? (
                 <tr>
-                  <td colSpan={11} style={{ textAlign: 'center', padding: 40, color: '#94A3B8', fontSize: 13 }}>
+                  <td colSpan={12} style={{ textAlign: 'center', padding: 40, color: '#94A3B8', fontSize: 13 }}>
                     No orders match the selected filters
                   </td>
                 </tr>
@@ -401,6 +403,9 @@ const AllOrdersPage = ({
                     </td>
                     <td className="td">
                       <ArrivalBadge order={o} />
+                    </td>
+                    <td className="td" style={{ fontSize: 11, color: '#64748B' }}>
+                      {o.arrivalCheckedBy || '\u2014'}
                     </td>
                   </tr>
                 ))

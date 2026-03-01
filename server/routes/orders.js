@@ -30,6 +30,7 @@ const ORDER_FIELDS = [
   'month',
   'year',
   'bulk_group_id',
+  'arrival_checked_by',
 ];
 const ORDER_REQUIRED = ['id', 'description', 'quantity'];
 

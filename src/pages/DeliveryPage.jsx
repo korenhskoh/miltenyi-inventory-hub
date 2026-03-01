@@ -65,6 +65,10 @@ const DeliveryPage = ({
   const [bulkGroupSort, setBulkGroupSort] = useState({ key: 'approvedDate', dir: 'desc' });
   const [allPageSize, setAllPageSize] = useState(50);
   const [allPage, setAllPage] = useState(0);
+  const [arrivalCheckedByFilter, setArrivalCheckedByFilter] = useState('All');
+
+  // Unique list of users who have checked arrivals
+  const arrivalCheckedByUsers = [...new Set(orders.filter((o) => o.arrivalCheckedBy).map((o) => o.arrivalCheckedBy))].sort();
 
   return (
     <div>
@@ -80,7 +84,8 @@ const DeliveryPage = ({
           (o) =>
             o.approvalStatus === 'approved' &&
             (arrivalMonthFilter === 'All' || o.month === arrivalMonthFilter) &&
-            (arrivalOrderByFilter === 'All' || o.orderBy === arrivalOrderByFilter),
+            (arrivalOrderByFilter === 'All' || o.orderBy === arrivalOrderByFilter) &&
+            (arrivalCheckedByFilter === 'All' || o.arrivalCheckedBy === arrivalCheckedByFilter),
         );
         return (
           <div
@@ -201,6 +206,28 @@ const DeliveryPage = ({
               </option>
             ))}
         </select>
+        <div style={{ width: 1, height: 24, background: '#E2E8F0' }} />
+        <span style={{ fontSize: 12, fontWeight: 600, color: '#64748B' }}>Checked By</span>
+        <select
+          value={arrivalCheckedByFilter}
+          onChange={(e) => setArrivalCheckedByFilter(e.target.value)}
+          style={{
+            padding: '6px 10px',
+            borderRadius: 8,
+            border: '1px solid #E2E8F0',
+            fontSize: 12,
+            fontFamily: 'inherit',
+            cursor: 'pointer',
+            color: '#1A202C',
+          }}
+        >
+          <option value="All">All</option>
+          {arrivalCheckedByUsers.map((u) => (
+            <option key={u} value={u}>
+              {u}
+            </option>
+          ))}
+        </select>
       </div>
 
       {/* Bulk Orders to Check — only approved */}
@@ -211,6 +238,7 @@ const DeliveryPage = ({
           if (!hasApproved) return false;
           if (arrivalMonthFilter !== 'All' && bg.month !== arrivalMonthFilter) return false;
           if (arrivalOrderByFilter !== 'All' && !bgOrds.some((o) => o.orderBy === arrivalOrderByFilter)) return false;
+          if (arrivalCheckedByFilter !== 'All' && !bgOrds.some((o) => o.arrivalCheckedBy === arrivalCheckedByFilter)) return false;
           return true;
         });
 
@@ -220,7 +248,8 @@ const DeliveryPage = ({
             (o) =>
               o.bulkGroupId === bg.id &&
               o.approvalStatus === 'approved' &&
-              (arrivalOrderByFilter === 'All' || o.orderBy === arrivalOrderByFilter),
+              (arrivalOrderByFilter === 'All' || o.orderBy === arrivalOrderByFilter) &&
+              (arrivalCheckedByFilter === 'All' || o.arrivalCheckedBy === arrivalCheckedByFilter),
           );
           const fullyReceived = bgOrds.filter((o) => o.qtyReceived >= o.quantity && o.quantity > 0).length;
           const hasBackOrder = bgOrds.some((o) => o.backOrder < 0);
@@ -430,6 +459,9 @@ const DeliveryPage = ({
                               <th className="th" style={{ width: 70 }}>
                                 B/O
                               </th>
+                              <th className="th" style={{ width: 90 }}>
+                                Checked By
+                              </th>
                               <th className="th" style={{ width: 100 }}>
                                 Status
                               </th>
@@ -525,6 +557,9 @@ const DeliveryPage = ({
                                     }}
                                   >
                                     {dispBO < 0 ? dispBO : '\u2713'}
+                                  </td>
+                                  <td className="td" style={{ fontSize: 11, color: '#64748B' }}>
+                                    {o.arrivalCheckedBy || '\u2014'}
                                   </td>
                                   <td className="td">
                                     <Pill
@@ -820,7 +855,8 @@ const DeliveryPage = ({
             o.approvalStatus === 'approved' &&
             o.quantity > 0 &&
             (arrivalMonthFilter === 'All' || o.month === arrivalMonthFilter) &&
-            (arrivalOrderByFilter === 'All' || o.orderBy === arrivalOrderByFilter),
+            (arrivalOrderByFilter === 'All' || o.orderBy === arrivalOrderByFilter) &&
+            (arrivalCheckedByFilter === 'All' || o.arrivalCheckedBy === arrivalCheckedByFilter),
         );
         if (!indivOrders.length) return null;
         const singleTotalPages = Math.max(1, Math.ceil(indivOrders.length / singlePageSize));
@@ -917,6 +953,9 @@ const DeliveryPage = ({
                   <th className="th" style={{ width: 70 }}>
                     B/O
                   </th>
+                  <th className="th" style={{ width: 90 }}>
+                    Checked By
+                  </th>
                   <th className="th" style={{ width: 100 }}>
                     Status
                   </th>
@@ -999,6 +1038,9 @@ const DeliveryPage = ({
                           style={{ textAlign: 'center', fontWeight: 600, color: dispBO < 0 ? '#DC2626' : '#059669' }}
                         >
                           {dispBO < 0 ? dispBO : '\u2713'}
+                        </td>
+                        <td className="td" style={{ fontSize: 11, color: '#64748B' }}>
+                          {o.arrivalCheckedBy || '\u2014'}
                         </td>
                         <td className="td">
                           <Pill
@@ -1263,7 +1305,8 @@ const DeliveryPage = ({
           (o) =>
             o.approvalStatus === 'approved' &&
             (arrivalMonthFilter === 'All' || o.month === arrivalMonthFilter) &&
-            (arrivalOrderByFilter === 'All' || o.orderBy === arrivalOrderByFilter),
+            (arrivalOrderByFilter === 'All' || o.orderBy === arrivalOrderByFilter) &&
+            (arrivalCheckedByFilter === 'All' || o.arrivalCheckedBy === arrivalCheckedByFilter),
         );
         const approvedOrders =
           arrivalTypeFilter === 'Bulk'
@@ -1305,6 +1348,7 @@ const DeliveryPage = ({
                       { key: 'qtyReceived', label: 'Qty Received', fmt: (v) => v || 0 },
                       { key: 'backOrder', label: 'Back Order', fmt: (v, row) => (row.qtyReceived || 0) - row.quantity },
                       { key: 'arrivalDate', label: 'Arrival Date', fmt: (v) => fmtDate(v) },
+                      { key: 'arrivalCheckedBy', label: 'Checked By' },
                       { key: 'status', label: 'Status' },
                     ]}
                     filename="part-arrival"
@@ -1444,6 +1488,7 @@ const DeliveryPage = ({
                       { l: 'Recv', k: 'qtyReceived' },
                       { l: 'B/O', k: 'backOrder' },
                       { l: 'Arrival Date', k: 'arrivalDate' },
+                      { l: 'Checked By', k: 'arrivalCheckedBy' },
                       { l: 'Status', k: 'status' },
                     ].map((h) => (
                       <SortTh
@@ -1460,7 +1505,7 @@ const DeliveryPage = ({
                 <tbody>
                   {allPageItems.length === 0 ? (
                     <tr>
-                      <td colSpan={10} style={{ padding: 24, textAlign: 'center', color: '#94A3B8', fontSize: 13 }}>
+                      <td colSpan={11} style={{ padding: 24, textAlign: 'center', color: '#94A3B8', fontSize: 13 }}>
                         No orders with status &quot;{arrivalStatusFilter}&quot;
                       </td>
                     </tr>
@@ -1522,6 +1567,9 @@ const DeliveryPage = ({
                         </td>
                         <td className="td" style={{ color: o.arrivalDate ? '#1A202C' : '#94A3B8', fontSize: 11 }}>
                           {o.arrivalDate ? fmtDate(o.arrivalDate) : '\u2014'}
+                        </td>
+                        <td className="td" style={{ fontSize: 11, color: '#64748B' }}>
+                          {o.arrivalCheckedBy || '\u2014'}
                         </td>
                         <td className="td">
                           <ArrivalBadge order={o} />
