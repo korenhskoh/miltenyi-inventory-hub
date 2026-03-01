@@ -13,7 +13,8 @@ export default function WhatsAppPage({
   currentUser, users,
   hasPermission,
   handleWaConnect, handleWaDisconnect, handleWaSend,
-  addNotifEntry, notify
+  addNotifEntry, notify,
+  sendScheduledReport
 }) {
   return (
 <div>
@@ -223,18 +224,13 @@ export default function WhatsAppPage({
                   </div>
                 </div>
                 <button onClick={()=>{
-                  const reportCount = Object.values(scheduledNotifs.reports).filter(Boolean).length;
                   const recipientCount = (scheduledNotifs.recipients||[]).length;
                   if(recipientCount===0){notify('No Recipients','Please select at least one recipient','warning');return;}
-
-                  if(scheduledNotifs.emailEnabled){
-                    addNotifEntry({id:'N-'+Date.now(),type:'email',to:(scheduledNotifs.recipients||[]).join(', '),subject:'Scheduled Report - Miltenyi Inventory',date:new Date().toISOString().slice(0,10),status:'Sent'});
-                  }
-                  if(scheduledNotifs.whatsappEnabled&&waConnected){
-                    addNotifEntry({id:'N-'+Date.now()+1,type:'whatsapp',to:'Team Group',subject:'Scheduled Report Sent',date:new Date().toISOString().slice(0,10),status:'Delivered'});
-                  }
-                  setScheduledNotifs(prev=>({...prev,lastRun:new Date().toISOString()}));
-                  notify('Report Sent','Scheduled report sent to '+recipientCount+' recipients','success');
+                  const reportCount = Object.values(scheduledNotifs.reports||{}).filter(Boolean).length;
+                  if(reportCount===0){notify('No Reports','Please select at least one report to include','warning');return;}
+                  if(!scheduledNotifs.emailEnabled&&!scheduledNotifs.whatsappEnabled){notify('No Channel','Please enable at least one delivery channel','warning');return;}
+                  sendScheduledReport();
+                  notify('Report Sent','Scheduled report sent to '+recipientCount+' recipient(s) via '+ [scheduledNotifs.emailEnabled&&'Email',scheduledNotifs.whatsappEnabled&&'WhatsApp'].filter(Boolean).join(' & '),'success');
                 }} style={{padding:'8px 16px',background:'linear-gradient(135deg,#7C3AED,#8B5CF6)',color:'#fff',border:'none',borderRadius:8,fontSize:12,fontWeight:600,cursor:'pointer',display:'flex',alignItems:'center',gap:6}}>
                   <Send size={14}/> Send Now
                 </button>
