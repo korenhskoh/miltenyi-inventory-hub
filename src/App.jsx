@@ -2071,7 +2071,7 @@ export default function App() {
     dbSync(api.bulkUpdateOrderStatus(ids, status, approvalStatus), 'Order status update not saved');
     // Cascade: check if any affected orders' bulk groups are now fully received
     const affectedBgIds = [
-      ...new Set(orders.filter((o) => idSet.has(o.id) && o.bulkGroupId).map((o) => o.bulkGroupId)),
+      ...new Set(updatedOrders.filter((o) => idSet.has(o.id) && o.bulkGroupId).map((o) => o.bulkGroupId)),
     ];
     affectedBgIds.forEach((bgId) => checkBulkGroupCompletion(bgId, updatedOrders));
     notify('Batch Update', `${ids.length} orders → ${status}`, 'success');
@@ -2324,7 +2324,7 @@ export default function App() {
         to: emailConfig.approverEmail,
         subject,
         date: now,
-        status: htmlSent ? 'Sent' : 'Sent',
+        status: htmlSent ? 'Sent' : 'Failed',
       });
     }
 
@@ -3290,7 +3290,7 @@ export default function App() {
           emailFull: '',
           emailBack: '',
           status: 'Pending',
-          orderBy: currentUser.name,
+          orderBy: currentUser?.name || '',
           month: aiMonth,
           year: String(aiNow.getFullYear()),
           remark: 'Created via AI Assistant',
@@ -3517,7 +3517,7 @@ export default function App() {
         listPrice: parseFloat(getValue('listPrice')) || 0,
         totalCost: parseFloat(getValue('totalCost')) || (parseFloat(getValue('listPrice')) || 0) * qty,
         orderDate: getValue('orderDate') || new Date().toISOString().slice(0, 10),
-        orderBy: getValue('orderBy') || currentUser.name,
+        orderBy: getValue('orderBy') || currentUser?.name || '',
         remark: getValue('remark') || 'Imported from file',
         arrivalDate: getValue('arrivalDate') || '',
         qtyReceived: received,
@@ -3583,13 +3583,7 @@ export default function App() {
         if (allOrders.length > 0) {
           setHistoryImportData(allOrders);
           setHistoryImportPreview(true);
-          // Store bulk groups to add on confirm
-          setHistoryImportData((prev) => {
-            prev._bulkGroups = newBulkGroups;
-            return [...allOrders];
-          });
-          setHistoryImportData(allOrders);
-          // Temporarily store bulk groups
+          // Temporarily store bulk groups for confirm handler
           window.__pendingBulkGroups = newBulkGroups;
           notify(
             'Excel Parsed',
