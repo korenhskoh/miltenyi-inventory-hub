@@ -199,6 +199,12 @@ export default function App() {
   const [selectedUser, setSelectedUser] = useState(null);
   const [selectedBulkGroup, setSelectedBulkGroup] = useState(null);
   const [expandedBulkGroup, setExpandedBulkGroup] = useState(null);
+  const [addToBulkItem, setAddToBulkItem] = useState({
+    materialNo: '',
+    description: '',
+    quantity: 1,
+    listPrice: 0,
+  });
   const [historyImportData, setHistoryImportData] = useState([]);
   const [historyImportPreview, setHistoryImportPreview] = useState(false);
   const [catalogSearch, setCatalogSearch] = useState('');
@@ -3006,10 +3012,22 @@ export default function App() {
       return;
     }
     const orderResults = await Promise.all(newOrders.map((o) => api.createOrder(o)));
-    const failCount = orderResults.filter((r) => !r).length;
+    const successOrders = newOrders.filter((_, i) => orderResults[i]);
+    const failCount = newOrders.length - successOrders.length;
     if (failCount)
       notify('Partial Save', `${failCount} of ${newOrders.length} items failed to save. Please check.`, 'warning');
-    setOrders((prev) => [...newOrders, ...prev]);
+    if (successOrders.length === 0) {
+      setIsSubmitting(false);
+      notify('Save Failed', 'No orders were saved to the database. Please retry.', 'error');
+      return;
+    }
+    // Correct bulk group tallies if some orders failed to save
+    if (failCount > 0) {
+      bg.items = successOrders.length;
+      bg.totalCost = successOrders.reduce((s, o) => s + (o.totalCost || 0), 0);
+      dbSync(api.updateBulkGroup(bg.id, { items: bg.items, totalCost: bg.totalCost }), 'Bulk group tally correction');
+    }
+    setOrders((prev) => [...successOrders, ...prev]);
     setBulkGroups((prev) => [bg, ...prev]);
     setShowBulkOrder(false);
     setBulkItems([{ materialNo: '', description: '', quantity: 1, listPrice: 0 }]);
@@ -3017,23 +3035,27 @@ export default function App() {
     setIsSubmitting(false);
     notify(
       'Bulk Order Created',
-      `${newOrders.length} items for ${bulkMonth}. Select and use "Order Approval & Notify" to send for approval.`,
+      `${successOrders.length} items for ${bulkMonth}. Select and use "Order Approval & Notify" to send for approval.`,
       'success',
     );
-    logAction('create', 'bulk_group', bg.id, { month: bulkMonth, items: newOrders.length, totalCost: bg.totalCost });
+    logAction('create', 'bulk_group', bg.id, {
+      month: bulkMonth,
+      items: successOrders.length,
+      totalCost: bg.totalCost,
+    });
     // Auto-notify: bulk order created
     sendAutoWaNotify(
       'bulkOrderCreated',
       'bulkApproval',
       {
         batchCount: 1,
-        itemCount: newOrders.length,
-        totalQty: newOrders.reduce((s, o) => s + (o.quantity || 0), 0),
-        totalCost: totalCost.toFixed(2),
+        itemCount: successOrders.length,
+        totalQty: successOrders.reduce((s, o) => s + (o.quantity || 0), 0),
+        totalCost: bg.totalCost.toFixed(2),
         orderBy: bulkOrderBy || currentUser?.name || 'System',
         date: new Date().toISOString().slice(0, 10),
       },
-      `Bulk Order: ${newOrders.length} items for ${bulkMonth}`,
+      `Bulk Order: ${successOrders.length} items for ${bulkMonth}`,
     );
   };
 
@@ -8922,6 +8944,163 @@ export default function App() {
                           />
                         </div>
                       </div>
+
+                      {/* Add Item to Bulk Group */}
+                      {selectedBulkGroup.status !== 'Completed' && (
+                        <div
+                          style={{
+                            padding: 12,
+                            background: '#F0FDF4',
+                            borderRadius: 8,
+                            border: '1px dashed #86EFAC',
+                          }}
+                        >
+                          <div style={{ fontSize: 12, fontWeight: 600, color: '#0B7A3E', marginBottom: 8 }}>
+                            Add Item to This Group
+                          </div>
+                          <div
+                            style={{
+                              display: 'grid',
+                              gridTemplateColumns: '1fr 2fr 80px 100px auto',
+                              gap: 8,
+                              alignItems: 'end',
+                            }}
+                          >
+                            <input
+                              placeholder="Material No."
+                              value={addToBulkItem.materialNo}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                const updated = { ...addToBulkItem, materialNo: val };
+                                if (val.length >= 10) {
+                                  const p = catalogLookup[val];
+                                  if (p) {
+                                    updated.description = p.d;
+                                    updated.listPrice = p.sg || p.tp || p.dist || 0;
+                                  }
+                                }
+                                setAddToBulkItem(updated);
+                              }}
+                              style={{
+                                padding: '8px 10px',
+                                borderRadius: 6,
+                                border: '1px solid #E2E8F0',
+                                fontSize: 12,
+                              }}
+                            />
+                            <input
+                              placeholder="Description"
+                              value={addToBulkItem.description}
+                              onChange={(e) => setAddToBulkItem((p) => ({ ...p, description: e.target.value }))}
+                              style={{
+                                padding: '8px 10px',
+                                borderRadius: 6,
+                                border: '1px solid #E2E8F0',
+                                fontSize: 12,
+                              }}
+                            />
+                            <input
+                              type="number"
+                              min={1}
+                              placeholder="Qty"
+                              value={addToBulkItem.quantity}
+                              onChange={(e) =>
+                                setAddToBulkItem((p) => ({
+                                  ...p,
+                                  quantity: parseInt(e.target.value) || 1,
+                                }))
+                              }
+                              style={{
+                                padding: '8px 10px',
+                                borderRadius: 6,
+                                border: '1px solid #E2E8F0',
+                                fontSize: 12,
+                              }}
+                            />
+                            <input
+                              type="number"
+                              step="0.01"
+                              placeholder="Price"
+                              value={addToBulkItem.listPrice}
+                              onChange={(e) =>
+                                setAddToBulkItem((p) => ({
+                                  ...p,
+                                  listPrice: parseFloat(e.target.value) || 0,
+                                }))
+                              }
+                              style={{
+                                padding: '8px 10px',
+                                borderRadius: 6,
+                                border: '1px solid #E2E8F0',
+                                fontSize: 12,
+                              }}
+                            />
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                if (!addToBulkItem.materialNo || !addToBulkItem.description) {
+                                  notify('Missing Fields', 'Material No. and Description required', 'warning');
+                                  return;
+                                }
+                                const totalCost = addToBulkItem.listPrice * addToBulkItem.quantity;
+                                const newOrder = {
+                                  id: `ORD-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+                                  materialNo: addToBulkItem.materialNo,
+                                  description: addToBulkItem.description,
+                                  quantity: addToBulkItem.quantity,
+                                  listPrice: addToBulkItem.listPrice,
+                                  totalCost,
+                                  orderDate: new Date().toISOString().slice(0, 10),
+                                  orderBy: selectedBulkGroup.createdBy || currentUser?.name || '',
+                                  remark: '',
+                                  arrivalDate: null,
+                                  qtyReceived: 0,
+                                  backOrder: -addToBulkItem.quantity,
+                                  engineer: '',
+                                  emailFull: '',
+                                  emailBack: '',
+                                  status: selectedBulkGroup.status === 'Approved' ? 'Approved' : 'Pending Approval',
+                                  approvalStatus: selectedBulkGroup.status === 'Approved' ? 'approved' : undefined,
+                                  month: selectedBulkGroup.month,
+                                  year: String(new Date().getFullYear()),
+                                  bulkGroupId: selectedBulkGroup.id,
+                                };
+                                const saved = await api.createOrder(newOrder);
+                                if (!saved) {
+                                  notify('Save Failed', 'Order not saved to database', 'error');
+                                  return;
+                                }
+                                const updatedOrders = [newOrder, ...orders];
+                                setOrders(updatedOrders);
+                                recalcBulkGroupForMonths([selectedBulkGroup.id], updatedOrders);
+                                setAddToBulkItem({
+                                  materialNo: '',
+                                  description: '',
+                                  quantity: 1,
+                                  listPrice: 0,
+                                });
+                                notify('Item Added', `${newOrder.id} added to ${selectedBulkGroup.id}`, 'success');
+                                logAction('create', 'order', newOrder.id, {
+                                  addedToBulkGroup: selectedBulkGroup.id,
+                                });
+                              }}
+                              style={{
+                                padding: '8px 14px',
+                                background: '#0B7A3E',
+                                color: '#fff',
+                                border: 'none',
+                                borderRadius: 6,
+                                fontSize: 11,
+                                fontWeight: 600,
+                                cursor: 'pointer',
+                              }}
+                            >
+                              + Add
+                            </button>
+                          </div>
+                        </div>
+                      )}
+
                       <div className="grid-2" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
                         <div>
                           <label
@@ -9004,6 +9183,30 @@ export default function App() {
                             const newMonth = selectedBulkGroup.month;
                             const oldStatus = origGroup?.status || '';
                             const newStatus = selectedBulkGroup.status;
+                            const linkedCount = orders.filter((o) => o.bulkGroupId === selectedBulkGroup.id).length;
+
+                            // Confirm before cascading status to linked orders
+                            if (
+                              linkedCount > 0 &&
+                              oldStatus !== newStatus &&
+                              (newStatus === 'Approved' || newStatus === 'Rejected')
+                            ) {
+                              if (
+                                !window.confirm(
+                                  `This will set ${linkedCount} linked order(s) to "${newStatus}". Continue?`,
+                                )
+                              )
+                                return;
+                            }
+                            if (linkedCount > 0 && oldStatus !== newStatus && newStatus === 'Completed') {
+                              if (
+                                !window.confirm(
+                                  `Setting to Completed will mark ${linkedCount} order(s) as Received with full quantity and today's arrival date. This bypasses Part Arrival tracking.\n\nContinue?`,
+                                )
+                              )
+                                return;
+                            }
+
                             setBulkGroups((prev) =>
                               prev.map((g) => (g.id === selectedBulkGroup.id ? selectedBulkGroup : g)),
                             );
@@ -9424,33 +9627,49 @@ export default function App() {
                       >
                         Linked Bulk Batch
                       </label>
-                      <select
-                        value={editingOrder.bulkGroupId || ''}
-                        onChange={(e) => {
-                          const bgId = e.target.value || null;
-                          const bg = bulkGroups.find((g) => g.id === bgId);
-                          setEditingOrder((prev) => ({
-                            ...prev,
-                            bulkGroupId: bgId,
-                            month: bg ? bg.month : prev.month,
-                          }));
-                        }}
-                        style={{
-                          width: '100%',
-                          padding: '10px 12px',
-                          borderRadius: 8,
-                          border: '1.5px solid #E2E8F0',
-                          fontSize: 13,
-                          boxSizing: 'border-box',
-                        }}
-                      >
-                        <option value="">-- None (Individual) --</option>
-                        {bulkGroups.map((bg) => (
-                          <option key={bg.id} value={bg.id}>
-                            {bg.month} ({bg.id})
-                          </option>
-                        ))}
-                      </select>
+                      {(() => {
+                        const currentBg = bulkGroups.find((g) => g.id === editingOrder.bulkGroupId);
+                        const bgLocked =
+                          currentBg && (currentBg.status === 'Approved' || currentBg.status === 'Completed');
+                        return (
+                          <>
+                            <select
+                              value={editingOrder.bulkGroupId || ''}
+                              disabled={bgLocked}
+                              onChange={(e) => {
+                                const bgId = e.target.value || null;
+                                const bg = bulkGroups.find((g) => g.id === bgId);
+                                setEditingOrder((prev) => ({
+                                  ...prev,
+                                  bulkGroupId: bgId,
+                                  month: bg ? bg.month : prev.month,
+                                }));
+                              }}
+                              style={{
+                                width: '100%',
+                                padding: '10px 12px',
+                                borderRadius: 8,
+                                border: '1.5px solid #E2E8F0',
+                                fontSize: 13,
+                                boxSizing: 'border-box',
+                                opacity: bgLocked ? 0.6 : 1,
+                              }}
+                            >
+                              <option value="">-- None (Individual) --</option>
+                              {bulkGroups.map((bg) => (
+                                <option key={bg.id} value={bg.id}>
+                                  {bg.month} ({bg.id})
+                                </option>
+                              ))}
+                            </select>
+                            {bgLocked && (
+                              <p style={{ fontSize: 11, color: '#D97706', marginTop: 4, marginBottom: 0 }}>
+                                Cannot change — bulk group is {currentBg.status}. Change group status first.
+                              </p>
+                            )}
+                          </>
+                        );
+                      })()}
                     </div>
                   </div>
 

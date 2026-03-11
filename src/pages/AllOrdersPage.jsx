@@ -74,6 +74,7 @@ const AllOrdersPage = ({
               { key: 'orderBy', label: 'Ordered By' },
               { key: 'status', label: 'Status' },
               { key: 'orderType', label: 'Type' },
+              { key: 'bulkGroupId', label: 'Bulk Group ID' },
               { key: 'month', label: 'Month' },
               { key: 'arrivalCheckedBy', label: 'Checked By' },
             ]}
@@ -309,6 +310,7 @@ const AllOrdersPage = ({
               <tr style={{ background: '#F8FAFB' }}>
                 {[
                   { l: 'Type', k: 'orderType' },
+                  { l: 'Bulk Group', k: 'bulkGroupId' },
                   { l: 'ID', k: 'id' },
                   { l: 'Material / Items', k: 'materialNo' },
                   { l: 'Description', k: 'description' },
@@ -335,7 +337,7 @@ const AllOrdersPage = ({
             <tbody>
               {allOrdersCombined.length === 0 ? (
                 <tr>
-                  <td colSpan={12} style={{ textAlign: 'center', padding: 40, color: '#94A3B8', fontSize: 13 }}>
+                  <td colSpan={13} style={{ textAlign: 'center', padding: 40, color: '#94A3B8', fontSize: 13 }}>
                     No orders match the selected filters
                   </td>
                 </tr>
@@ -358,6 +360,28 @@ const AllOrdersPage = ({
                       >
                         {o.orderType === 'Single' ? 'Single' : 'Bulk'}
                       </Pill>
+                    </td>
+                    <td className="td mono" style={{ fontSize: 10, color: '#7C3AED' }}>
+                      {o.bulkGroupId ? (
+                        <span
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setExpandedAllBulkGroup(o.bulkGroupId);
+                          }}
+                          style={{
+                            cursor: 'pointer',
+                            padding: '2px 8px',
+                            background: '#EDE9FE',
+                            borderRadius: 10,
+                            fontWeight: 600,
+                            whiteSpace: 'nowrap',
+                          }}
+                        >
+                          {o.bulkGroupId.length > 14 ? o.bulkGroupId.slice(0, 14) + '\u2026' : o.bulkGroupId}
+                        </span>
+                      ) : (
+                        '\u2014'
+                      )}
                     </td>
                     <td
                       className="td mono"
