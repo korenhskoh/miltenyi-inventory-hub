@@ -1317,6 +1317,7 @@ export default function SettingsPage({
                   if (!file) return;
                   const data = await file.arrayBuffer();
                   const wb = XLSX.read(data, { type: 'array' });
+                  if (!wb.SheetNames?.length) return;
                   const ws = wb.Sheets[wb.SheetNames[0]];
                   const rows = XLSX.utils.sheet_to_json(ws);
                   if (!rows.length) {

@@ -255,6 +255,7 @@ export default function LocalInventoryPage({ isAdmin, currentUser: _currentUser,
     reader.onload = (evt) => {
       const data = new Uint8Array(evt.target.result);
       const wb = XLSX.read(data, { type: 'array' });
+      if (!wb.SheetNames?.length) return;
       const ws = wb.Sheets[wb.SheetNames[0]];
       const json = XLSX.utils.sheet_to_json(ws, { defval: '' });
       if (json.length === 0) {

@@ -731,6 +731,7 @@ async function sendEmail({ to, subject, html, smtp }) {
         body: JSON.stringify({ to, subject, html, smtp }),
       }),
     );
+    if (!res.ok) return false;
     const data = await res.json();
     return data.ok || false;
   } catch {

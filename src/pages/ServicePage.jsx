@@ -450,6 +450,7 @@ function ImportModal({ onImport, onClose }) {
     const reader = new FileReader();
     reader.onload = (evt) => {
       const wb = XLSX.read(evt.target.result, { type: 'array', cellDates: true });
+      if (!wb.SheetNames?.length) return;
       const ws = wb.Sheets[wb.SheetNames[0]];
       const data = XLSX.utils.sheet_to_json(ws, { header: 1, raw: false, dateNF: 'YYYY-MM-DD' });
       if (data.length < 2) return;

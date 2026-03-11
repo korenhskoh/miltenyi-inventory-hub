@@ -234,7 +234,10 @@ export default function App() {
 
   // ── Bulk Order State ──
   const [showBulkOrder, setShowBulkOrder] = useState(false);
-  const [bulkMonth, setBulkMonth] = useState('Feb 2026');
+  const [bulkMonth, setBulkMonth] = useState(() => {
+    const d = new Date();
+    return d.toLocaleString('en', { month: 'short' }) + ' ' + d.getFullYear();
+  });
   const [bulkItems, setBulkItems] = useState([{ materialNo: '', description: '', quantity: 1, listPrice: 0 }]);
   const [bulkOrderBy, setBulkOrderBy] = useState('');
   const [bulkRemark, setBulkRemark] = useState('');
@@ -268,14 +271,17 @@ export default function App() {
   }, []);
 
   // DB sync wrapper: shows toast on API failure (non-blocking)
-  const dbSync = useCallback((promise, msg) => {
-    Promise.resolve(promise)
-      .then((r) => {
-        if (r === null || r === false)
-          notify('Save Failed', msg || 'Failed to save to database. Please retry.', 'error');
-      })
-      .catch(() => notify('Save Failed', msg || 'Failed to save to database. Please retry.', 'error'));
-  }, []);
+  const dbSync = useCallback(
+    (promise, msg) => {
+      Promise.resolve(promise)
+        .then((r) => {
+          if (r === null || r === false)
+            notify('Save Failed', msg || 'Failed to save to database. Please retry.', 'error');
+        })
+        .catch(() => notify('Save Failed', msg || 'Failed to save to database. Please retry.', 'error'));
+    },
+    [notify],
+  );
 
   // Persist helpers: update local state AND save to DB
   const addNotifEntry = useCallback(
@@ -332,23 +338,32 @@ export default function App() {
   const numStockChecks = (arr) => arr.map((c) => ({ ...c, items: Number(c.items) || 0, disc: Number(c.disc) || 0 }));
 
   // Helper: recalculate bulk group items/totalCost for affected bulk group IDs after order changes
+  // Auto-deletes empty bulk groups (0 remaining orders)
   const recalcBulkGroupForMonths = useCallback(
     (bgIds, ordersAfterChange) => {
       const idSet = new Set(bgIds.filter(Boolean));
       if (!idSet.size) return;
+      const emptyBgIds = [];
       setBulkGroups((prev) =>
-        prev.map((bg) => {
-          if (!idSet.has(bg.id)) return bg;
-          const bgOrders = ordersAfterChange.filter((o) => o.bulkGroupId === bg.id);
-          const newItems = bgOrders.length;
-          const newTotalCost = bgOrders.reduce((s, o) => s + (o.totalCost || 0), 0);
-          if (bg.items !== newItems || Math.abs((bg.totalCost || 0) - newTotalCost) > 0.01) {
-            dbSync(api.updateBulkGroup(bg.id, { items: newItems, totalCost: newTotalCost }), 'Bulk group tally sync');
-            return { ...bg, items: newItems, totalCost: newTotalCost };
-          }
-          return bg;
-        }),
+        prev
+          .map((bg) => {
+            if (!idSet.has(bg.id)) return bg;
+            const bgOrders = ordersAfterChange.filter((o) => o.bulkGroupId === bg.id);
+            const newItems = bgOrders.length;
+            if (newItems === 0) {
+              emptyBgIds.push(bg.id);
+              return null;
+            }
+            const newTotalCost = bgOrders.reduce((s, o) => s + (o.totalCost || 0), 0);
+            if (bg.items !== newItems || Math.abs((bg.totalCost || 0) - newTotalCost) > 0.01) {
+              dbSync(api.updateBulkGroup(bg.id, { items: newItems, totalCost: newTotalCost }), 'Bulk group tally sync');
+              return { ...bg, items: newItems, totalCost: newTotalCost };
+            }
+            return bg;
+          })
+          .filter(Boolean),
       );
+      emptyBgIds.forEach((id) => dbSync(api.deleteBulkGroup(id), 'Empty bulk group cleanup'));
     },
     [dbSync],
   );
@@ -1368,7 +1383,7 @@ export default function App() {
       setActiveModule(null);
       notify('Session Expired', 'Please log in again', 'warning');
     });
-  }, []);
+  }, [notify]);
 
   // ── localStorage Persistence ──
   const LS_KEYS = {
@@ -1920,6 +1935,7 @@ export default function App() {
       approvalSentDate: null,
       emailFull: '',
       emailBack: '',
+      bulkGroupId: null,
     };
     const saved = await api.createOrder(copy);
     if (!saved) {
@@ -2046,11 +2062,18 @@ export default function App() {
   const batchStatusOrders = (status) => {
     if (!selOrders.size) return;
     const ids = [...selOrders];
+    const idSet = new Set(ids);
     const approvalStatus = status === 'Approved' ? 'approved' : status === 'Rejected' ? 'rejected' : undefined;
-    setOrders((prev) =>
-      prev.map((o) => (selOrders.has(o.id) ? { ...o, status, ...(approvalStatus ? { approvalStatus } : {}) } : o)),
+    const updatedOrders = orders.map((o) =>
+      idSet.has(o.id) ? { ...o, status, ...(approvalStatus ? { approvalStatus } : {}) } : o,
     );
+    setOrders(updatedOrders);
     dbSync(api.bulkUpdateOrderStatus(ids, status, approvalStatus), 'Order status update not saved');
+    // Cascade: check if any affected orders' bulk groups are now fully received
+    const affectedBgIds = [
+      ...new Set(updatedOrders.filter((o) => idSet.has(o.id) && o.bulkGroupId).map((o) => o.bulkGroupId)),
+    ];
+    affectedBgIds.forEach((bgId) => checkBulkGroupCompletion(bgId, updatedOrders));
     notify('Batch Update', `${ids.length} orders → ${status}`, 'success');
     setSelOrders(new Set());
   };
@@ -2301,7 +2324,7 @@ export default function App() {
         to: emailConfig.approverEmail,
         subject,
         date: now,
-        status: htmlSent ? 'Sent' : 'Sent',
+        status: htmlSent ? 'Sent' : 'Failed',
       });
     }
 
@@ -3267,7 +3290,7 @@ export default function App() {
           emailFull: '',
           emailBack: '',
           status: 'Pending',
-          orderBy: currentUser.name,
+          orderBy: currentUser?.name || '',
           month: aiMonth,
           year: String(aiNow.getFullYear()),
           remark: 'Created via AI Assistant',
@@ -3494,7 +3517,7 @@ export default function App() {
         listPrice: parseFloat(getValue('listPrice')) || 0,
         totalCost: parseFloat(getValue('totalCost')) || (parseFloat(getValue('listPrice')) || 0) * qty,
         orderDate: getValue('orderDate') || new Date().toISOString().slice(0, 10),
-        orderBy: getValue('orderBy') || currentUser.name,
+        orderBy: getValue('orderBy') || currentUser?.name || '',
         remark: getValue('remark') || 'Imported from file',
         arrivalDate: getValue('arrivalDate') || '',
         qtyReceived: received,
@@ -3560,13 +3583,7 @@ export default function App() {
         if (allOrders.length > 0) {
           setHistoryImportData(allOrders);
           setHistoryImportPreview(true);
-          // Store bulk groups to add on confirm
-          setHistoryImportData((prev) => {
-            prev._bulkGroups = newBulkGroups;
-            return [...allOrders];
-          });
-          setHistoryImportData(allOrders);
-          // Temporarily store bulk groups
+          // Temporarily store bulk groups for confirm handler
           window.__pendingBulkGroups = newBulkGroups;
           notify(
             'Excel Parsed',
@@ -9498,22 +9515,13 @@ export default function App() {
                           ? { ...editFields, qtyReceived, backOrder, arrivalDate }
                           : editFields;
                         dbSync(api.updateOrder(editingOrder.id, payload), 'Order edit not saved');
-                        // Recalculate parent bulk group totals if this order belongs to one
-                        if (editingOrder.bulkGroupId) {
-                          const bg = bulkGroups.find((g) => g.id === editingOrder.bulkGroupId);
-                          if (bg) {
-                            const bgOrders = updatedOrders.filter((o) => o.bulkGroupId === bg.id);
-                            const newItems = bgOrders.length;
-                            const newTotalCost = bgOrders.reduce((s, o) => s + (o.totalCost || 0), 0);
-                            if (bg.items !== newItems || bg.totalCost !== newTotalCost) {
-                              const updatedBg = { ...bg, items: newItems, totalCost: newTotalCost };
-                              setBulkGroups((prev) => prev.map((g) => (g.id === bg.id ? updatedBg : g)));
-                              dbSync(
-                                api.updateBulkGroup(bg.id, { items: newItems, totalCost: newTotalCost }),
-                                'Bulk group tally not synced',
-                              );
-                            }
-                          }
+                        // Recalculate affected bulk group(s) — both old and new if re-linked
+                        const originalOrder = orders.find((o) => o.id === editingOrder.id);
+                        const bgIdsToRecalc = [
+                          ...new Set([originalOrder?.bulkGroupId, editingOrder.bulkGroupId].filter(Boolean)),
+                        ];
+                        if (bgIdsToRecalc.length) {
+                          recalcBulkGroupForMonths(bgIdsToRecalc, updatedOrders);
                         }
                         notify('Order Updated', editingOrder.id + ' has been updated', 'success');
                         setEditingOrder(null);
@@ -10407,7 +10415,7 @@ export default function App() {
                       type="button"
                       onClick={() => {
                         if (!newBulkMonth) return;
-                        const bgId = `BG-${String(bulkGroups.length + 1).padStart(3, '0')}`;
+                        const bgId = `BG-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
                         const bg = {
                           id: bgId,
                           month: newBulkMonth,
