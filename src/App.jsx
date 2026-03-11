@@ -234,7 +234,10 @@ export default function App() {
 
   // ── Bulk Order State ──
   const [showBulkOrder, setShowBulkOrder] = useState(false);
-  const [bulkMonth, setBulkMonth] = useState('Feb 2026');
+  const [bulkMonth, setBulkMonth] = useState(() => {
+    const d = new Date();
+    return d.toLocaleString('en', { month: 'short' }) + ' ' + d.getFullYear();
+  });
   const [bulkItems, setBulkItems] = useState([{ materialNo: '', description: '', quantity: 1, listPrice: 0 }]);
   const [bulkOrderBy, setBulkOrderBy] = useState('');
   const [bulkRemark, setBulkRemark] = useState('');
@@ -268,14 +271,17 @@ export default function App() {
   }, []);
 
   // DB sync wrapper: shows toast on API failure (non-blocking)
-  const dbSync = useCallback((promise, msg) => {
-    Promise.resolve(promise)
-      .then((r) => {
-        if (r === null || r === false)
-          notify('Save Failed', msg || 'Failed to save to database. Please retry.', 'error');
-      })
-      .catch(() => notify('Save Failed', msg || 'Failed to save to database. Please retry.', 'error'));
-  }, []);
+  const dbSync = useCallback(
+    (promise, msg) => {
+      Promise.resolve(promise)
+        .then((r) => {
+          if (r === null || r === false)
+            notify('Save Failed', msg || 'Failed to save to database. Please retry.', 'error');
+        })
+        .catch(() => notify('Save Failed', msg || 'Failed to save to database. Please retry.', 'error'));
+    },
+    [notify],
+  );
 
   // Persist helpers: update local state AND save to DB
   const addNotifEntry = useCallback(
@@ -1368,7 +1374,7 @@ export default function App() {
       setActiveModule(null);
       notify('Session Expired', 'Please log in again', 'warning');
     });
-  }, []);
+  }, [notify]);
 
   // ── localStorage Persistence ──
   const LS_KEYS = {
