@@ -2262,14 +2262,14 @@ export default function App() {
     setOrders((prev) => prev.map((o) => (selOrders.has(o.id) ? { ...o, approvalSentDate: now } : o)));
     orderIds.forEach((id) => dbSync(api.updateOrder(id, { approvalSentDate: now }), 'Approval date not saved'));
 
-    // Build plain-text table
+    // Build plain-text table (Excel-style with all order details)
     const hdr =
-      'No. | Order ID     | Material No.     | Description                        | Qty  | Unit Price  | Total (SGD)';
+      'No. | Order ID     | Material No.     | Description                        | Ordered By       | Date       | Status    | Qty  | Unit Price  | Total (SGD)';
     const sep =
-      '----|--------------|------------------|------------------------------------|------|-------------|------------';
+      '----|--------------|------------------|------------------------------------|------------------|------------|-----------|------|-------------|------------';
     const rows = selected.map(
       (o, i) =>
-        `${String(i + 1).padEnd(3)} | ${(o.id || '').padEnd(12)} | ${(o.materialNo || 'N/A').padEnd(16)} | ${(o.description || '').substring(0, 34).padEnd(34)} | ${String(o.quantity || 0).padEnd(4)} | S$${getEffectivePrice(o).toFixed(2).padStart(8)} | S$${getEffectiveTotal(o).toFixed(2)}`,
+        `${String(i + 1).padEnd(3)} | ${(o.id || '').padEnd(12)} | ${(o.materialNo || 'N/A').padEnd(16)} | ${(o.description || '').substring(0, 34).padEnd(34)} | ${(o.orderBy || '').substring(0, 16).padEnd(16)} | ${(o.orderDate || '').padEnd(10)} | ${(o.status || 'Pending').padEnd(9)} | ${String(o.quantity || 0).padEnd(4)} | S$${getEffectivePrice(o).toFixed(2).padStart(8)} | S$${getEffectiveTotal(o).toFixed(2)}`,
     );
     const table = [
       hdr,
@@ -2355,7 +2355,11 @@ export default function App() {
       });
       const htmlSent = await trySendHtmlEmail(emailConfig.approverEmail, subject, htmlEmail);
       if (!htmlSent) {
-        const body = replacePlaceholders(tmpl.body || 'Order Approval Request\n\n{orderTable}');
+        let body = replacePlaceholders(tmpl.body || 'Order Approval Request\n\n{orderTable}');
+        // Always append table if {orderTable} placeholder was not in the template
+        if (!(tmpl.body || '').includes('{orderTable}') && tmpl.body) {
+          body += '\n\n' + table;
+        }
         const mailtoUrl = `mailto:${emailConfig.approverEmail}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
         if (mailtoUrl.length > 2000) {
           window.open(
@@ -2469,20 +2473,25 @@ export default function App() {
     setOrders((prev) => prev.map((o) => (linkedIds.has(o.id) ? { ...o, approvalSentDate: now } : o)));
     linkedOrders.forEach((o) => dbSync(api.updateOrder(o.id, { approvalSentDate: now }), 'Approval date not saved'));
 
-    // Build grouped plain-text table
+    // Build grouped plain-text table (Excel-style with all order details)
+    const bulkHdr =
+      'No. | Order ID     | Material No.     | Description                        | Ordered By       | Date       | Status    | Qty  | Unit Price  | Total (SGD)';
+    const bulkSep =
+      '----|--------------|------------------|------------------------------------|------------------|------------|-----------|------|-------------|------------';
     let lines = [];
     selectedGroups.forEach((bg) => {
       const bgOrders = orders.filter((o) => o.bulkGroupId === bg.id);
       const bgCost = bgOrders.reduce((s, o) => s + getEffectiveTotal(o), 0);
       lines.push(`\n=== ${bg.id} | ${bg.month} | By: ${bg.createdBy || 'N/A'} ===`);
-      lines.push('No. | Material No.     | Description                        | Qty  | Unit Price  | Total (SGD)');
-      lines.push('----|------------------|------------------------------------|------|-------------|------------');
+      lines.push(bulkHdr);
+      lines.push(bulkSep);
       bgOrders.forEach((o, i) => {
         lines.push(
-          `${String(i + 1).padEnd(3)} | ${(o.materialNo || 'N/A').padEnd(16)} | ${(o.description || '').substring(0, 34).padEnd(34)} | ${String(o.quantity || 0).padEnd(4)} | S$${getEffectivePrice(o).toFixed(2).padStart(8)} | S$${getEffectiveTotal(o).toFixed(2)}`,
+          `${String(i + 1).padEnd(3)} | ${(o.id || '').padEnd(12)} | ${(o.materialNo || 'N/A').padEnd(16)} | ${(o.description || '').substring(0, 34).padEnd(34)} | ${(o.orderBy || '').substring(0, 16).padEnd(16)} | ${(o.orderDate || '').padEnd(10)} | ${(o.status || 'Pending').padEnd(9)} | ${String(o.quantity || 0).padEnd(4)} | S$${getEffectivePrice(o).toFixed(2).padStart(8)} | S$${getEffectiveTotal(o).toFixed(2)}`,
         );
       });
       const bgTotalQty = bgOrders.reduce((s, o) => s + (Number(o.quantity) || 0), 0);
+      lines.push(bulkSep);
       lines.push(`Batch Subtotal: ${bgOrders.length} items | ${bgTotalQty} units | S$${bgCost.toFixed(2)}`);
     });
     lines.push(
@@ -2502,6 +2511,8 @@ export default function App() {
       orderTable: table,
       month: selectedGroups.map((bg) => bg.month).join(', '),
       orderCount: linkedOrders.length,
+      batchId: selectedGroups.map((bg) => bg.id).join(', '),
+      requestedBy: currentUser?.name || 'System',
     };
     const replaceBulk = (s) => fillTemplate(s, bulkTemplateData);
     const subject = replaceBulk(tmplB.subject || '[APPROVAL] Bulk Order Batch - {batchCount} Batches (S${totalCost})');
@@ -2570,7 +2581,11 @@ export default function App() {
       });
       const htmlSent = await trySendHtmlEmail(emailConfig.approverEmail, subject, htmlEmail);
       if (!htmlSent) {
-        const body = replaceBulk(tmplB.body || 'Bulk Order Approval Request\n\n{orderTable}');
+        let body = replaceBulk(tmplB.body || 'Bulk Order Approval Request\n\n{orderTable}');
+        // Always append table if {orderTable} placeholder was not in the template
+        if (!(tmplB.body || '').includes('{orderTable}') && tmplB.body) {
+          body += '\n\n' + table;
+        }
         const mailtoUrl = `mailto:${emailConfig.approverEmail}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
         if (mailtoUrl.length > 2000) {
           window.open(
