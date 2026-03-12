@@ -9199,7 +9199,9 @@ export default function App() {
                                         min={1}
                                         style={cardInput({ width: '100%', textAlign: 'center' })}
                                         value={o.quantity || 0}
-                                        onChange={(e) => updateOrderField('quantity', parseInt(e.target.value) || 0)}
+                                        onChange={(e) =>
+                                          updateOrderField('quantity', Math.max(1, parseInt(e.target.value) || 1))
+                                        }
                                         onFocus={focusStyle}
                                         onBlur={blurStyle}
                                       />
@@ -9354,8 +9356,12 @@ export default function App() {
                             <button
                               type="button"
                               onClick={async () => {
-                                if (!addToBulkItem.materialNo || !addToBulkItem.description) {
+                                if (!addToBulkItem.materialNo?.trim() || !addToBulkItem.description?.trim()) {
                                   notify('Missing Fields', 'Material No. and Description required', 'warning');
+                                  return;
+                                }
+                                if (!addToBulkItem.quantity || addToBulkItem.quantity < 1) {
+                                  notify('Invalid Quantity', 'Quantity must be at least 1', 'warning');
                                   return;
                                 }
                                 const totalCost = addToBulkItem.listPrice * addToBulkItem.quantity;
@@ -9499,12 +9505,11 @@ export default function App() {
                             const newMonth = selectedBulkGroup.month;
                             const oldStatus = origGroup?.status || '';
                             const newStatus = selectedBulkGroup.status;
-                            // Auto-sync items count and totalCost from actual orders
+                            // Auto-sync items count and totalCost from actual orders (immutable)
                             const currentBgOrders = orders.filter((o) => o.bulkGroupId === selectedBulkGroup.id);
                             const syncedItems = currentBgOrders.length;
                             const syncedCost = currentBgOrders.reduce((s, o) => s + (o.totalCost || 0), 0);
-                            selectedBulkGroup.items = syncedItems;
-                            selectedBulkGroup.totalCost = syncedCost;
+                            const syncedGroup = { ...selectedBulkGroup, items: syncedItems, totalCost: syncedCost };
                             const linkedCount = syncedItems;
 
                             // Confirm before cascading status to linked orders
@@ -9529,63 +9534,36 @@ export default function App() {
                                 return;
                             }
 
-                            setBulkGroups((prev) =>
-                              prev.map((g) => (g.id === selectedBulkGroup.id ? selectedBulkGroup : g)),
-                            );
-                            dbSync(
-                              api.updateBulkGroup(selectedBulkGroup.id, selectedBulkGroup),
-                              'Bulk group edit not saved',
-                            );
+                            setBulkGroups((prev) => prev.map((g) => (g.id === syncedGroup.id ? syncedGroup : g)));
+                            dbSync(api.updateBulkGroup(syncedGroup.id, syncedGroup), 'Bulk group edit not saved');
                             // If month changed, update orders linked to this bulk group
                             if (oldMonth && newMonth && oldMonth !== newMonth) {
+                              currentBgOrders.forEach((o) => {
+                                dbSync(api.updateOrder(o.id, { month: newMonth }), 'Order month sync failed');
+                              });
                               setOrders((prev) =>
-                                prev.map((o) =>
-                                  o.bulkGroupId === selectedBulkGroup.id ? { ...o, month: newMonth } : o,
-                                ),
+                                prev.map((o) => (o.bulkGroupId === syncedGroup.id ? { ...o, month: newMonth } : o)),
                               );
-                              orders
-                                .filter((o) => o.bulkGroupId === selectedBulkGroup.id)
-                                .forEach((o) => {
-                                  dbSync(api.updateOrder(o.id, { month: newMonth }), 'Order month sync failed');
-                                });
                             }
                             // If status changed to Approved/Rejected, cascade to all linked orders
                             if (oldStatus !== newStatus && (newStatus === 'Approved' || newStatus === 'Rejected')) {
                               const approvalStatus = newStatus === 'Approved' ? 'approved' : 'rejected';
-                              const linkedOrders = orders.filter((o) => o.bulkGroupId === selectedBulkGroup.id);
-                              setOrders((prev) =>
-                                prev.map((o) =>
-                                  o.bulkGroupId === selectedBulkGroup.id
-                                    ? { ...o, status: newStatus, approvalStatus }
-                                    : o,
-                                ),
-                              );
-                              linkedOrders.forEach((o) =>
+                              currentBgOrders.forEach((o) =>
                                 dbSync(
                                   api.updateOrder(o.id, { status: newStatus, approvalStatus }),
                                   'Order approval cascade failed',
+                                ),
+                              );
+                              setOrders((prev) =>
+                                prev.map((o) =>
+                                  o.bulkGroupId === syncedGroup.id ? { ...o, status: newStatus, approvalStatus } : o,
                                 ),
                               );
                             }
                             // If manually set to Completed, mark all linked orders as Received with full arrival data
                             if (oldStatus !== newStatus && newStatus === 'Completed') {
                               const today = new Date().toISOString().slice(0, 10);
-                              const linkedOrders = orders.filter((o) => o.bulkGroupId === selectedBulkGroup.id);
-                              setOrders((prev) =>
-                                prev.map((o) =>
-                                  o.bulkGroupId === selectedBulkGroup.id
-                                    ? {
-                                        ...o,
-                                        status: 'Received',
-                                        approvalStatus: 'approved',
-                                        qtyReceived: o.quantity,
-                                        backOrder: 0,
-                                        arrivalDate: o.arrivalDate || today,
-                                      }
-                                    : o,
-                                ),
-                              );
-                              linkedOrders.forEach((o) =>
+                              currentBgOrders.forEach((o) =>
                                 dbSync(
                                   api.updateOrder(o.id, {
                                     status: 'Received',
@@ -9595,6 +9573,20 @@ export default function App() {
                                     arrivalDate: o.arrivalDate || today,
                                   }),
                                   'Order received cascade failed',
+                                ),
+                              );
+                              setOrders((prev) =>
+                                prev.map((o) =>
+                                  o.bulkGroupId === syncedGroup.id
+                                    ? {
+                                        ...o,
+                                        status: 'Received',
+                                        approvalStatus: 'approved',
+                                        qtyReceived: o.quantity,
+                                        backOrder: 0,
+                                        arrivalDate: o.arrivalDate || today,
+                                      }
+                                    : o,
                                 ),
                               );
                             }
