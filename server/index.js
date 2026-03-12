@@ -619,12 +619,14 @@ app.post('/api/send-email', verifyToken, async (req, res) => {
     if (!to || !subject || !html || !smtp?.host) {
       return res.status(400).json({ error: 'Missing required fields: to, subject, html, smtp.host' });
     }
+    const port = Number(smtp.port) || 587;
     const transporter = nodemailer.createTransport({
       host: smtp.host,
-      port: smtp.port || 587,
-      secure: (smtp.port || 587) === 465,
+      port,
+      secure: port === 465,
+      requireTLS: port === 587,
       auth: smtp.user ? { user: smtp.user, pass: smtp.pass } : undefined,
-      tls: { rejectUnauthorized: process.env.NODE_ENV === 'production' },
+      tls: { rejectUnauthorized: false, minVersion: 'TLSv1.2' },
     });
     await transporter.sendMail({
       from: smtp.from || `"Miltenyi Inventory Hub" <${smtp.user || 'noreply@miltenyibiotec.com'}>`,
