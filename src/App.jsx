@@ -8829,9 +8829,9 @@ export default function App() {
                       background: '#fff',
                       borderRadius: 16,
                       padding: 24,
-                      width: 500,
-                      maxWidth: '94vw',
-                      maxHeight: '80vh',
+                      width: 680,
+                      maxWidth: '96vw',
+                      maxHeight: '88vh',
                       overflow: 'auto',
                       boxShadow: '0 25px 50px -12px rgba(0,0,0,0.25)',
                     }}
@@ -9019,7 +9019,7 @@ export default function App() {
                         </div>
                       </div>
 
-                      {/* Existing Items in This Group — Editable */}
+                      {/* Existing Items in This Group — Card-based Editable */}
                       {bgOrders.length > 0 && (
                         <div>
                           <div
@@ -9037,157 +9037,226 @@ export default function App() {
                           </div>
                           <div
                             style={{
-                              border: '1px solid #E2E8F0',
-                              borderRadius: 8,
-                              overflow: 'hidden',
-                              maxHeight: 300,
+                              display: 'flex',
+                              flexDirection: 'column',
+                              gap: 10,
+                              maxHeight: 360,
                               overflowY: 'auto',
+                              paddingRight: 2,
                             }}
                           >
-                            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
-                              <thead>
-                                <tr style={{ background: '#F8FAFB' }}>
-                                  {['Order ID', 'Material No.', 'Description', 'Qty', 'Price', 'Total', ''].map(
-                                    (h, hi) => (
-                                      <th
-                                        key={hi}
-                                        style={{
-                                          padding: '7px 6px',
-                                          textAlign: hi === 3 || hi === 4 ? 'center' : hi === 5 ? 'right' : 'left',
-                                          fontWeight: 600,
-                                          color: '#4A5568',
-                                          borderBottom: '2px solid #E2E8F0',
-                                          whiteSpace: 'nowrap',
-                                          fontSize: 10,
-                                        }}
-                                      >
-                                        {h}
-                                      </th>
-                                    ),
-                                  )}
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {bgOrders.map((o, idx) => {
-                                  const inpStyle = {
-                                    width: '100%',
-                                    padding: '4px 6px',
-                                    border: '1px solid #E2E8F0',
-                                    borderRadius: 4,
-                                    fontSize: 10,
-                                    boxSizing: 'border-box',
-                                  };
-                                  const updateOrderField = (field, value) => {
-                                    const updated = { ...o, [field]: value };
-                                    if (field === 'quantity' || field === 'listPrice') {
-                                      updated.totalCost =
-                                        (Number(updated.listPrice) || 0) * (Number(updated.quantity) || 0);
-                                    }
-                                    setOrders((prev) => prev.map((ord) => (ord.id === o.id ? updated : ord)));
-                                    const dbFields = { [field]: value };
-                                    if (field === 'quantity' || field === 'listPrice') {
-                                      dbFields.totalCost = updated.totalCost;
-                                    }
-                                    dbSync(api.updateOrder(o.id, dbFields), 'Order update failed');
-                                  };
-                                  return (
-                                    <tr
-                                      key={o.id}
+                            {bgOrders.map((o) => {
+                              const cardInput = (extra) => ({
+                                padding: '6px 10px',
+                                border: '1.5px solid #E2E8F0',
+                                borderRadius: 8,
+                                fontSize: 12,
+                                boxSizing: 'border-box',
+                                background: '#fff',
+                                transition: 'border-color 0.15s, box-shadow 0.15s',
+                                outline: 'none',
+                                ...extra,
+                              });
+                              const focusStyle = (e) => {
+                                e.target.style.borderColor = '#818CF8';
+                                e.target.style.boxShadow = '0 0 0 3px rgba(129,140,248,0.15)';
+                              };
+                              const blurStyle = (e) => {
+                                e.target.style.borderColor = '#E2E8F0';
+                                e.target.style.boxShadow = 'none';
+                              };
+                              const updateOrderField = (field, value) => {
+                                const updated = { ...o, [field]: value };
+                                if (field === 'quantity' || field === 'listPrice') {
+                                  updated.totalCost =
+                                    (Number(updated.listPrice) || 0) * (Number(updated.quantity) || 0);
+                                }
+                                setOrders((prev) => prev.map((ord) => (ord.id === o.id ? updated : ord)));
+                                const dbFields = { [field]: value };
+                                if (field === 'quantity' || field === 'listPrice') {
+                                  dbFields.totalCost = updated.totalCost;
+                                }
+                                dbSync(api.updateOrder(o.id, dbFields), 'Order update failed');
+                              };
+                              return (
+                                <div
+                                  key={o.id}
+                                  style={{
+                                    background: '#FAFBFC',
+                                    border: '1.5px solid #E2E8F0',
+                                    borderRadius: 12,
+                                    padding: '12px 14px',
+                                    transition: 'box-shadow 0.15s, border-color 0.15s',
+                                  }}
+                                  onMouseEnter={(e) => {
+                                    e.currentTarget.style.borderColor = '#A5B4FC';
+                                    e.currentTarget.style.boxShadow = '0 2px 8px rgba(67,56,202,0.08)';
+                                  }}
+                                  onMouseLeave={(e) => {
+                                    e.currentTarget.style.borderColor = '#E2E8F0';
+                                    e.currentTarget.style.boxShadow = 'none';
+                                  }}
+                                >
+                                  {/* Card header */}
+                                  <div
+                                    style={{
+                                      display: 'flex',
+                                      alignItems: 'center',
+                                      justifyContent: 'space-between',
+                                      marginBottom: 10,
+                                    }}
+                                  >
+                                    <span
                                       style={{
-                                        background: idx % 2 === 0 ? '#fff' : '#FAFBFC',
-                                        borderBottom: '1px solid #F0F2F5',
+                                        fontFamily: 'Consolas,monospace',
+                                        fontSize: 11,
+                                        fontWeight: 700,
+                                        color: '#4338CA',
+                                        background: '#EEF2FF',
+                                        padding: '3px 8px',
+                                        borderRadius: 6,
                                       }}
                                     >
-                                      <td
-                                        style={{
-                                          padding: '4px 6px',
-                                          fontFamily: 'Consolas,monospace',
-                                          fontWeight: 600,
-                                          color: '#4338CA',
-                                          fontSize: 9,
-                                          whiteSpace: 'nowrap',
-                                        }}
-                                      >
-                                        {o.id}
-                                      </td>
-                                      <td style={{ padding: '4px 6px' }}>
-                                        <input
-                                          style={{ ...inpStyle, fontFamily: 'Consolas,monospace', width: 90 }}
-                                          value={o.materialNo || ''}
-                                          onChange={(e) => updateOrderField('materialNo', e.target.value)}
-                                        />
-                                      </td>
-                                      <td style={{ padding: '4px 6px' }}>
-                                        <input
-                                          style={{ ...inpStyle, minWidth: 100 }}
-                                          value={o.description || ''}
-                                          onChange={(e) => updateOrderField('description', e.target.value)}
-                                        />
-                                      </td>
-                                      <td style={{ padding: '4px 6px' }}>
-                                        <input
-                                          type="number"
-                                          min={1}
-                                          style={{ ...inpStyle, width: 50, textAlign: 'center' }}
-                                          value={o.quantity || 0}
-                                          onChange={(e) => updateOrderField('quantity', parseInt(e.target.value) || 0)}
-                                        />
-                                      </td>
-                                      <td style={{ padding: '4px 6px' }}>
-                                        <input
-                                          type="number"
-                                          step="0.01"
-                                          style={{ ...inpStyle, width: 70, textAlign: 'right' }}
-                                          value={o.listPrice || 0}
-                                          onChange={(e) =>
-                                            updateOrderField('listPrice', parseFloat(e.target.value) || 0)
-                                          }
-                                        />
-                                      </td>
-                                      <td
-                                        style={{
-                                          padding: '4px 6px',
-                                          textAlign: 'right',
-                                          fontWeight: 600,
-                                          color: '#0B7A3E',
-                                          fontSize: 10,
-                                          whiteSpace: 'nowrap',
-                                        }}
-                                      >
-                                        {fmt(o.totalCost || 0)}
-                                      </td>
-                                      <td style={{ padding: '4px 4px', textAlign: 'center' }}>
-                                        <button
-                                          title="Remove from group"
-                                          onClick={() => {
-                                            if (!window.confirm(`Remove ${o.id} from this bulk group?`)) return;
-                                            const updatedOrders = orders.map((ord) =>
-                                              ord.id === o.id ? { ...ord, bulkGroupId: null } : ord,
-                                            );
-                                            setOrders(updatedOrders);
-                                            recalcBulkGroupForMonths([selectedBulkGroup.id], updatedOrders);
-                                            dbSync(
-                                              api.updateOrder(o.id, { bulkGroupId: null }),
-                                              'Remove from group failed',
-                                            );
-                                            notify('Item Removed', `${o.id} removed from group`, 'info');
-                                          }}
-                                          style={{
-                                            background: 'none',
-                                            border: 'none',
-                                            cursor: 'pointer',
-                                            color: '#DC2626',
-                                            padding: 2,
-                                          }}
-                                        >
-                                          <X size={14} />
-                                        </button>
-                                      </td>
-                                    </tr>
-                                  );
-                                })}
-                              </tbody>
-                            </table>
+                                      {o.id}
+                                    </span>
+                                    <button
+                                      title="Remove from group"
+                                      onClick={() => {
+                                        if (!window.confirm(`Remove ${o.id} from this bulk group?`)) return;
+                                        const updatedOrders = orders.map((ord) =>
+                                          ord.id === o.id ? { ...ord, bulkGroupId: null } : ord,
+                                        );
+                                        setOrders(updatedOrders);
+                                        recalcBulkGroupForMonths([selectedBulkGroup.id], updatedOrders);
+                                        dbSync(
+                                          api.updateOrder(o.id, { bulkGroupId: null }),
+                                          'Remove from group failed',
+                                        );
+                                        notify('Item Removed', `${o.id} removed from group`, 'info');
+                                      }}
+                                      style={{
+                                        background: '#FEE2E2',
+                                        border: 'none',
+                                        borderRadius: 6,
+                                        cursor: 'pointer',
+                                        color: '#DC2626',
+                                        padding: '4px 8px',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        gap: 4,
+                                        fontSize: 10,
+                                        fontWeight: 600,
+                                        transition: 'background 0.15s',
+                                      }}
+                                      onMouseEnter={(e) => (e.currentTarget.style.background = '#FECACA')}
+                                      onMouseLeave={(e) => (e.currentTarget.style.background = '#FEE2E2')}
+                                    >
+                                      <X size={12} /> Remove
+                                    </button>
+                                  </div>
+                                  {/* Material No. + Description */}
+                                  <div
+                                    style={{
+                                      display: 'grid',
+                                      gridTemplateColumns: '160px 1fr',
+                                      gap: 8,
+                                      marginBottom: 8,
+                                    }}
+                                  >
+                                    <div>
+                                      <div style={{ fontSize: 10, color: '#64748B', fontWeight: 600, marginBottom: 3 }}>
+                                        Material No.
+                                      </div>
+                                      <input
+                                        style={cardInput({ fontFamily: 'Consolas,monospace', width: '100%' })}
+                                        value={o.materialNo || ''}
+                                        onChange={(e) => updateOrderField('materialNo', e.target.value)}
+                                        onFocus={focusStyle}
+                                        onBlur={blurStyle}
+                                      />
+                                    </div>
+                                    <div>
+                                      <div style={{ fontSize: 10, color: '#64748B', fontWeight: 600, marginBottom: 3 }}>
+                                        Description
+                                      </div>
+                                      <input
+                                        style={cardInput({ width: '100%' })}
+                                        value={o.description || ''}
+                                        onChange={(e) => updateOrderField('description', e.target.value)}
+                                        onFocus={focusStyle}
+                                        onBlur={blurStyle}
+                                      />
+                                    </div>
+                                  </div>
+                                  {/* Qty x Price = Total */}
+                                  <div style={{ display: 'flex', alignItems: 'flex-end', gap: 10 }}>
+                                    <div style={{ flex: '0 0 70px' }}>
+                                      <div style={{ fontSize: 10, color: '#64748B', fontWeight: 600, marginBottom: 3 }}>
+                                        Qty
+                                      </div>
+                                      <input
+                                        type="number"
+                                        min={1}
+                                        style={cardInput({ width: '100%', textAlign: 'center' })}
+                                        value={o.quantity || 0}
+                                        onChange={(e) => updateOrderField('quantity', parseInt(e.target.value) || 0)}
+                                        onFocus={focusStyle}
+                                        onBlur={blurStyle}
+                                      />
+                                    </div>
+                                    <div
+                                      style={{
+                                        fontSize: 14,
+                                        color: '#94A3B8',
+                                        marginBottom: 6,
+                                        fontWeight: 700,
+                                      }}
+                                    >
+                                      x
+                                    </div>
+                                    <div style={{ flex: '0 0 110px' }}>
+                                      <div style={{ fontSize: 10, color: '#64748B', fontWeight: 600, marginBottom: 3 }}>
+                                        Unit Price
+                                      </div>
+                                      <input
+                                        type="number"
+                                        step="0.01"
+                                        style={cardInput({ width: '100%', textAlign: 'right' })}
+                                        value={o.listPrice || 0}
+                                        onChange={(e) => updateOrderField('listPrice', parseFloat(e.target.value) || 0)}
+                                        onFocus={focusStyle}
+                                        onBlur={blurStyle}
+                                      />
+                                    </div>
+                                    <div
+                                      style={{
+                                        fontSize: 14,
+                                        color: '#94A3B8',
+                                        marginBottom: 6,
+                                        fontWeight: 700,
+                                      }}
+                                    >
+                                      =
+                                    </div>
+                                    <div
+                                      style={{
+                                        flex: 1,
+                                        padding: '7px 12px',
+                                        background: '#ECFDF5',
+                                        borderRadius: 8,
+                                        fontWeight: 700,
+                                        fontSize: 14,
+                                        color: '#0B7A3E',
+                                        textAlign: 'right',
+                                        border: '1.5px solid #BBF7D0',
+                                      }}
+                                    >
+                                      {fmt(o.totalCost || 0)}
+                                    </div>
+                                  </div>
+                                </div>
+                              );
+                            })}
                           </div>
                         </div>
                       )}
