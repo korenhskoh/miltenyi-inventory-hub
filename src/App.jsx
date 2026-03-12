@@ -9161,11 +9161,11 @@ export default function App() {
                                           title="Remove from group"
                                           onClick={() => {
                                             if (!window.confirm(`Remove ${o.id} from this bulk group?`)) return;
-                                            setOrders((prev) =>
-                                              prev.map((ord) =>
-                                                ord.id === o.id ? { ...ord, bulkGroupId: null } : ord,
-                                              ),
+                                            const updatedOrders = orders.map((ord) =>
+                                              ord.id === o.id ? { ...ord, bulkGroupId: null } : ord,
                                             );
+                                            setOrders(updatedOrders);
+                                            recalcBulkGroupForMonths([selectedBulkGroup.id], updatedOrders);
                                             dbSync(
                                               api.updateOrder(o.id, { bulkGroupId: null }),
                                               'Remove from group failed',
