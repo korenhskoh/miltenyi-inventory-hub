@@ -2122,58 +2122,77 @@ export default function App() {
 
   // ── HTML Email Builder ──
   const buildApprovalHtml = ({ title, headerFields, sections, footer }) => {
-    const thStyle =
-      'padding:10px 14px;text-align:left;font-size:12px;font-weight:600;color:#4A5568;background:#F8FAFB;border-bottom:2px solid #E2E8F0;white-space:nowrap;';
-    const tdStyle = 'padding:9px 14px;font-size:12px;color:#1A202C;border-bottom:1px solid #F0F2F5;';
-    const tdMono = tdStyle + 'font-family:Consolas,monospace;font-weight:600;color:#0B7A3E;';
-    const tdRight = tdStyle + 'text-align:right;font-weight:600;';
-    const renderTable = (cols, rows, totals) => {
+    // Excel-style grid table
+    const border = '1px solid #D0D5DD';
+    const thStyle = `padding:8px 10px;text-align:left;font-size:11px;font-weight:700;color:#fff;background:#2D6A4F;border:${border};white-space:nowrap;letter-spacing:0.3px;`;
+    const thRight = thStyle + 'text-align:right;';
+    const thCenter = thStyle + 'text-align:center;';
+    const tdStyle = `padding:7px 10px;font-size:11px;color:#1A202C;border:${border};vertical-align:top;`;
+    const tdMono = tdStyle + 'font-family:Consolas,monospace;font-weight:600;color:#1B4332;';
+    const tdRight = tdStyle + 'text-align:right;';
+    const tdCenter = tdStyle + 'text-align:center;';
+    const renderTable = (cols, rows, totals, colAlign) => {
       let html =
-        '<table cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse;border:1px solid #E2E8F0;border-radius:8px;overflow:hidden;margin:16px 0;">';
-      html += '<thead><tr>' + cols.map((c) => `<th style="${thStyle}">${c}</th>`).join('') + '</tr></thead><tbody>';
+        '<table cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse;border:2px solid #2D6A4F;margin:12px 0;">';
+      html +=
+        '<thead><tr>' +
+        cols
+          .map((c, ci) => {
+            const align = colAlign?.[ci];
+            return `<th style="${align === 'right' ? thRight : align === 'center' ? thCenter : thStyle}">${c}</th>`;
+          })
+          .join('') +
+        '</tr></thead><tbody>';
       rows.forEach((r, i) => {
-        const bg = i % 2 === 0 ? '#fff' : '#FCFCFD';
+        const bg = i % 2 === 0 ? '#fff' : '#F0FDF4';
         html +=
           `<tr style="background:${bg}">` +
           r
-            .map((v, ci) => `<td style="${ci === 0 ? tdMono : ci === r.length - 1 ? tdRight : tdStyle}">${v}</td>`)
+            .map((v, ci) => {
+              const align = colAlign?.[ci];
+              const style = ci === 0 ? tdMono : align === 'right' ? tdRight : align === 'center' ? tdCenter : tdStyle;
+              return `<td style="${style}">${v}</td>`;
+            })
             .join('') +
           '</tr>';
       });
       if (totals) {
         html +=
-          `<tr style="background:#F0FDF4;font-weight:700;">` +
+          `<tr style="background:#D8F3DC;font-weight:700;">` +
           totals
-            .map(
-              (v, ci) =>
-                `<td style="${ci === totals.length - 1 ? tdRight + 'color:#0B7A3E;' : tdStyle + 'font-weight:700;'}">${v}</td>`,
-            )
+            .map((v, ci) => {
+              const align = colAlign?.[ci];
+              const base = align === 'right' ? tdRight : tdStyle;
+              return `<td style="${base}font-weight:700;color:#1B4332;">${v}</td>`;
+            })
             .join('') +
           '</tr>';
       }
       html += '</tbody></table>';
       return html;
     };
-    let body = `<div style="max-width:700px;margin:0 auto;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#1A202C;">`;
-    body += `<div style="background:linear-gradient(135deg,#006837,#00A550);padding:28px 32px;border-radius:12px 12px 0 0;"><h1 style="margin:0;font-size:20px;color:#fff;font-weight:700;">${title}</h1></div>`;
-    body += `<div style="padding:28px 32px;background:#fff;border:1px solid #E8ECF0;border-top:none;">`;
+    let body = `<div style="max-width:900px;margin:0 auto;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#1A202C;">`;
+    body += `<div style="background:linear-gradient(135deg,#1B4332,#2D6A4F);padding:24px 32px;border-radius:10px 10px 0 0;">`;
+    body += `<h1 style="margin:0;font-size:20px;color:#fff;font-weight:700;">${title}</h1></div>`;
+    body += `<div style="padding:24px 32px;background:#fff;border:1px solid #E8ECF0;border-top:none;">`;
+    // Header summary as compact grid
     body +=
-      `<table style="margin-bottom:20px;">` +
+      '<table cellpadding="0" cellspacing="0" style="border-collapse:collapse;margin-bottom:16px;border:1px solid #D0D5DD;">' +
       headerFields
         .map(
           ([l, v]) =>
-            `<tr><td style="padding:4px 16px 4px 0;font-size:12px;color:#64748B;font-weight:600;">${l}</td><td style="padding:4px 0;font-size:13px;font-weight:600;">${v}</td></tr>`,
+            `<tr><td style="padding:6px 14px;font-size:11px;color:#64748B;font-weight:600;background:#F8FAFB;border:1px solid #D0D5DD;white-space:nowrap;">${l}</td><td style="padding:6px 14px;font-size:12px;font-weight:700;color:#1B4332;border:1px solid #D0D5DD;">${v}</td></tr>`,
         )
         .join('') +
-      `</table>`;
+      '</table>';
     sections.forEach((s) => {
       if (s.heading)
-        body += `<h3 style="font-size:14px;font-weight:700;color:#1E293B;margin:24px 0 8px;border-bottom:2px solid #E2E8F0;padding-bottom:6px;">${s.heading}</h3>`;
-      body += renderTable(s.cols, s.rows, s.totals);
+        body += `<h3 style="font-size:13px;font-weight:700;color:#1B4332;margin:20px 0 6px;padding:6px 10px;background:#D8F3DC;border-left:4px solid #2D6A4F;border-radius:0 4px 4px 0;">${s.heading}</h3>`;
+      body += renderTable(s.cols, s.rows, s.totals, s.colAlign);
     });
-    body += `<div style="margin-top:28px;padding:20px;background:#FEF3C7;border-radius:10px;border-left:4px solid #D97706;">`;
+    body += `<div style="margin-top:24px;padding:16px 20px;background:#FEF3C7;border-radius:8px;border-left:4px solid #D97706;">`;
     body += `<p style="margin:0;font-size:13px;color:#92400E;font-weight:600;">Reply <strong>APPROVE</strong> to approve or <strong>REJECT</strong> to decline.</p></div>`;
-    body += `</div><div style="padding:16px 32px;background:#F8FAFB;border:1px solid #E8ECF0;border-top:none;border-radius:0 0 12px 12px;text-align:center;">`;
+    body += `</div><div style="padding:14px 32px;background:#F8FAFB;border:1px solid #E8ECF0;border-top:none;border-radius:0 0 10px 10px;text-align:center;">`;
     body += `<p style="margin:0;font-size:11px;color:#94A3B8;">${footer || 'Miltenyi Inventory Hub SG'}</p></div></div>`;
     return body;
   };
@@ -2294,17 +2313,43 @@ export default function App() {
         ],
         sections: [
           {
-            cols: ['No.', 'Order ID', 'Material No.', 'Description', 'Qty', 'Unit Price', 'Total (SGD)'],
+            cols: [
+              'No.',
+              'Order ID',
+              'Material No.',
+              'Description',
+              'Ordered By',
+              'Date',
+              'Status',
+              'Qty',
+              'Unit Price',
+              'Total (SGD)',
+            ],
+            colAlign: [null, null, null, null, null, 'center', 'center', 'center', 'right', 'right'],
             rows: selected.map((o, i) => [
               i + 1,
               o.id || '',
               o.materialNo || 'N/A',
-              (o.description || '').slice(0, 40),
+              o.description || '',
+              o.orderBy || '',
+              o.orderDate || '',
+              o.status || 'Pending',
               o.quantity || 0,
               `S$${getEffectivePrice(o).toFixed(2)}`,
               `S$${getEffectiveTotal(o).toFixed(2)}`,
             ]),
-            totals: ['', '', '', `${selected.length} orders`, `${totalQty} units`, '', `S$${totalCost.toFixed(2)}`],
+            totals: [
+              '',
+              '',
+              '',
+              '',
+              '',
+              '',
+              `${selected.length} orders`,
+              `${totalQty} units`,
+              '',
+              `S$${totalCost.toFixed(2)}`,
+            ],
           },
         ],
       });
@@ -2471,16 +2516,43 @@ export default function App() {
         const bgTotalQty = bgOrders.reduce((s, o) => s + (Number(o.quantity) || 0), 0);
         return {
           heading: `${bg.id} — ${bg.month} (By: ${bg.createdBy || 'N/A'})`,
-          cols: ['No.', 'Material No.', 'Description', 'Qty', 'Unit Price', 'Total (SGD)'],
+          cols: [
+            'No.',
+            'Order ID',
+            'Material No.',
+            'Description',
+            'Ordered By',
+            'Date',
+            'Status',
+            'Qty',
+            'Unit Price',
+            'Total (SGD)',
+          ],
+          colAlign: [null, null, null, null, null, 'center', 'center', 'center', 'right', 'right'],
           rows: bgOrders.map((o, i) => [
             i + 1,
+            o.id || '',
             o.materialNo || 'N/A',
-            (o.description || '').slice(0, 40),
+            o.description || '',
+            o.orderBy || '',
+            o.orderDate || '',
+            o.status || 'Pending',
             o.quantity || 0,
             `S$${getEffectivePrice(o).toFixed(2)}`,
             `S$${getEffectiveTotal(o).toFixed(2)}`,
           ]),
-          totals: ['', '', `${bgOrders.length} items`, `${bgTotalQty} units`, '', `S$${bgCost.toFixed(2)}`],
+          totals: [
+            '',
+            '',
+            '',
+            '',
+            '',
+            '',
+            `${bgOrders.length} items`,
+            `${bgTotalQty} units`,
+            '',
+            `S$${bgCost.toFixed(2)}`,
+          ],
         };
       });
       const htmlEmail = buildApprovalHtml({
