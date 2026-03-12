@@ -2205,10 +2205,10 @@ export default function App() {
     from: `"${emailConfig.senderName}" <${emailConfig.senderEmail}>`,
   });
 
-  const trySendHtmlEmail = async (to, subject, html) => {
+  const trySendHtmlEmail = async (to, subject, html, attachments) => {
     if (!emailConfig.smtpHost) return false;
     try {
-      const result = await api.sendEmail({ to, subject, html, smtp: smtpConfig() });
+      const result = await api.sendEmail({ to, subject, html, smtp: smtpConfig(), attachments });
       if (!result.ok) {
         console.error('SMTP Error:', result.error);
         notify('SMTP Failed', result.error || 'Email send failed', 'error');
@@ -2218,6 +2218,58 @@ export default function App() {
       console.error('SMTP Error:', err);
       return false;
     }
+  };
+
+  // Build Excel attachment for approval emails (base64-encoded .xlsx)
+  const buildApprovalExcel = (orderRows, { batchId, month, requestedBy, totalCost, totalQty }) => {
+    const wsData = [
+      ['Miltenyi Inventory Hub — Approval Request'],
+      [],
+      ['Batch ID', batchId || 'N/A', '', 'Requested By', requestedBy || ''],
+      ['Month', month || '', '', 'Date', new Date().toISOString().slice(0, 10)],
+      ['Total Qty', totalQty || 0, '', 'Total Cost (S$)', totalCost || 0],
+      [],
+      [
+        'No.',
+        'Order ID',
+        'Material No.',
+        'Description',
+        'Ordered By',
+        'Date',
+        'Status',
+        'Qty',
+        'Unit Price (S$)',
+        'Total (S$)',
+      ],
+      ...orderRows.map((r, i) => [i + 1, ...r]),
+      [],
+      ['', '', '', '', '', '', 'TOTAL', totalQty, '', totalCost],
+    ];
+    const ws = XLSX.utils.aoa_to_sheet(wsData);
+    // Column widths
+    ws['!cols'] = [
+      { wch: 5 },
+      { wch: 28 },
+      { wch: 16 },
+      { wch: 36 },
+      { wch: 16 },
+      { wch: 12 },
+      { wch: 12 },
+      { wch: 6 },
+      { wch: 12 },
+      { wch: 12 },
+    ];
+    // Merge title row
+    ws['!merges'] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 9 } }];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Orders');
+    const buf = XLSX.write(wb, { type: 'base64', bookType: 'xlsx' });
+    const safeName = (batchId || 'Orders').replace(/[^a-zA-Z0-9_-]/g, '_');
+    return {
+      filename: `${safeName}_${month || 'approval'}.xlsx`,
+      content: buf,
+      contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    };
   };
 
   // ── Batch Approval & Notify — Single Orders ──
@@ -2355,7 +2407,28 @@ export default function App() {
           },
         ],
       });
-      const htmlSent = await trySendHtmlEmail(emailConfig.approverEmail, subject, htmlEmail);
+      // Build Excel attachment with order details
+      const excelAttachment = buildApprovalExcel(
+        selected.map((o) => [
+          o.id || '',
+          o.materialNo || 'N/A',
+          o.description || '',
+          o.orderBy || '',
+          o.orderDate || '',
+          o.status || 'Pending',
+          o.quantity || 0,
+          getEffectivePrice(o),
+          getEffectiveTotal(o),
+        ]),
+        {
+          batchId: approvalId,
+          month: selected[0]?.month || '',
+          requestedBy: currentUser?.name,
+          totalCost: totalCost.toFixed(2),
+          totalQty,
+        },
+      );
+      const htmlSent = await trySendHtmlEmail(emailConfig.approverEmail, subject, htmlEmail, [excelAttachment]);
       if (!htmlSent) {
         let body = replacePlaceholders(tmpl.body || 'Order Approval Request\n\n{orderTable}');
         // Always append table if {orderTable} placeholder was not in the template
@@ -2581,7 +2654,28 @@ export default function App() {
         sections: bulkSections,
         footer: `Grand Total: ${selectedGroups.length} batches | ${linkedOrders.length} items | ${totalQty} units | S$${totalCost.toFixed(2)} — Miltenyi Inventory Hub SG`,
       });
-      const htmlSent = await trySendHtmlEmail(emailConfig.approverEmail, subject, htmlEmail);
+      // Build Excel attachment with all bulk order items
+      const bulkExcelAttachment = buildApprovalExcel(
+        linkedOrders.map((o) => [
+          o.id || '',
+          o.materialNo || 'N/A',
+          o.description || '',
+          o.orderBy || '',
+          o.orderDate || '',
+          o.status || 'Pending',
+          o.quantity || 0,
+          getEffectivePrice(o),
+          getEffectiveTotal(o),
+        ]),
+        {
+          batchId: selectedGroups.map((g) => g.id).join('_'),
+          month: selectedGroups[0]?.month || '',
+          requestedBy: currentUser?.name,
+          totalCost: totalCost.toFixed(2),
+          totalQty,
+        },
+      );
+      const htmlSent = await trySendHtmlEmail(emailConfig.approverEmail, subject, htmlEmail, [bulkExcelAttachment]);
       if (!htmlSent) {
         let body = replaceBulk(tmplB.body || 'Bulk Order Approval Request\n\n{orderTable}');
         // Always append table if {orderTable} placeholder was not in the template
