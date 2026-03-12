@@ -497,7 +497,11 @@ export default function SettingsPage({
                     <div>
                       <span style={{ fontSize: 12, fontWeight: 500 }}>Auto-Send Email</span>
                       <div style={{ fontSize: 10, color: '#64748B' }}>
-                        {emailConfig.smtpHost ? 'SMTP configured — sends HTML email' : 'No SMTP — opens mailto client'}
+                        {emailConfig.emailMethod === 'smtp'
+                          ? 'SMTP — Rich HTML email with Excel attachment'
+                          : emailConfig.emailMethod === 'mailto'
+                            ? 'Mailto — Opens email client with plain text table'
+                            : 'Both — SMTP first, mailto fallback if SMTP fails'}
                       </div>
                     </div>
                   </div>
@@ -507,6 +511,86 @@ export default function SettingsPage({
                     color="#2563EB"
                   />
                 </div>
+                {/* Email Method Selector */}
+                {emailConfig.approvalAutoEmail !== false && (
+                  <div
+                    style={{
+                      marginLeft: 23,
+                      padding: 12,
+                      background: '#EFF6FF',
+                      borderRadius: 8,
+                      border: '1px solid #BFDBFE',
+                    }}
+                  >
+                    <div style={{ fontSize: 11, fontWeight: 600, color: '#1E40AF', marginBottom: 8 }}>
+                      Email Delivery Method
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      {[
+                        {
+                          value: 'both',
+                          label: 'SMTP + Mailto Fallback (Recommended)',
+                          desc: 'Sends rich HTML email with Excel via SMTP. Falls back to mailto if SMTP fails.',
+                        },
+                        {
+                          value: 'smtp',
+                          label: 'SMTP Only',
+                          desc: 'Rich HTML table + Excel attachment. Requires SMTP configured above.',
+                        },
+                        {
+                          value: 'mailto',
+                          label: 'Plain Text (Mailto) Only',
+                          desc: 'Opens email client with plain text table. No SMTP needed.',
+                        },
+                      ].map((opt) => (
+                        <label
+                          key={opt.value}
+                          style={{
+                            display: 'flex',
+                            alignItems: 'flex-start',
+                            gap: 8,
+                            padding: '6px 8px',
+                            borderRadius: 6,
+                            cursor: 'pointer',
+                            background: (emailConfig.emailMethod || 'both') === opt.value ? '#DBEAFE' : 'transparent',
+                            border:
+                              (emailConfig.emailMethod || 'both') === opt.value
+                                ? '1px solid #93C5FD'
+                                : '1px solid transparent',
+                            transition: 'all 0.15s',
+                          }}
+                        >
+                          <input
+                            type="radio"
+                            name="emailMethod"
+                            checked={(emailConfig.emailMethod || 'both') === opt.value}
+                            onChange={() => setEmailConfig((prev) => ({ ...prev, emailMethod: opt.value }))}
+                            style={{ marginTop: 2, accentColor: '#2563EB' }}
+                          />
+                          <div>
+                            <div style={{ fontSize: 11, fontWeight: 600, color: '#1E3A5F' }}>{opt.label}</div>
+                            <div style={{ fontSize: 10, color: '#64748B' }}>{opt.desc}</div>
+                          </div>
+                        </label>
+                      ))}
+                    </div>
+                    {(emailConfig.emailMethod || 'both') !== 'mailto' && !emailConfig.smtpHost && (
+                      <div
+                        style={{
+                          marginTop: 8,
+                          padding: '6px 10px',
+                          background: '#FEF3C7',
+                          borderRadius: 6,
+                          fontSize: 10,
+                          color: '#92400E',
+                          fontWeight: 500,
+                        }}
+                      >
+                        SMTP host not configured above. SMTP emails won't send until configured.
+                      </div>
+                    )}
+                  </div>
+                )}
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                     <MessageSquare size={15} color="#25D366" />

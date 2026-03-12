@@ -2356,82 +2356,89 @@ export default function App() {
 
     // Email — auto-send if enabled
     if (emailConfig.approvalAutoEmail !== false) {
-      const htmlEmail = buildApprovalHtml({
-        title: '📋 Order Approval Request',
-        headerFields: [
-          ['Requested By', currentUser?.name || 'System'],
-          ['Date', now],
-          ['Total Orders', selected.length],
-          ['Total Quantity', `${totalQty} units`],
-          ['Total Cost', `S$${totalCost.toFixed(2)}`],
-        ],
-        sections: [
+      const method = emailConfig.emailMethod || 'both';
+      let htmlSent = false;
+
+      // SMTP path: build HTML email + Excel attachment
+      if (method === 'smtp' || method === 'both') {
+        const htmlEmail = buildApprovalHtml({
+          title: '📋 Order Approval Request',
+          headerFields: [
+            ['Requested By', currentUser?.name || 'System'],
+            ['Date', now],
+            ['Total Orders', selected.length],
+            ['Total Quantity', `${totalQty} units`],
+            ['Total Cost', `S$${totalCost.toFixed(2)}`],
+          ],
+          sections: [
+            {
+              cols: [
+                'No.',
+                'Order ID',
+                'Material No.',
+                'Description',
+                'Ordered By',
+                'Date',
+                'Status',
+                'Qty',
+                'Unit Price',
+                'Total (SGD)',
+              ],
+              colAlign: [null, null, null, null, null, 'center', 'center', 'center', 'right', 'right'],
+              rows: selected.map((o, i) => [
+                i + 1,
+                o.id || '',
+                o.materialNo || 'N/A',
+                o.description || '',
+                o.orderBy || '',
+                o.orderDate || '',
+                o.status || 'Pending',
+                o.quantity || 0,
+                `S$${getEffectivePrice(o).toFixed(2)}`,
+                `S$${getEffectiveTotal(o).toFixed(2)}`,
+              ]),
+              totals: [
+                '',
+                '',
+                '',
+                '',
+                '',
+                '',
+                `${selected.length} orders`,
+                `${totalQty} units`,
+                '',
+                `S$${totalCost.toFixed(2)}`,
+              ],
+            },
+          ],
+        });
+        const excelAttachment = buildApprovalExcel(
+          selected.map((o) => [
+            o.id || '',
+            o.materialNo || 'N/A',
+            o.description || '',
+            o.orderBy || '',
+            o.orderDate || '',
+            o.status || 'Pending',
+            o.quantity || 0,
+            getEffectivePrice(o),
+            getEffectiveTotal(o),
+          ]),
           {
-            cols: [
-              'No.',
-              'Order ID',
-              'Material No.',
-              'Description',
-              'Ordered By',
-              'Date',
-              'Status',
-              'Qty',
-              'Unit Price',
-              'Total (SGD)',
-            ],
-            colAlign: [null, null, null, null, null, 'center', 'center', 'center', 'right', 'right'],
-            rows: selected.map((o, i) => [
-              i + 1,
-              o.id || '',
-              o.materialNo || 'N/A',
-              o.description || '',
-              o.orderBy || '',
-              o.orderDate || '',
-              o.status || 'Pending',
-              o.quantity || 0,
-              `S$${getEffectivePrice(o).toFixed(2)}`,
-              `S$${getEffectiveTotal(o).toFixed(2)}`,
-            ]),
-            totals: [
-              '',
-              '',
-              '',
-              '',
-              '',
-              '',
-              `${selected.length} orders`,
-              `${totalQty} units`,
-              '',
-              `S$${totalCost.toFixed(2)}`,
-            ],
+            batchId: approvalId,
+            month: selected[0]?.month || '',
+            requestedBy: currentUser?.name,
+            totalCost: totalCost.toFixed(2),
+            totalQty,
           },
-        ],
-      });
-      // Build Excel attachment with order details
-      const excelAttachment = buildApprovalExcel(
-        selected.map((o) => [
-          o.id || '',
-          o.materialNo || 'N/A',
-          o.description || '',
-          o.orderBy || '',
-          o.orderDate || '',
-          o.status || 'Pending',
-          o.quantity || 0,
-          getEffectivePrice(o),
-          getEffectiveTotal(o),
-        ]),
-        {
-          batchId: approvalId,
-          month: selected[0]?.month || '',
-          requestedBy: currentUser?.name,
-          totalCost: totalCost.toFixed(2),
-          totalQty,
-        },
-      );
-      const htmlSent = await trySendHtmlEmail(emailConfig.approverEmail, subject, htmlEmail, [excelAttachment]);
-      if (!htmlSent) {
+        );
+        htmlSent = await trySendHtmlEmail(emailConfig.approverEmail, subject, htmlEmail, [excelAttachment]);
+        if (htmlSent) sentChannels.push('Email (SMTP)');
+      }
+
+      // Mailto path: open email client with plain text table
+      if (method === 'mailto' || (method === 'both' && !htmlSent)) {
         let body = replacePlaceholders(tmpl.body || 'Order Approval Request\n\n{orderTable}');
-        // Always append table if {orderTable} placeholder was not in the template
         if (!(tmpl.body || '').includes('{orderTable}') && tmpl.body) {
           body += '\n\n' + table;
         }
@@ -2445,16 +2452,15 @@ export default function App() {
           window.open(mailtoUrl, '_blank');
         }
         sentChannels.push('Email (mailto)');
-      } else {
-        sentChannels.push('Email (SMTP)');
       }
+
       addNotifEntry({
         id: `N-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
         type: 'email',
         to: emailConfig.approverEmail,
         subject,
         date: now,
-        status: htmlSent ? 'Sent' : 'Failed',
+        status: htmlSent ? 'Sent' : method === 'mailto' ? 'Sent (mailto)' : 'Failed',
       });
     }
 
@@ -2641,44 +2647,51 @@ export default function App() {
           ],
         };
       });
-      const htmlEmail = buildApprovalHtml({
-        title: '📋 Bulk Order Approval Request',
-        headerFields: [
-          ['Requested By', currentUser?.name || 'System'],
-          ['Date', now],
-          ['Batches', selectedGroups.length],
-          ['Total Items', linkedOrders.length],
-          ['Total Quantity', `${totalQty} units`],
-          ['Total Cost', `S$${totalCost.toFixed(2)}`],
-        ],
-        sections: bulkSections,
-        footer: `Grand Total: ${selectedGroups.length} batches | ${linkedOrders.length} items | ${totalQty} units | S$${totalCost.toFixed(2)} — Miltenyi Inventory Hub SG`,
-      });
-      // Build Excel attachment with all bulk order items
-      const bulkExcelAttachment = buildApprovalExcel(
-        linkedOrders.map((o) => [
-          o.id || '',
-          o.materialNo || 'N/A',
-          o.description || '',
-          o.orderBy || '',
-          o.orderDate || '',
-          o.status || 'Pending',
-          o.quantity || 0,
-          getEffectivePrice(o),
-          getEffectiveTotal(o),
-        ]),
-        {
-          batchId: selectedGroups.map((g) => g.id).join('_'),
-          month: selectedGroups[0]?.month || '',
-          requestedBy: currentUser?.name,
-          totalCost: totalCost.toFixed(2),
-          totalQty,
-        },
-      );
-      const htmlSent = await trySendHtmlEmail(emailConfig.approverEmail, subject, htmlEmail, [bulkExcelAttachment]);
-      if (!htmlSent) {
+      const method = emailConfig.emailMethod || 'both';
+      let htmlSent = false;
+
+      // SMTP path: build HTML email + Excel attachment
+      if (method === 'smtp' || method === 'both') {
+        const htmlEmail = buildApprovalHtml({
+          title: '📋 Bulk Order Approval Request',
+          headerFields: [
+            ['Requested By', currentUser?.name || 'System'],
+            ['Date', now],
+            ['Batches', selectedGroups.length],
+            ['Total Items', linkedOrders.length],
+            ['Total Quantity', `${totalQty} units`],
+            ['Total Cost', `S$${totalCost.toFixed(2)}`],
+          ],
+          sections: bulkSections,
+          footer: `Grand Total: ${selectedGroups.length} batches | ${linkedOrders.length} items | ${totalQty} units | S$${totalCost.toFixed(2)} — Miltenyi Inventory Hub SG`,
+        });
+        const bulkExcelAttachment = buildApprovalExcel(
+          linkedOrders.map((o) => [
+            o.id || '',
+            o.materialNo || 'N/A',
+            o.description || '',
+            o.orderBy || '',
+            o.orderDate || '',
+            o.status || 'Pending',
+            o.quantity || 0,
+            getEffectivePrice(o),
+            getEffectiveTotal(o),
+          ]),
+          {
+            batchId: selectedGroups.map((g) => g.id).join('_'),
+            month: selectedGroups[0]?.month || '',
+            requestedBy: currentUser?.name,
+            totalCost: totalCost.toFixed(2),
+            totalQty,
+          },
+        );
+        htmlSent = await trySendHtmlEmail(emailConfig.approverEmail, subject, htmlEmail, [bulkExcelAttachment]);
+        if (htmlSent) sentChannels.push('Email (SMTP)');
+      }
+
+      // Mailto path: open email client with plain text table
+      if (method === 'mailto' || (method === 'both' && !htmlSent)) {
         let body = replaceBulk(tmplB.body || 'Bulk Order Approval Request\n\n{orderTable}');
-        // Always append table if {orderTable} placeholder was not in the template
         if (!(tmplB.body || '').includes('{orderTable}') && tmplB.body) {
           body += '\n\n' + table;
         }
@@ -2692,16 +2705,15 @@ export default function App() {
           window.open(mailtoUrl, '_blank');
         }
         sentChannels.push('Email (mailto)');
-      } else {
-        sentChannels.push('Email (SMTP)');
       }
+
       addNotifEntry({
         id: `N-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
         type: 'email',
         to: emailConfig.approverEmail,
         subject,
         date: now,
-        status: 'Sent',
+        status: htmlSent ? 'Sent' : method === 'mailto' ? 'Sent (mailto)' : 'Failed',
       });
     }
 
