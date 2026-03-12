@@ -2197,23 +2197,25 @@ export default function App() {
     return body;
   };
 
+  const smtpConfig = () => ({
+    host: emailConfig.smtpHost,
+    port: emailConfig.smtpPort,
+    user: emailConfig.smtpUser || '',
+    pass: emailConfig.smtpPass || '',
+    from: `"${emailConfig.senderName}" <${emailConfig.senderEmail}>`,
+  });
+
   const trySendHtmlEmail = async (to, subject, html) => {
     if (!emailConfig.smtpHost) return false;
     try {
-      const ok = await api.sendEmail({
-        to,
-        subject,
-        html,
-        smtp: {
-          host: emailConfig.smtpHost,
-          port: emailConfig.smtpPort,
-          user: emailConfig.smtpUser || '',
-          pass: emailConfig.smtpPass || '',
-          from: `"${emailConfig.senderName}" <${emailConfig.senderEmail}>`,
-        },
-      });
-      return ok;
-    } catch {
+      const result = await api.sendEmail({ to, subject, html, smtp: smtpConfig() });
+      if (!result.ok) {
+        console.error('SMTP Error:', result.error);
+        notify('SMTP Failed', result.error || 'Email send failed', 'error');
+      }
+      return result.ok;
+    } catch (err) {
+      console.error('SMTP Error:', err);
       return false;
     }
   };
