@@ -9032,6 +9032,195 @@ export default function App() {
                         </div>
                       </div>
 
+                      {/* Existing Items in This Group */}
+                      {bgOrders.length > 0 && (
+                        <div>
+                          <div
+                            style={{
+                              fontSize: 12,
+                              fontWeight: 700,
+                              color: '#1B4332',
+                              marginBottom: 8,
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: 6,
+                            }}
+                          >
+                            <Package size={14} /> Items in This Group ({bgOrders.length})
+                          </div>
+                          <div
+                            style={{
+                              border: '1px solid #E2E8F0',
+                              borderRadius: 8,
+                              overflow: 'hidden',
+                              maxHeight: 240,
+                              overflowY: 'auto',
+                            }}
+                          >
+                            <table
+                              style={{
+                                width: '100%',
+                                borderCollapse: 'collapse',
+                                fontSize: 11,
+                              }}
+                            >
+                              <thead>
+                                <tr style={{ background: '#F8FAFB' }}>
+                                  <th
+                                    style={{
+                                      padding: '7px 8px',
+                                      textAlign: 'left',
+                                      fontWeight: 600,
+                                      color: '#4A5568',
+                                      borderBottom: '2px solid #E2E8F0',
+                                      whiteSpace: 'nowrap',
+                                    }}
+                                  >
+                                    Order ID
+                                  </th>
+                                  <th
+                                    style={{
+                                      padding: '7px 8px',
+                                      textAlign: 'left',
+                                      fontWeight: 600,
+                                      color: '#4A5568',
+                                      borderBottom: '2px solid #E2E8F0',
+                                      whiteSpace: 'nowrap',
+                                    }}
+                                  >
+                                    Material No.
+                                  </th>
+                                  <th
+                                    style={{
+                                      padding: '7px 8px',
+                                      textAlign: 'left',
+                                      fontWeight: 600,
+                                      color: '#4A5568',
+                                      borderBottom: '2px solid #E2E8F0',
+                                    }}
+                                  >
+                                    Description
+                                  </th>
+                                  <th
+                                    style={{
+                                      padding: '7px 8px',
+                                      textAlign: 'center',
+                                      fontWeight: 600,
+                                      color: '#4A5568',
+                                      borderBottom: '2px solid #E2E8F0',
+                                    }}
+                                  >
+                                    Qty
+                                  </th>
+                                  <th
+                                    style={{
+                                      padding: '7px 8px',
+                                      textAlign: 'right',
+                                      fontWeight: 600,
+                                      color: '#4A5568',
+                                      borderBottom: '2px solid #E2E8F0',
+                                    }}
+                                  >
+                                    Total
+                                  </th>
+                                  <th
+                                    style={{
+                                      padding: '7px 8px',
+                                      textAlign: 'center',
+                                      fontWeight: 600,
+                                      color: '#4A5568',
+                                      borderBottom: '2px solid #E2E8F0',
+                                    }}
+                                  >
+                                    Status
+                                  </th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {bgOrders.map((o, idx) => (
+                                  <tr
+                                    key={o.id}
+                                    style={{
+                                      background: idx % 2 === 0 ? '#fff' : '#FAFBFC',
+                                      borderBottom: '1px solid #F0F2F5',
+                                    }}
+                                  >
+                                    <td
+                                      style={{
+                                        padding: '6px 8px',
+                                        fontFamily: 'Consolas,monospace',
+                                        fontWeight: 600,
+                                        color: '#4338CA',
+                                        fontSize: 10,
+                                      }}
+                                    >
+                                      {o.id}
+                                    </td>
+                                    <td
+                                      style={{
+                                        padding: '6px 8px',
+                                        fontFamily: 'Consolas,monospace',
+                                        fontSize: 10,
+                                      }}
+                                    >
+                                      {o.materialNo || 'N/A'}
+                                    </td>
+                                    <td
+                                      style={{
+                                        padding: '6px 8px',
+                                        maxWidth: 140,
+                                        overflow: 'hidden',
+                                        textOverflow: 'ellipsis',
+                                        whiteSpace: 'nowrap',
+                                      }}
+                                    >
+                                      {o.description || ''}
+                                    </td>
+                                    <td style={{ padding: '6px 8px', textAlign: 'center', fontWeight: 600 }}>
+                                      {o.quantity || 0}
+                                    </td>
+                                    <td
+                                      style={{
+                                        padding: '6px 8px',
+                                        textAlign: 'right',
+                                        fontWeight: 600,
+                                        color: '#0B7A3E',
+                                      }}
+                                    >
+                                      {fmt(o.totalCost || 0)}
+                                    </td>
+                                    <td style={{ padding: '6px 8px', textAlign: 'center' }}>
+                                      <span
+                                        style={{
+                                          padding: '2px 6px',
+                                          borderRadius: 4,
+                                          fontSize: 9,
+                                          fontWeight: 600,
+                                          background:
+                                            o.status === 'Approved'
+                                              ? '#D1FAE5'
+                                              : o.status === 'Rejected'
+                                                ? '#FEE2E2'
+                                                : '#FEF3C7',
+                                          color:
+                                            o.status === 'Approved'
+                                              ? '#065F46'
+                                              : o.status === 'Rejected'
+                                                ? '#991B1B'
+                                                : '#92400E',
+                                        }}
+                                      >
+                                        {o.status || 'Pending'}
+                                      </span>
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      )}
+
                       {/* Add Item to Bulk Group */}
                       {selectedBulkGroup.status !== 'Completed' && (
                         <div
