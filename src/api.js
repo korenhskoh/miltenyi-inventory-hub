@@ -722,13 +722,13 @@ async function bulkImportMachines(machines) {
   }
 }
 
-async function sendEmail({ to, subject, html, smtp }) {
+async function sendEmail({ to, subject, html, smtp, attachments }) {
   try {
     const res = handleResponse(
       await fetch(`${BASE}/api/send-email`, {
         method: 'POST',
         headers: authHeaders(),
-        body: JSON.stringify({ to, subject, html, smtp }),
+        body: JSON.stringify({ to, subject, html, smtp, attachments }),
       }),
     );
     const data = await res.json();

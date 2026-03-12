@@ -615,7 +615,7 @@ app.use('/api/migrate', verifyToken, requireAdmin, migrateRouter);
 // Send HTML email via SMTP
 app.post('/api/send-email', verifyToken, async (req, res) => {
   try {
-    const { to, subject, html, smtp } = req.body;
+    const { to, subject, html, smtp, attachments } = req.body;
     if (!to || !subject || !html || !smtp?.host) {
       return res.status(400).json({ error: 'Missing required fields: to, subject, html, smtp.host' });
     }
@@ -628,12 +628,20 @@ app.post('/api/send-email', verifyToken, async (req, res) => {
       auth: smtp.user ? { user: smtp.user, pass: smtp.pass } : undefined,
       tls: { rejectUnauthorized: false, minVersion: 'TLSv1.2' },
     });
-    await transporter.sendMail({
+    const mailOpts = {
       from: smtp.from || `"Miltenyi Inventory Hub" <${smtp.user || 'noreply@miltenyibiotec.com'}>`,
       to,
       subject,
       html,
-    });
+    };
+    if (Array.isArray(attachments) && attachments.length) {
+      mailOpts.attachments = attachments.map((a) => ({
+        filename: a.filename,
+        content: Buffer.from(a.content, 'base64'),
+        contentType: a.contentType || 'application/octet-stream',
+      }));
+    }
+    await transporter.sendMail(mailOpts);
     res.json({ ok: true });
   } catch (err) {
     logger.error({ err }, 'Email send error');
