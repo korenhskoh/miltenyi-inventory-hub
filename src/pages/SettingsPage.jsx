@@ -340,9 +340,89 @@ export default function SettingsPage({
                 />
               </div>
             </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 8 }}>
+              <button
+                onClick={async () => {
+                  if (!emailConfig.smtpHost || !emailConfig.senderEmail) {
+                    notify('Missing Config', 'SMTP Host and Sender Email are required', 'warning');
+                    return;
+                  }
+                  notify('Sending...', 'Sending test email...', 'info');
+                  try {
+                    const result = await api.sendEmail({
+                      to: emailConfig.senderEmail,
+                      subject: '[TEST] Miltenyi Inventory Hub - SMTP Configuration Test',
+                      html: `<div style="font-family:sans-serif;max-width:500px;margin:0 auto;padding:24px;">
+                        <div style="background:linear-gradient(135deg,#1B4332,#2D6A4F);padding:20px 24px;border-radius:10px 10px 0 0;">
+                          <h2 style="margin:0;color:#fff;font-size:16px;">SMTP Test Successful</h2>
+                        </div>
+                        <div style="padding:20px 24px;background:#fff;border:1px solid #E2E8F0;border-top:none;border-radius:0 0 10px 10px;">
+                          <p style="color:#1A202C;font-size:13px;">Your SMTP configuration is working correctly.</p>
+                          <table style="border-collapse:collapse;width:100%;font-size:12px;margin-top:12px;">
+                            <tr><td style="padding:6px 10px;color:#64748B;font-weight:600;border:1px solid #E2E8F0;background:#F8FAFB;">Host</td><td style="padding:6px 10px;border:1px solid #E2E8F0;">${emailConfig.smtpHost}</td></tr>
+                            <tr><td style="padding:6px 10px;color:#64748B;font-weight:600;border:1px solid #E2E8F0;background:#F8FAFB;">Port</td><td style="padding:6px 10px;border:1px solid #E2E8F0;">${emailConfig.smtpPort}</td></tr>
+                            <tr><td style="padding:6px 10px;color:#64748B;font-weight:600;border:1px solid #E2E8F0;background:#F8FAFB;">From</td><td style="padding:6px 10px;border:1px solid #E2E8F0;">${emailConfig.senderEmail}</td></tr>
+                            <tr><td style="padding:6px 10px;color:#64748B;font-weight:600;border:1px solid #E2E8F0;background:#F8FAFB;">Time</td><td style="padding:6px 10px;border:1px solid #E2E8F0;">${new Date().toLocaleString()}</td></tr>
+                          </table>
+                          <p style="color:#64748B;font-size:11px;margin-top:16px;">— Miltenyi Inventory Hub SG</p>
+                        </div>
+                      </div>`,
+                      smtp: {
+                        host: emailConfig.smtpHost,
+                        port: emailConfig.smtpPort,
+                        user: emailConfig.smtpUser || '',
+                        pass: emailConfig.smtpPass || '',
+                        from: `"${emailConfig.senderName}" <${emailConfig.senderEmail}>`,
+                      },
+                    });
+                    if (result.ok) {
+                      notify(
+                        'Test Passed',
+                        `Test email sent to ${emailConfig.senderEmail}. Check your inbox!`,
+                        'success',
+                      );
+                    } else {
+                      notify('SMTP Failed', result.error || 'Could not send email. Check your SMTP settings.', 'error');
+                    }
+                  } catch (err) {
+                    notify('SMTP Error', err.message || 'Connection failed', 'error');
+                  }
+                }}
+                style={{
+                  padding: '8px 16px',
+                  background: '#2563EB',
+                  color: '#fff',
+                  border: 'none',
+                  borderRadius: 6,
+                  fontSize: 12,
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 6,
+                }}
+              >
+                <Mail size={14} /> Send Test Email
+              </button>
+              <span style={{ fontSize: 11, color: '#94A3B8' }}>Sends a test to your Sender Email address</span>
+            </div>
             <div style={{ fontSize: 11, color: '#94A3B8', marginTop: 6 }}>
               Configure SMTP to send HTML emails with styled tables. Without SMTP, approval emails open in your default
               mail client (plain text).
+            </div>
+            <div
+              style={{ padding: 10, background: '#EFF6FF', borderRadius: 8, border: '1px solid #BFDBFE', marginTop: 4 }}
+            >
+              <div style={{ fontSize: 11, fontWeight: 600, color: '#1E40AF', marginBottom: 4 }}>
+                For Outlook / Microsoft 365:
+              </div>
+              <div style={{ fontSize: 10, color: '#1E40AF', lineHeight: 1.6 }}>
+                Host: <strong>smtp.office365.com</strong> &nbsp;|&nbsp; Port: <strong>587</strong> &nbsp;|&nbsp;
+                Username: <strong>your full email</strong> &nbsp;|&nbsp; Password: <strong>App Password</strong>{' '}
+                (generate at mysignins.microsoft.com/security-info)
+                <br />
+                Your IT admin may need to enable &quot;Authenticated SMTP&quot; for your mailbox in Microsoft 365 Admin.
+              </div>
             </div>
           </div>
         </div>

@@ -2197,23 +2197,25 @@ export default function App() {
     return body;
   };
 
+  const smtpConfig = () => ({
+    host: emailConfig.smtpHost,
+    port: emailConfig.smtpPort,
+    user: emailConfig.smtpUser || '',
+    pass: emailConfig.smtpPass || '',
+    from: `"${emailConfig.senderName}" <${emailConfig.senderEmail}>`,
+  });
+
   const trySendHtmlEmail = async (to, subject, html) => {
     if (!emailConfig.smtpHost) return false;
     try {
-      const ok = await api.sendEmail({
-        to,
-        subject,
-        html,
-        smtp: {
-          host: emailConfig.smtpHost,
-          port: emailConfig.smtpPort,
-          user: emailConfig.smtpUser || '',
-          pass: emailConfig.smtpPass || '',
-          from: `"${emailConfig.senderName}" <${emailConfig.senderEmail}>`,
-        },
-      });
-      return ok;
-    } catch {
+      const result = await api.sendEmail({ to, subject, html, smtp: smtpConfig() });
+      if (!result.ok) {
+        console.error('SMTP Error:', result.error);
+        notify('SMTP Failed', result.error || 'Email send failed', 'error');
+      }
+      return result.ok;
+    } catch (err) {
+      console.error('SMTP Error:', err);
       return false;
     }
   };
@@ -8887,30 +8889,14 @@ export default function App() {
                             color: '#92400E',
                             display: 'flex',
                             alignItems: 'center',
-                            justifyContent: 'space-between',
+                            gap: 6,
                           }}
                         >
+                          <AlertTriangle size={12} />
                           <span>
-                            <AlertTriangle size={12} style={{ verticalAlign: 'middle', marginRight: 4 }} />
-                            Items/cost mismatch with actual orders
+                            Group metadata out of sync — will auto-sync on save (Group: {selectedBulkGroup.items} items
+                            / {fmt(selectedBulkGroup.totalCost || 0)} → Actual: {actualItems} items / {fmt(actualCost)})
                           </span>
-                          <button
-                            onClick={() =>
-                              setSelectedBulkGroup((prev) => ({ ...prev, items: actualItems, totalCost: actualCost }))
-                            }
-                            style={{
-                              padding: '4px 10px',
-                              background: '#D97706',
-                              color: '#fff',
-                              border: 'none',
-                              borderRadius: 6,
-                              fontSize: 10,
-                              fontWeight: 600,
-                              cursor: 'pointer',
-                            }}
-                          >
-                            Sync
-                          </button>
                         </div>
                       )}
                       <div className="grid-2" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
@@ -8972,6 +8958,7 @@ export default function App() {
                           </select>
                         </div>
                       </div>
+                      {/* Items Count & Total Cost — auto-synced from actual orders */}
                       <div className="grid-2" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
                         <div>
                           <label
@@ -8985,21 +8972,24 @@ export default function App() {
                           >
                             Items Count
                           </label>
-                          <input
-                            type="number"
-                            value={selectedBulkGroup.items}
-                            onChange={(e) =>
-                              setSelectedBulkGroup((prev) => ({ ...prev, items: parseInt(e.target.value) || 0 }))
-                            }
+                          <div
                             style={{
-                              width: '100%',
                               padding: '10px 12px',
                               borderRadius: 8,
                               border: '1.5px solid #E2E8F0',
                               fontSize: 13,
-                              boxSizing: 'border-box',
+                              background: '#F8FAFB',
+                              color: selectedBulkGroup.items !== actualItems ? '#DC2626' : '#1A202C',
+                              fontWeight: 600,
                             }}
-                          />
+                          >
+                            {actualItems}
+                            {selectedBulkGroup.items !== actualItems && (
+                              <span style={{ fontSize: 10, color: '#DC2626', marginLeft: 6 }}>
+                                (group says {selectedBulkGroup.items})
+                              </span>
+                            )}
+                          </div>
                         </div>
                         <div>
                           <label
@@ -9013,26 +9003,23 @@ export default function App() {
                           >
                             Total Cost (S$)
                           </label>
-                          <input
-                            type="number"
-                            step="0.01"
-                            value={selectedBulkGroup.totalCost}
-                            onChange={(e) =>
-                              setSelectedBulkGroup((prev) => ({ ...prev, totalCost: parseFloat(e.target.value) || 0 }))
-                            }
+                          <div
                             style={{
-                              width: '100%',
                               padding: '10px 12px',
                               borderRadius: 8,
                               border: '1.5px solid #E2E8F0',
                               fontSize: 13,
-                              boxSizing: 'border-box',
+                              background: '#F8FAFB',
+                              fontWeight: 600,
+                              color: '#0B7A3E',
                             }}
-                          />
+                          >
+                            {fmt(actualCost)}
+                          </div>
                         </div>
                       </div>
 
-                      {/* Existing Items in This Group */}
+                      {/* Existing Items in This Group — Editable */}
                       {bgOrders.length > 0 && (
                         <div>
                           <div
@@ -9053,168 +9040,152 @@ export default function App() {
                               border: '1px solid #E2E8F0',
                               borderRadius: 8,
                               overflow: 'hidden',
-                              maxHeight: 240,
+                              maxHeight: 300,
                               overflowY: 'auto',
                             }}
                           >
-                            <table
-                              style={{
-                                width: '100%',
-                                borderCollapse: 'collapse',
-                                fontSize: 11,
-                              }}
-                            >
+                            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
                               <thead>
                                 <tr style={{ background: '#F8FAFB' }}>
-                                  <th
-                                    style={{
-                                      padding: '7px 8px',
-                                      textAlign: 'left',
-                                      fontWeight: 600,
-                                      color: '#4A5568',
-                                      borderBottom: '2px solid #E2E8F0',
-                                      whiteSpace: 'nowrap',
-                                    }}
-                                  >
-                                    Order ID
-                                  </th>
-                                  <th
-                                    style={{
-                                      padding: '7px 8px',
-                                      textAlign: 'left',
-                                      fontWeight: 600,
-                                      color: '#4A5568',
-                                      borderBottom: '2px solid #E2E8F0',
-                                      whiteSpace: 'nowrap',
-                                    }}
-                                  >
-                                    Material No.
-                                  </th>
-                                  <th
-                                    style={{
-                                      padding: '7px 8px',
-                                      textAlign: 'left',
-                                      fontWeight: 600,
-                                      color: '#4A5568',
-                                      borderBottom: '2px solid #E2E8F0',
-                                    }}
-                                  >
-                                    Description
-                                  </th>
-                                  <th
-                                    style={{
-                                      padding: '7px 8px',
-                                      textAlign: 'center',
-                                      fontWeight: 600,
-                                      color: '#4A5568',
-                                      borderBottom: '2px solid #E2E8F0',
-                                    }}
-                                  >
-                                    Qty
-                                  </th>
-                                  <th
-                                    style={{
-                                      padding: '7px 8px',
-                                      textAlign: 'right',
-                                      fontWeight: 600,
-                                      color: '#4A5568',
-                                      borderBottom: '2px solid #E2E8F0',
-                                    }}
-                                  >
-                                    Total
-                                  </th>
-                                  <th
-                                    style={{
-                                      padding: '7px 8px',
-                                      textAlign: 'center',
-                                      fontWeight: 600,
-                                      color: '#4A5568',
-                                      borderBottom: '2px solid #E2E8F0',
-                                    }}
-                                  >
-                                    Status
-                                  </th>
+                                  {['Order ID', 'Material No.', 'Description', 'Qty', 'Price', 'Total', ''].map(
+                                    (h, hi) => (
+                                      <th
+                                        key={hi}
+                                        style={{
+                                          padding: '7px 6px',
+                                          textAlign: hi === 3 || hi === 4 ? 'center' : hi === 5 ? 'right' : 'left',
+                                          fontWeight: 600,
+                                          color: '#4A5568',
+                                          borderBottom: '2px solid #E2E8F0',
+                                          whiteSpace: 'nowrap',
+                                          fontSize: 10,
+                                        }}
+                                      >
+                                        {h}
+                                      </th>
+                                    ),
+                                  )}
                                 </tr>
                               </thead>
                               <tbody>
-                                {bgOrders.map((o, idx) => (
-                                  <tr
-                                    key={o.id}
-                                    style={{
-                                      background: idx % 2 === 0 ? '#fff' : '#FAFBFC',
-                                      borderBottom: '1px solid #F0F2F5',
-                                    }}
-                                  >
-                                    <td
+                                {bgOrders.map((o, idx) => {
+                                  const inpStyle = {
+                                    width: '100%',
+                                    padding: '4px 6px',
+                                    border: '1px solid #E2E8F0',
+                                    borderRadius: 4,
+                                    fontSize: 10,
+                                    boxSizing: 'border-box',
+                                  };
+                                  const updateOrderField = (field, value) => {
+                                    const updated = { ...o, [field]: value };
+                                    if (field === 'quantity' || field === 'listPrice') {
+                                      updated.totalCost =
+                                        (Number(updated.listPrice) || 0) * (Number(updated.quantity) || 0);
+                                    }
+                                    setOrders((prev) => prev.map((ord) => (ord.id === o.id ? updated : ord)));
+                                    const dbFields = { [field]: value };
+                                    if (field === 'quantity' || field === 'listPrice') {
+                                      dbFields.totalCost = updated.totalCost;
+                                    }
+                                    dbSync(api.updateOrder(o.id, dbFields), 'Order update failed');
+                                  };
+                                  return (
+                                    <tr
+                                      key={o.id}
                                       style={{
-                                        padding: '6px 8px',
-                                        fontFamily: 'Consolas,monospace',
-                                        fontWeight: 600,
-                                        color: '#4338CA',
-                                        fontSize: 10,
+                                        background: idx % 2 === 0 ? '#fff' : '#FAFBFC',
+                                        borderBottom: '1px solid #F0F2F5',
                                       }}
                                     >
-                                      {o.id}
-                                    </td>
-                                    <td
-                                      style={{
-                                        padding: '6px 8px',
-                                        fontFamily: 'Consolas,monospace',
-                                        fontSize: 10,
-                                      }}
-                                    >
-                                      {o.materialNo || 'N/A'}
-                                    </td>
-                                    <td
-                                      style={{
-                                        padding: '6px 8px',
-                                        maxWidth: 140,
-                                        overflow: 'hidden',
-                                        textOverflow: 'ellipsis',
-                                        whiteSpace: 'nowrap',
-                                      }}
-                                    >
-                                      {o.description || ''}
-                                    </td>
-                                    <td style={{ padding: '6px 8px', textAlign: 'center', fontWeight: 600 }}>
-                                      {o.quantity || 0}
-                                    </td>
-                                    <td
-                                      style={{
-                                        padding: '6px 8px',
-                                        textAlign: 'right',
-                                        fontWeight: 600,
-                                        color: '#0B7A3E',
-                                      }}
-                                    >
-                                      {fmt(o.totalCost || 0)}
-                                    </td>
-                                    <td style={{ padding: '6px 8px', textAlign: 'center' }}>
-                                      <span
+                                      <td
                                         style={{
-                                          padding: '2px 6px',
-                                          borderRadius: 4,
-                                          fontSize: 9,
+                                          padding: '4px 6px',
+                                          fontFamily: 'Consolas,monospace',
                                           fontWeight: 600,
-                                          background:
-                                            o.status === 'Approved'
-                                              ? '#D1FAE5'
-                                              : o.status === 'Rejected'
-                                                ? '#FEE2E2'
-                                                : '#FEF3C7',
-                                          color:
-                                            o.status === 'Approved'
-                                              ? '#065F46'
-                                              : o.status === 'Rejected'
-                                                ? '#991B1B'
-                                                : '#92400E',
+                                          color: '#4338CA',
+                                          fontSize: 9,
+                                          whiteSpace: 'nowrap',
                                         }}
                                       >
-                                        {o.status || 'Pending'}
-                                      </span>
-                                    </td>
-                                  </tr>
-                                ))}
+                                        {o.id}
+                                      </td>
+                                      <td style={{ padding: '4px 6px' }}>
+                                        <input
+                                          style={{ ...inpStyle, fontFamily: 'Consolas,monospace', width: 90 }}
+                                          value={o.materialNo || ''}
+                                          onChange={(e) => updateOrderField('materialNo', e.target.value)}
+                                        />
+                                      </td>
+                                      <td style={{ padding: '4px 6px' }}>
+                                        <input
+                                          style={{ ...inpStyle, minWidth: 100 }}
+                                          value={o.description || ''}
+                                          onChange={(e) => updateOrderField('description', e.target.value)}
+                                        />
+                                      </td>
+                                      <td style={{ padding: '4px 6px' }}>
+                                        <input
+                                          type="number"
+                                          min={1}
+                                          style={{ ...inpStyle, width: 50, textAlign: 'center' }}
+                                          value={o.quantity || 0}
+                                          onChange={(e) => updateOrderField('quantity', parseInt(e.target.value) || 0)}
+                                        />
+                                      </td>
+                                      <td style={{ padding: '4px 6px' }}>
+                                        <input
+                                          type="number"
+                                          step="0.01"
+                                          style={{ ...inpStyle, width: 70, textAlign: 'right' }}
+                                          value={o.listPrice || 0}
+                                          onChange={(e) =>
+                                            updateOrderField('listPrice', parseFloat(e.target.value) || 0)
+                                          }
+                                        />
+                                      </td>
+                                      <td
+                                        style={{
+                                          padding: '4px 6px',
+                                          textAlign: 'right',
+                                          fontWeight: 600,
+                                          color: '#0B7A3E',
+                                          fontSize: 10,
+                                          whiteSpace: 'nowrap',
+                                        }}
+                                      >
+                                        {fmt(o.totalCost || 0)}
+                                      </td>
+                                      <td style={{ padding: '4px 4px', textAlign: 'center' }}>
+                                        <button
+                                          title="Remove from group"
+                                          onClick={() => {
+                                            if (!window.confirm(`Remove ${o.id} from this bulk group?`)) return;
+                                            const updatedOrders = orders.map((ord) =>
+                                              ord.id === o.id ? { ...ord, bulkGroupId: null } : ord,
+                                            );
+                                            setOrders(updatedOrders);
+                                            recalcBulkGroupForMonths([selectedBulkGroup.id], updatedOrders);
+                                            dbSync(
+                                              api.updateOrder(o.id, { bulkGroupId: null }),
+                                              'Remove from group failed',
+                                            );
+                                            notify('Item Removed', `${o.id} removed from group`, 'info');
+                                          }}
+                                          style={{
+                                            background: 'none',
+                                            border: 'none',
+                                            cursor: 'pointer',
+                                            color: '#DC2626',
+                                            padding: 2,
+                                          }}
+                                        >
+                                          <X size={14} />
+                                        </button>
+                                      </td>
+                                    </tr>
+                                  );
+                                })}
                               </tbody>
                             </table>
                           </div>
@@ -9459,7 +9430,13 @@ export default function App() {
                             const newMonth = selectedBulkGroup.month;
                             const oldStatus = origGroup?.status || '';
                             const newStatus = selectedBulkGroup.status;
-                            const linkedCount = orders.filter((o) => o.bulkGroupId === selectedBulkGroup.id).length;
+                            // Auto-sync items count and totalCost from actual orders
+                            const currentBgOrders = orders.filter((o) => o.bulkGroupId === selectedBulkGroup.id);
+                            const syncedItems = currentBgOrders.length;
+                            const syncedCost = currentBgOrders.reduce((s, o) => s + (o.totalCost || 0), 0);
+                            selectedBulkGroup.items = syncedItems;
+                            selectedBulkGroup.totalCost = syncedCost;
+                            const linkedCount = syncedItems;
 
                             // Confirm before cascading status to linked orders
                             if (

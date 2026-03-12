@@ -731,11 +731,11 @@ async function sendEmail({ to, subject, html, smtp }) {
         body: JSON.stringify({ to, subject, html, smtp }),
       }),
     );
-    if (!res.ok) return false;
     const data = await res.json();
-    return data.ok || false;
-  } catch {
-    return false;
+    if (!res.ok) return { ok: false, error: data.error || `HTTP ${res.status}` };
+    return data.ok ? { ok: true } : { ok: false, error: data.error || 'Unknown error' };
+  } catch (err) {
+    return { ok: false, error: err.message || 'Network error' };
   }
 }
 
