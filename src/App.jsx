@@ -2338,17 +2338,17 @@ export default function App() {
     if (emailConfig.approvalAutoWhatsApp !== false && waConnected) {
       const waTable =
         '```\n' +
-        `No │ Material No.    │ Description            │ Qty │ Total\n` +
-        `───┼─────────────────┼────────────────────────┼─────┼──────────\n` +
+        `No│ Order ID     │ Material No.    │ Description          │ Qty│ Price    │ Total\n` +
+        `──┼──────────────┼─────────────────┼──────────────────────┼────┼──────────┼──────────\n` +
         selected
           .map(
             (o, i) =>
-              `${String(i + 1).padEnd(3)}│ ${(o.materialNo || 'N/A').padEnd(16)}│ ${(o.description || '').slice(0, 22).padEnd(22)}│ ${String(o.quantity || 0).padStart(3)} │ S$${getEffectiveTotal(o).toFixed(2)}`,
+              `${String(i + 1).padEnd(2)}│ ${(o.id || '').padEnd(13)}│ ${(o.materialNo || 'N/A').padEnd(16)}│ ${(o.description || '').slice(0, 20).padEnd(20)}│ ${String(o.quantity || 0).padStart(3)} │ S$${getEffectivePrice(o).toFixed(2).padStart(6)}│ S$${getEffectiveTotal(o).toFixed(2)}`,
           )
           .join('\n') +
         '\n' +
-        `───┼─────────────────┼────────────────────────┼─────┼──────────\n` +
-        `   │ ${selected.length} order(s)       │ TOTAL                  │ ${String(totalQty).padStart(3)} │ S$${totalCost.toFixed(2)}\n` +
+        `──┼──────────────┼─────────────────┼──────────────────────┼────┼──────────┼──────────\n` +
+        `  │ ${selected.length} order(s)    │                 │ TOTAL                │ ${String(totalQty).padStart(3)} │          │ S$${totalCost.toFixed(2)}\n` +
         '```';
       const waMsg = fillTemplate(
         waMessageTemplates.orderApproval?.message ||
@@ -2532,18 +2532,18 @@ export default function App() {
           const bgRows = bgOrders
             .map(
               (o, i) =>
-                `${String(i + 1).padEnd(3)}│ ${(o.materialNo || 'N/A').padEnd(16)}│ ${(o.description || '').slice(0, 22).padEnd(22)}│ ${String(o.quantity || 0).padStart(3)} │ S$${getEffectiveTotal(o).toFixed(2)}`,
+                `${String(i + 1).padEnd(2)}│ ${(o.id || '').padEnd(13)}│ ${(o.materialNo || 'N/A').padEnd(16)}│ ${(o.description || '').slice(0, 20).padEnd(20)}│ ${String(o.quantity || 0).padStart(3)} │ S$${getEffectivePrice(o).toFixed(2).padStart(6)}│ S$${getEffectiveTotal(o).toFixed(2)}`,
             )
             .join('\n');
           return (
             `*${bg.id} — ${bg.month}*\n` +
             '```\n' +
-            `No │ Material No.    │ Description            │ Qty │ Total\n` +
-            `───┼─────────────────┼────────────────────────┼─────┼──────────\n` +
+            `No│ Order ID     │ Material No.    │ Description          │ Qty│ Price    │ Total\n` +
+            `──┼──────────────┼─────────────────┼──────────────────────┼────┼──────────┼──────────\n` +
             bgRows +
             '\n' +
-            `───┼─────────────────┼────────────────────────┼─────┼──────────\n` +
-            `   │ Subtotal: ${String(bgOrders.length + ' items, ' + bgTotalQty + ' units').padEnd(30)} │ S$${bgCost.toFixed(2)}\n` +
+            `──┼──────────────┼─────────────────┼──────────────────────┼────┼──────────┼──────────\n` +
+            `  │ Subtotal: ${String(bgOrders.length + ' items, ' + bgTotalQty + ' units').padEnd(42)} │ S$${bgCost.toFixed(2)}\n` +
             '```'
           );
         })
