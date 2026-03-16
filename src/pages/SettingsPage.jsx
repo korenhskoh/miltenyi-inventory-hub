@@ -70,6 +70,8 @@ export default function SettingsPage({
   scheduledNotifs,
   LS_KEYS,
   api,
+  blurPrices,
+  setBlurPrices,
 }) {
   return (
     <div style={{ maxWidth: 700 }}>
@@ -194,7 +196,15 @@ export default function SettingsPage({
         </div>
       </div>
       <div className="card" style={{ padding: '24px 28px', marginBottom: 16 }}>
-        <h3 style={{ fontSize: 15, fontWeight: 600, marginBottom: 20 }}>Price Config (Yearly Update)</h3>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
+          <h3 style={{ fontSize: 15, fontWeight: 600 }}>Price Config (Yearly Update)</h3>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span style={{ fontSize: 12, color: blurPrices ? '#92400E' : '#64748B' }}>
+              {blurPrices ? 'Prices Hidden' : 'Prices Visible'}
+            </span>
+            <Toggle active={blurPrices} onClick={() => setBlurPrices((v) => !v)} color="#F59E0B" />
+          </div>
+        </div>
         <div className="grid-2" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
           {[
             { l: 'Year', k: 'year', s: 1 },

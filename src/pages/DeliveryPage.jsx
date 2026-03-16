@@ -397,7 +397,7 @@ const DeliveryPage = ({
                             {bgOrders.length}
                           </td>
                           <td className="td mono" style={{ fontSize: 11 }}>
-                            {fmt(bg.totalCost)}
+                            <span className="pv">{fmt(bg.totalCost)}</span>
                           </td>
                           <td className="td" style={{ fontSize: 11, color: bg.approvedDate ? '#1A202C' : '#94A3B8' }}>
                             {bg.approvedDate ? fmtDate(bg.approvedDate) : '\u2014'}
