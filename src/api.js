@@ -905,6 +905,45 @@ async function lookupPartPrices(materialNos) {
 
 // ─── Export ───
 
+// ─── Wishlist ───
+
+async function getWishlist() {
+  try {
+    const res = handleResponse(await fetch(`${BASE}/api/wishlist`, { headers: authHeadersGet() }));
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
+async function createWishlistItem(item) {
+  try {
+    const res = handleResponse(
+      await fetch(`${BASE}/api/wishlist`, {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify(item),
+      }),
+    );
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
+async function deleteWishlistItem(id) {
+  try {
+    const res = handleResponse(
+      await fetch(`${BASE}/api/wishlist/${id}`, { method: 'DELETE', headers: authHeadersGet() }),
+    );
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
 const api = {
   setToken,
   getToken,
@@ -971,6 +1010,9 @@ const api = {
   updateInventoryItem,
   deleteInventoryItem,
   lookupPartPrices,
+  getWishlist,
+  createWishlistItem,
+  deleteWishlistItem,
 };
 
 export default api;

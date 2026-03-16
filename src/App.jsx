@@ -91,6 +91,7 @@ import {
   FileBarChart,
   HardDrive,
   Warehouse,
+  Heart,
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import api from './api.js';
@@ -250,6 +251,8 @@ export default function App() {
 
   // ── Bulk Order State ──
   const [showBulkOrder, setShowBulkOrder] = useState(false);
+  const [wishlist, setWishlist] = useState([]);
+  const [showWishlistPicker, setShowWishlistPicker] = useState(null); // null | 'single' | 'bulk'
   const [bulkMonth, setBulkMonth] = useState(() => {
     const d = new Date();
     return d.toLocaleString('en', { month: 'short' }) + ' ' + d.getFullYear();
@@ -1433,6 +1436,7 @@ export default function App() {
         apiCatalog,
         apiAudit,
         apiMachines,
+        apiWishlist,
       ] = await Promise.all([
         api.getOrders(),
         api.getBulkGroups(),
@@ -1444,6 +1448,7 @@ export default function App() {
         api.getCatalog(),
         api.getAuditLog(),
         api.getMachines(),
+        api.getWishlist(),
       ]);
       if (apiOrders !== null) setOrders(numOrders(apiOrders));
       if (apiBulk !== null) setBulkGroups(numBulk(apiBulk));
@@ -1452,6 +1457,7 @@ export default function App() {
       if (apiNotifs !== null) setNotifLog(apiNotifs);
       if (apiAudit !== null) setAuditLog(apiAudit);
       if (apiMachines !== null) setMachines(apiMachines);
+      if (apiWishlist !== null) setWishlist(apiWishlist);
       if (apiApprovals !== null) setPendingApprovals(numApprovals(apiApprovals));
       if (apiConfig && Object.keys(apiConfig).length) {
         if (apiConfig.emailConfig && typeof apiConfig.emailConfig === 'object')
@@ -5937,6 +5943,7 @@ export default function App() {
                         <th className="th" style={{ width: 70, textAlign: 'right' }}>
                           Margin
                         </th>
+                        <th className="th" style={{ width: 40 }}></th>
                       </tr>
                     </thead>
                     <tbody>
@@ -5990,6 +5997,54 @@ export default function App() {
                               }}
                             >
                               {margin}%
+                            </td>
+                            <td className="td" style={{ textAlign: 'center', padding: '4px 2px' }}>
+                              <button
+                                title={
+                                  wishlist.some((w) => w.materialNo === p.materialNo)
+                                    ? 'In Wishlist'
+                                    : 'Add to Wishlist'
+                                }
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  if (wishlist.some((w) => w.materialNo === p.materialNo)) {
+                                    const existing = wishlist.find((w) => w.materialNo === p.materialNo);
+                                    api.deleteWishlistItem(existing.id).then((ok) => {
+                                      if (ok) {
+                                        setWishlist((prev) => prev.filter((w) => w.id !== existing.id));
+                                        notify('Wishlist', 'Removed from wishlist', 'info');
+                                      }
+                                    });
+                                  } else {
+                                    const item = {
+                                      id: `WL-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+                                      materialNo: p.materialNo,
+                                      description: p.description,
+                                      listPrice: p.singaporePrice || p.transferPrice || p.distributorPrice || 0,
+                                      quantity: 1,
+                                    };
+                                    api.createWishlistItem(item).then((saved) => {
+                                      if (saved) {
+                                        setWishlist((prev) => [saved, ...prev]);
+                                        notify('Wishlist', `${p.materialNo} added to wishlist`, 'success');
+                                      }
+                                    });
+                                  }
+                                }}
+                                style={{
+                                  background: 'none',
+                                  border: 'none',
+                                  cursor: 'pointer',
+                                  padding: 2,
+                                  lineHeight: 1,
+                                }}
+                              >
+                                <Heart
+                                  size={14}
+                                  color="#E11D48"
+                                  fill={wishlist.some((w) => w.materialNo === p.materialNo) ? '#E11D48' : 'none'}
+                                />
+                              </button>
                             </td>
                           </tr>
                         );
@@ -11007,6 +11062,22 @@ export default function App() {
                 <X size={20} />
               </button>
             </div>
+            {wishlist.length > 0 && (
+              <button
+                className="bs"
+                style={{
+                  padding: '6px 14px',
+                  fontSize: 12,
+                  marginBottom: 14,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 6,
+                }}
+                onClick={() => setShowWishlistPicker('single')}
+              >
+                <Heart size={13} color="#E11D48" /> Pick from Wishlist ({wishlist.length})
+              </button>
+            )}
             <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
               <div>
                 <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#4A5568', marginBottom: 6 }}>
@@ -11327,9 +11398,20 @@ export default function App() {
             <div style={{ marginBottom: 16 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
                 <span style={{ fontWeight: 600, fontSize: 13 }}>Order Items ({bulkItems.length})</span>
-                <button className="bs" style={{ padding: '6px 12px', fontSize: 12 }} onClick={addBulkItem}>
-                  <Plus size={13} /> Add Item
-                </button>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  {wishlist.length > 0 && (
+                    <button
+                      className="bs"
+                      style={{ padding: '6px 12px', fontSize: 12, display: 'flex', alignItems: 'center', gap: 5 }}
+                      onClick={() => setShowWishlistPicker('bulk')}
+                    >
+                      <Heart size={13} color="#E11D48" /> From Wishlist
+                    </button>
+                  )}
+                  <button className="bs" style={{ padding: '6px 12px', fontSize: 12 }} onClick={addBulkItem}>
+                    <Plus size={13} /> Add Item
+                  </button>
+                </div>
               </div>
               <div style={{ maxHeight: 340, overflow: 'auto', border: '1px solid #E2E8F0', borderRadius: 10 }}>
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
@@ -11528,6 +11610,153 @@ export default function App() {
                 Cancel
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ═══ WISHLIST PICKER MODAL ═══ */}
+      {showWishlistPicker && (
+        <div className="mo" onClick={() => setShowWishlistPicker(null)}>
+          <div
+            className="modal-box"
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: '#fff',
+              borderRadius: 16,
+              padding: '24px 28px',
+              width: 560,
+              maxWidth: '94vw',
+              maxHeight: '80vh',
+              overflow: 'auto',
+              boxShadow: '0 20px 60px rgba(0,0,0,.2)',
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
+              <h2 style={{ fontSize: 16, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 8 }}>
+                <Heart size={18} color="#E11D48" fill="#E11D48" /> Wishlist
+              </h2>
+              <button
+                onClick={() => setShowWishlistPicker(null)}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#94A3B8' }}
+              >
+                <X size={18} />
+              </button>
+            </div>
+            {wishlist.length === 0 ? (
+              <p style={{ color: '#94A3B8', fontSize: 13, textAlign: 'center', padding: 20 }}>
+                Wishlist is empty. Add items from the Parts Catalog.
+              </p>
+            ) : (
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                <thead>
+                  <tr style={{ background: '#F8FAFB' }}>
+                    <th className="th">Material No.</th>
+                    <th className="th">Description</th>
+                    <th className="th" style={{ width: 70, textAlign: 'right' }}>
+                      Price
+                    </th>
+                    <th className="th" style={{ width: 100, textAlign: 'center' }}>
+                      Action
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {wishlist.map((w) => (
+                    <tr key={w.id} className="tr" style={{ borderBottom: '1px solid #F0F2F5' }}>
+                      <td className="td mono" style={{ fontSize: 11, color: '#0B7A3E', fontWeight: 500 }}>
+                        {w.materialNo}
+                      </td>
+                      <td
+                        className="td"
+                        style={{ maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                      >
+                        {w.description}
+                      </td>
+                      <td className="td mono" style={{ textAlign: 'right', fontSize: 11 }}>
+                        <span className="pv">{fmt(w.listPrice || 0)}</span>
+                      </td>
+                      <td className="td" style={{ textAlign: 'center' }}>
+                        <div style={{ display: 'flex', gap: 6, justifyContent: 'center' }}>
+                          <button
+                            className="bp"
+                            style={{ padding: '3px 10px', fontSize: 11 }}
+                            onClick={() => {
+                              if (showWishlistPicker === 'single') {
+                                setNewOrder((p) => ({
+                                  ...p,
+                                  materialNo: w.materialNo || '',
+                                  description: w.description || '',
+                                  listPrice: w.listPrice || 0,
+                                }));
+                                setShowWishlistPicker(null);
+                                notify('Wishlist', `Loaded ${w.materialNo}`, 'success');
+                              } else if (showWishlistPicker === 'bulk') {
+                                setBulkItems((prev) => [
+                                  ...prev,
+                                  {
+                                    materialNo: w.materialNo || '',
+                                    description: w.description || '',
+                                    quantity: w.quantity || 1,
+                                    listPrice: w.listPrice || 0,
+                                  },
+                                ]);
+                                notify('Wishlist', `Added ${w.materialNo} to bulk items`, 'success');
+                              }
+                            }}
+                          >
+                            {showWishlistPicker === 'single' ? 'Use' : 'Add'}
+                          </button>
+                          <button
+                            style={{
+                              background: 'none',
+                              border: '1px solid #FCA5A5',
+                              borderRadius: 6,
+                              padding: '3px 8px',
+                              cursor: 'pointer',
+                              color: '#DC2626',
+                              fontSize: 11,
+                            }}
+                            onClick={() => {
+                              api.deleteWishlistItem(w.id).then((ok) => {
+                                if (ok) {
+                                  setWishlist((prev) => prev.filter((x) => x.id !== w.id));
+                                  notify('Wishlist', 'Item removed', 'info');
+                                }
+                              });
+                            }}
+                          >
+                            <Trash2 size={11} />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+            {showWishlistPicker === 'bulk' && wishlist.length > 0 && (
+              <div style={{ marginTop: 12, textAlign: 'right' }}>
+                <button
+                  className="bp"
+                  style={{ padding: '6px 14px', fontSize: 12 }}
+                  onClick={() => {
+                    setBulkItems((prev) => [
+                      ...prev,
+                      ...wishlist.map((w) => ({
+                        materialNo: w.materialNo || '',
+                        description: w.description || '',
+                        quantity: w.quantity || 1,
+                        listPrice: w.listPrice || 0,
+                      })),
+                    ]);
+                    setShowWishlistPicker(null);
+                    notify('Wishlist', `Added all ${wishlist.length} items to bulk order`, 'success');
+                  }}
+                >
+                  Add All ({wishlist.length})
+                </button>
+              </div>
+            )}
           </div>
         </div>
       )}
