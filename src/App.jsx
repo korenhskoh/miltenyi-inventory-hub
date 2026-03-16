@@ -42,6 +42,7 @@ import {
   ClipboardList,
   BarChart3,
   Eye,
+  EyeOff,
   Send,
   RefreshCw,
   Users,
@@ -164,6 +165,7 @@ export default function App() {
     return mod === 'service' ? 'service' : 'dashboard';
   });
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [ordersMenuOpen, setOrdersMenuOpen] = useState(false);
   const [orders, setOrders] = useState([]);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('All');
@@ -219,6 +221,14 @@ export default function App() {
   const [arrivalSort, setArrivalSort] = useState({ key: 'approvalSentDate', dir: 'desc' });
   const [partsCatalog, setPartsCatalog] = useState([]);
   const [priceConfig, setPriceConfig] = useState(PRICE_CONFIG_DEFAULT);
+  const [blurPrices, setBlurPrices] = useState(() => {
+    try {
+      const v = localStorage.getItem('mih_blurPrices');
+      return v ? JSON.parse(v) : false;
+    } catch {
+      return false;
+    }
+  });
   const [catalogPage, setCatalogPage] = useState(0);
   const [catalogPageSize, setCatalogPageSize] = useState(50);
   const [showCatalogMapper, setShowCatalogMapper] = useState(false);
@@ -1787,6 +1797,13 @@ export default function App() {
   }, [scheduledNotifs]);
   useEffect(() => {
     try {
+      localStorage.setItem('mih_blurPrices', JSON.stringify(blurPrices));
+    } catch {
+      /* ignore */
+    }
+  }, [blurPrices]);
+  useEffect(() => {
+    try {
       localStorage.setItem(LS_KEYS.customLogo, JSON.stringify(customLogo));
     } catch (e) {
       /* ignore */
@@ -2356,82 +2373,89 @@ export default function App() {
 
     // Email — auto-send if enabled
     if (emailConfig.approvalAutoEmail !== false) {
-      const htmlEmail = buildApprovalHtml({
-        title: '📋 Order Approval Request',
-        headerFields: [
-          ['Requested By', currentUser?.name || 'System'],
-          ['Date', now],
-          ['Total Orders', selected.length],
-          ['Total Quantity', `${totalQty} units`],
-          ['Total Cost', `S$${totalCost.toFixed(2)}`],
-        ],
-        sections: [
+      const method = emailConfig.emailMethod || 'both';
+      let htmlSent = false;
+
+      // SMTP path: build HTML email + Excel attachment
+      if (method === 'smtp' || method === 'both') {
+        const htmlEmail = buildApprovalHtml({
+          title: '📋 Order Approval Request',
+          headerFields: [
+            ['Requested By', currentUser?.name || 'System'],
+            ['Date', now],
+            ['Total Orders', selected.length],
+            ['Total Quantity', `${totalQty} units`],
+            ['Total Cost', `S$${totalCost.toFixed(2)}`],
+          ],
+          sections: [
+            {
+              cols: [
+                'No.',
+                'Order ID',
+                'Material No.',
+                'Description',
+                'Ordered By',
+                'Date',
+                'Status',
+                'Qty',
+                'Unit Price',
+                'Total (SGD)',
+              ],
+              colAlign: [null, null, null, null, null, 'center', 'center', 'center', 'right', 'right'],
+              rows: selected.map((o, i) => [
+                i + 1,
+                o.id || '',
+                o.materialNo || 'N/A',
+                o.description || '',
+                o.orderBy || '',
+                o.orderDate || '',
+                o.status || 'Pending',
+                o.quantity || 0,
+                `S$${getEffectivePrice(o).toFixed(2)}`,
+                `S$${getEffectiveTotal(o).toFixed(2)}`,
+              ]),
+              totals: [
+                '',
+                '',
+                '',
+                '',
+                '',
+                '',
+                `${selected.length} orders`,
+                `${totalQty} units`,
+                '',
+                `S$${totalCost.toFixed(2)}`,
+              ],
+            },
+          ],
+        });
+        const excelAttachment = buildApprovalExcel(
+          selected.map((o) => [
+            o.id || '',
+            o.materialNo || 'N/A',
+            o.description || '',
+            o.orderBy || '',
+            o.orderDate || '',
+            o.status || 'Pending',
+            o.quantity || 0,
+            getEffectivePrice(o),
+            getEffectiveTotal(o),
+          ]),
           {
-            cols: [
-              'No.',
-              'Order ID',
-              'Material No.',
-              'Description',
-              'Ordered By',
-              'Date',
-              'Status',
-              'Qty',
-              'Unit Price',
-              'Total (SGD)',
-            ],
-            colAlign: [null, null, null, null, null, 'center', 'center', 'center', 'right', 'right'],
-            rows: selected.map((o, i) => [
-              i + 1,
-              o.id || '',
-              o.materialNo || 'N/A',
-              o.description || '',
-              o.orderBy || '',
-              o.orderDate || '',
-              o.status || 'Pending',
-              o.quantity || 0,
-              `S$${getEffectivePrice(o).toFixed(2)}`,
-              `S$${getEffectiveTotal(o).toFixed(2)}`,
-            ]),
-            totals: [
-              '',
-              '',
-              '',
-              '',
-              '',
-              '',
-              `${selected.length} orders`,
-              `${totalQty} units`,
-              '',
-              `S$${totalCost.toFixed(2)}`,
-            ],
+            batchId: approvalId,
+            month: selected[0]?.month || '',
+            requestedBy: currentUser?.name,
+            totalCost: totalCost.toFixed(2),
+            totalQty,
           },
-        ],
-      });
-      // Build Excel attachment with order details
-      const excelAttachment = buildApprovalExcel(
-        selected.map((o) => [
-          o.id || '',
-          o.materialNo || 'N/A',
-          o.description || '',
-          o.orderBy || '',
-          o.orderDate || '',
-          o.status || 'Pending',
-          o.quantity || 0,
-          getEffectivePrice(o),
-          getEffectiveTotal(o),
-        ]),
-        {
-          batchId: approvalId,
-          month: selected[0]?.month || '',
-          requestedBy: currentUser?.name,
-          totalCost: totalCost.toFixed(2),
-          totalQty,
-        },
-      );
-      const htmlSent = await trySendHtmlEmail(emailConfig.approverEmail, subject, htmlEmail, [excelAttachment]);
-      if (!htmlSent) {
+        );
+        htmlSent = await trySendHtmlEmail(emailConfig.approverEmail, subject, htmlEmail, [excelAttachment]);
+        if (htmlSent) sentChannels.push('Email (SMTP)');
+      }
+
+      // Mailto path: open email client with plain text table
+      if (method === 'mailto' || (method === 'both' && !htmlSent)) {
         let body = replacePlaceholders(tmpl.body || 'Order Approval Request\n\n{orderTable}');
-        // Always append table if {orderTable} placeholder was not in the template
         if (!(tmpl.body || '').includes('{orderTable}') && tmpl.body) {
           body += '\n\n' + table;
         }
@@ -2445,16 +2469,15 @@ export default function App() {
           window.open(mailtoUrl, '_blank');
         }
         sentChannels.push('Email (mailto)');
-      } else {
-        sentChannels.push('Email (SMTP)');
       }
+
       addNotifEntry({
         id: `N-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
         type: 'email',
         to: emailConfig.approverEmail,
         subject,
         date: now,
-        status: htmlSent ? 'Sent' : 'Failed',
+        status: htmlSent ? 'Sent' : method === 'mailto' ? 'Sent (mailto)' : 'Failed',
       });
     }
 
@@ -2641,44 +2664,51 @@ export default function App() {
           ],
         };
       });
-      const htmlEmail = buildApprovalHtml({
-        title: '📋 Bulk Order Approval Request',
-        headerFields: [
-          ['Requested By', currentUser?.name || 'System'],
-          ['Date', now],
-          ['Batches', selectedGroups.length],
-          ['Total Items', linkedOrders.length],
-          ['Total Quantity', `${totalQty} units`],
-          ['Total Cost', `S$${totalCost.toFixed(2)}`],
-        ],
-        sections: bulkSections,
-        footer: `Grand Total: ${selectedGroups.length} batches | ${linkedOrders.length} items | ${totalQty} units | S$${totalCost.toFixed(2)} — Miltenyi Inventory Hub SG`,
-      });
-      // Build Excel attachment with all bulk order items
-      const bulkExcelAttachment = buildApprovalExcel(
-        linkedOrders.map((o) => [
-          o.id || '',
-          o.materialNo || 'N/A',
-          o.description || '',
-          o.orderBy || '',
-          o.orderDate || '',
-          o.status || 'Pending',
-          o.quantity || 0,
-          getEffectivePrice(o),
-          getEffectiveTotal(o),
-        ]),
-        {
-          batchId: selectedGroups.map((g) => g.id).join('_'),
-          month: selectedGroups[0]?.month || '',
-          requestedBy: currentUser?.name,
-          totalCost: totalCost.toFixed(2),
-          totalQty,
-        },
-      );
-      const htmlSent = await trySendHtmlEmail(emailConfig.approverEmail, subject, htmlEmail, [bulkExcelAttachment]);
-      if (!htmlSent) {
+      const method = emailConfig.emailMethod || 'both';
+      let htmlSent = false;
+
+      // SMTP path: build HTML email + Excel attachment
+      if (method === 'smtp' || method === 'both') {
+        const htmlEmail = buildApprovalHtml({
+          title: '📋 Bulk Order Approval Request',
+          headerFields: [
+            ['Requested By', currentUser?.name || 'System'],
+            ['Date', now],
+            ['Batches', selectedGroups.length],
+            ['Total Items', linkedOrders.length],
+            ['Total Quantity', `${totalQty} units`],
+            ['Total Cost', `S$${totalCost.toFixed(2)}`],
+          ],
+          sections: bulkSections,
+          footer: `Grand Total: ${selectedGroups.length} batches | ${linkedOrders.length} items | ${totalQty} units | S$${totalCost.toFixed(2)} — Miltenyi Inventory Hub SG`,
+        });
+        const bulkExcelAttachment = buildApprovalExcel(
+          linkedOrders.map((o) => [
+            o.id || '',
+            o.materialNo || 'N/A',
+            o.description || '',
+            o.orderBy || '',
+            o.orderDate || '',
+            o.status || 'Pending',
+            o.quantity || 0,
+            getEffectivePrice(o),
+            getEffectiveTotal(o),
+          ]),
+          {
+            batchId: selectedGroups.map((g) => g.id).join('_'),
+            month: selectedGroups[0]?.month || '',
+            requestedBy: currentUser?.name,
+            totalCost: totalCost.toFixed(2),
+            totalQty,
+          },
+        );
+        htmlSent = await trySendHtmlEmail(emailConfig.approverEmail, subject, htmlEmail, [bulkExcelAttachment]);
+        if (htmlSent) sentChannels.push('Email (SMTP)');
+      }
+
+      // Mailto path: open email client with plain text table
+      if (method === 'mailto' || (method === 'both' && !htmlSent)) {
         let body = replaceBulk(tmplB.body || 'Bulk Order Approval Request\n\n{orderTable}');
-        // Always append table if {orderTable} placeholder was not in the template
         if (!(tmplB.body || '').includes('{orderTable}') && tmplB.body) {
           body += '\n\n' + table;
         }
@@ -2692,16 +2722,15 @@ export default function App() {
           window.open(mailtoUrl, '_blank');
         }
         sentChannels.push('Email (mailto)');
-      } else {
-        sentChannels.push('Email (SMTP)');
       }
+
       addNotifEntry({
         id: `N-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
         type: 'email',
         to: emailConfig.approverEmail,
         subject,
         date: now,
-        status: 'Sent',
+        status: htmlSent ? 'Sent' : method === 'mailto' ? 'Sent (mailto)' : 'Failed',
       });
     }
 
@@ -3376,9 +3405,17 @@ export default function App() {
     { id: 'dashboard', label: 'Dashboard', icon: Home, perm: 'dashboard', module: 'inventory' },
     { id: 'catalog', label: 'Parts Catalog', icon: Database, perm: 'catalog', module: 'inventory' },
     { id: 'localinventory', label: 'Local Inventory', icon: Warehouse, perm: 'dashboard', module: 'inventory' },
-    { id: 'allorders', label: 'All Orders', icon: ShoppingCart, perm: 'orders', module: 'inventory' },
-    { id: 'orders', label: 'Single Orders', icon: Package, perm: 'orders', module: 'inventory' },
-    { id: 'bulkorders', label: 'Bulk Orders', icon: Layers, perm: 'bulkOrders', module: 'inventory' },
+    {
+      id: 'orders-group',
+      label: 'Orders',
+      icon: ShoppingCart,
+      module: 'inventory',
+      children: [
+        { id: 'allorders', label: 'All Orders', icon: ShoppingCart, perm: 'orders' },
+        { id: 'orders', label: 'Single Orders', icon: Package, perm: 'orders' },
+        { id: 'bulkorders', label: 'Bulk Orders', icon: Layers, perm: 'bulkOrders' },
+      ],
+    },
     { id: 'analytics', label: 'Analytics', icon: BarChart3, perm: 'analytics', module: 'inventory' },
     { id: 'forecasting', label: 'Forecasting', icon: TrendingUp, perm: 'analytics', module: 'inventory' },
     { id: 'stockcheck', label: 'Stock Check', icon: ClipboardList, perm: 'stockCheck', module: 'inventory' },
@@ -3391,9 +3428,18 @@ export default function App() {
     { id: 'users', label: 'User Management', icon: Users, perm: 'users', module: 'shared' },
     { id: 'settings', label: 'Settings', icon: Settings, perm: 'settings', module: 'shared' },
   ];
-  const navItems = allNavItems.filter(
-    (n) => (n.module === activeModule || n.module === 'shared') && hasPermission(n.perm),
-  );
+  const navItems = allNavItems
+    .filter((n) => n.module === activeModule || n.module === 'shared')
+    .map((n) => {
+      if (!n.children) return hasPermission(n.perm) ? n : null;
+      const visibleChildren = n.children.filter((c) => hasPermission(c.perm));
+      return visibleChildren.length > 0 ? { ...n, children: visibleChildren } : null;
+    })
+    .filter(Boolean);
+
+  useEffect(() => {
+    if (['allorders', 'orders', 'bulkorders'].includes(page)) setOrdersMenuOpen(true);
+  }, [page]);
 
   // ════════════════════════════ AI BOT PROCESSING ════════════════════════════
   const processAiMessage = async (userMessage) => {
@@ -5148,7 +5194,7 @@ export default function App() {
   // ════════════════════════════ MAIN APP RENDER ══════════════════════
   return (
     <div
-      className={activeModule === 'service' ? 'svc' : ''}
+      className={`${activeModule === 'service' ? 'svc' : ''}${blurPrices ? ' blur-prices' : ''}`}
       style={{
         fontFamily: "'DM Sans','Segoe UI',system-ui,sans-serif",
         background: '#F4F6F8',
@@ -5183,6 +5229,7 @@ export default function App() {
         .mo{position:fixed;inset:0;background:rgba(0,0,0,.4);backdrop-filter:blur(4px);z-index:1000;display:flex;align-items:center;justify-content:center;animation:fadeIn .2s}
         .th{padding:12px 14px;text-align:left;font-weight:600;color:#64748B;font-size:11px;text-transform:uppercase;letter-spacing:.5px;border-bottom:2px solid #E8ECF0;white-space:nowrap}
         .td{padding:10px 14px} .mono{font-family:'JetBrains Mono',monospace}
+        .blur-prices .pv{filter:blur(8px);user-select:none;transition:filter .2s}.blur-prices .pv:hover{filter:blur(0);cursor:pointer}
         .pill{display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:20px;font-size:11px;font-weight:600}
         .sc{position:relative;overflow:hidden;border-radius:14px;padding:20px 22px;color:#fff}
         .sc::after{content:'';position:absolute;top:-20px;right:-20px;width:80px;height:80px;border-radius:50%;background:rgba(255,255,255,.1)}
@@ -5293,62 +5340,109 @@ export default function App() {
           )}
         </div>
         <nav style={{ padding: '12px 10px', flex: 1, overflowY: 'auto' }}>
-          {navItems.map((item) => (
-            <div
-              key={item.id}
-              className={`ni ${page === item.id ? 'a' : ''}`}
-              onClick={() => {
-                setPage(item.id);
-                setCatalogPage(0);
-                if (window.innerWidth <= 768) setSidebarOpen(false);
-              }}
-              title={item.label}
-            >
-              <item.icon size={18} />
-              {sidebarOpen && <span>{item.label}</span>}
-              {item.id === 'catalog' && sidebarOpen && (
-                <span
-                  style={{
-                    marginLeft: 'auto',
-                    fontSize: 10,
-                    background: '#E6F4ED',
-                    color: '#0B7A3E',
-                    padding: '2px 6px',
-                    borderRadius: 8,
-                    fontWeight: 700,
-                  }}
-                >
-                  {partsCatalog.length}
-                </span>
-              )}
-              {item.id === 'whatsapp' && sidebarOpen && (
-                <span
-                  style={{
-                    marginLeft: 'auto',
-                    width: 8,
-                    height: 8,
-                    borderRadius: '50%',
-                    background: waConnected ? '#25D366' : '#E2E8F0',
-                  }}
-                />
-              )}
-              {item.id === 'users' && sidebarOpen && pendingUsers.length > 0 && (
-                <span
-                  style={{
-                    marginLeft: 'auto',
-                    fontSize: 10,
-                    background: '#FEE2E2',
-                    color: '#DC2626',
-                    padding: '2px 6px',
-                    borderRadius: 8,
-                    fontWeight: 700,
-                  }}
-                >
-                  {pendingUsers.length}
-                </span>
-              )}
-            </div>
-          ))}
+          {navItems.map((item) => {
+            if (item.children) {
+              const isChildActive = item.children.some((c) => page === c.id);
+              return (
+                <div key={item.id}>
+                  <div
+                    className={`ni ${isChildActive ? 'a' : ''}`}
+                    onClick={() => {
+                      if (sidebarOpen) {
+                        setOrdersMenuOpen((prev) => !prev);
+                      } else {
+                        setPage('allorders');
+                        setCatalogPage(0);
+                      }
+                    }}
+                    title={item.label}
+                  >
+                    <item.icon size={18} />
+                    {sidebarOpen && <span>{item.label}</span>}
+                    {sidebarOpen && (
+                      <span style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center' }}>
+                        {ordersMenuOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                      </span>
+                    )}
+                  </div>
+                  {sidebarOpen &&
+                    ordersMenuOpen &&
+                    item.children.map((child) => (
+                      <div
+                        key={child.id}
+                        className={`ni ${page === child.id ? 'a' : ''}`}
+                        onClick={() => {
+                          setPage(child.id);
+                          setCatalogPage(0);
+                          if (window.innerWidth <= 768) setSidebarOpen(false);
+                        }}
+                        title={child.label}
+                        style={{ paddingLeft: 36 }}
+                      >
+                        <child.icon size={16} />
+                        <span>{child.label}</span>
+                      </div>
+                    ))}
+                </div>
+              );
+            }
+            return (
+              <div
+                key={item.id}
+                className={`ni ${page === item.id ? 'a' : ''}`}
+                onClick={() => {
+                  setPage(item.id);
+                  setCatalogPage(0);
+                  if (window.innerWidth <= 768) setSidebarOpen(false);
+                }}
+                title={item.label}
+              >
+                <item.icon size={18} />
+                {sidebarOpen && <span>{item.label}</span>}
+                {item.id === 'catalog' && sidebarOpen && (
+                  <span
+                    style={{
+                      marginLeft: 'auto',
+                      fontSize: 10,
+                      background: '#E6F4ED',
+                      color: '#0B7A3E',
+                      padding: '2px 6px',
+                      borderRadius: 8,
+                      fontWeight: 700,
+                    }}
+                  >
+                    {partsCatalog.length}
+                  </span>
+                )}
+                {item.id === 'whatsapp' && sidebarOpen && (
+                  <span
+                    style={{
+                      marginLeft: 'auto',
+                      width: 8,
+                      height: 8,
+                      borderRadius: '50%',
+                      background: waConnected ? '#25D366' : '#E2E8F0',
+                    }}
+                  />
+                )}
+                {item.id === 'users' && sidebarOpen && pendingUsers.length > 0 && (
+                  <span
+                    style={{
+                      marginLeft: 'auto',
+                      fontSize: 10,
+                      background: '#FEE2E2',
+                      color: '#DC2626',
+                      padding: '2px 6px',
+                      borderRadius: 8,
+                      fontWeight: 700,
+                    }}
+                  >
+                    {pendingUsers.length}
+                  </span>
+                )}
+              </div>
+            );
+          })}
         </nav>
         <div style={{ padding: '12px 10px', borderTop: '1px solid #F0F2F5', flexShrink: 0 }}>
           <div className="ni" onClick={() => setSidebarOpen(!sidebarOpen)}>
@@ -5418,6 +5512,29 @@ export default function App() {
                 </Pill>
               </span>
             )}
+            <button
+              onClick={() => setBlurPrices((v) => !v)}
+              title={blurPrices ? 'Show prices' : 'Hide prices'}
+              style={{
+                padding: '7px 10px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 5,
+                background: blurPrices ? '#FEF3C7' : '#F8FAFB',
+                border: blurPrices ? '1.5px solid #F59E0B' : '1.5px solid #E2E8F0',
+                borderRadius: 8,
+                cursor: 'pointer',
+                fontSize: 11,
+                fontWeight: 600,
+                color: blurPrices ? '#92400E' : '#64748B',
+                transition: 'all .15s',
+              }}
+            >
+              {blurPrices ? <EyeOff size={14} /> : <Eye size={14} />}
+              <span className="admin-pill" style={{ display: 'inline' }}>
+                {blurPrices ? 'Prices Hidden' : 'Prices'}
+              </span>
+            </button>
             <button
               onClick={() => setAiPanelOpen(!aiPanelOpen)}
               className="bs"
@@ -5856,13 +5973,13 @@ export default function App() {
                               </Pill>
                             </td>
                             <td className="td mono" style={{ textAlign: 'right', fontSize: 11 }}>
-                              {p.transferPrice > 0 ? fmt(p.transferPrice) : '—'}
+                              <span className="pv">{p.transferPrice > 0 ? fmt(p.transferPrice) : '—'}</span>
                             </td>
                             <td className="td mono" style={{ textAlign: 'right', fontSize: 11, fontWeight: 600 }}>
-                              {p.singaporePrice > 0 ? fmt(p.singaporePrice) : '—'}
+                              <span className="pv">{p.singaporePrice > 0 ? fmt(p.singaporePrice) : '—'}</span>
                             </td>
                             <td className="td mono" style={{ textAlign: 'right', fontSize: 11 }}>
-                              {p.distributorPrice > 0 ? fmt(p.distributorPrice) : '—'}
+                              <span className="pv">{p.distributorPrice > 0 ? fmt(p.distributorPrice) : '—'}</span>
                             </td>
                             <td
                               className="td mono"
@@ -6212,19 +6329,23 @@ export default function App() {
                               {o.quantity}
                             </td>
                             <td className="td mono" style={{ fontSize: 11 }}>
-                              {(() => {
-                                const cp = catalogLookup[o.materialNo];
-                                const price = cp ? cp.sg || cp.tp || cp.dist || 0 : o.listPrice;
-                                return price > 0 ? fmt(price) : '—';
-                              })()}
+                              <span className="pv">
+                                {(() => {
+                                  const cp = catalogLookup[o.materialNo];
+                                  const price = cp ? cp.sg || cp.tp || cp.dist || 0 : o.listPrice;
+                                  return price > 0 ? fmt(price) : '—';
+                                })()}
+                              </span>
                             </td>
                             <td className="td mono" style={{ fontSize: 11, fontWeight: 600 }}>
-                              {(() => {
-                                const cp = catalogLookup[o.materialNo];
-                                const price = cp ? cp.sg || cp.tp || cp.dist || 0 : o.listPrice;
-                                const total = price > 0 ? price * o.quantity : o.totalCost;
-                                return total > 0 ? fmt(total) : '—';
-                              })()}
+                              <span className="pv">
+                                {(() => {
+                                  const cp = catalogLookup[o.materialNo];
+                                  const price = cp ? cp.sg || cp.tp || cp.dist || 0 : o.listPrice;
+                                  const total = price > 0 ? price * o.quantity : o.totalCost;
+                                  return total > 0 ? fmt(total) : '—';
+                                })()}
+                              </span>
                             </td>
                             <td className="td" style={{ color: '#94A3B8', fontSize: 11 }}>
                               {fmtDate(o.orderDate)}
@@ -6333,7 +6454,7 @@ export default function App() {
                     {selOrders.size > 0 && ` • ${selOrders.size} selected`}
                   </span>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <span style={{ fontSize: 12, fontWeight: 500 }}>
+                    <span className="pv" style={{ fontSize: 12, fontWeight: 500 }}>
                       {fmt(filteredOrders.reduce((s, o) => s + o.totalCost, 0))}
                     </span>
                     <div style={{ width: 1, height: 16, background: '#E2E8F0' }} />
@@ -6626,7 +6747,7 @@ export default function App() {
                           {g.items}
                         </td>
                         <td className="td mono" style={{ fontWeight: 600, fontSize: 11 }}>
-                          {fmt(g.totalCost)}
+                          <span className="pv">{fmt(g.totalCost)}</span>
                         </td>
                         <td className="td">
                           <Pill
@@ -6827,7 +6948,7 @@ export default function App() {
                               Qty: <strong>{mo.reduce((s, o) => s + o.quantity, 0)}</strong>
                             </div>
                             <div style={{ gridColumn: 'span 2' }}>
-                              Cost: <strong className="mono">{fmt(mo.reduce((s, o) => s + o.totalCost, 0))}</strong>
+                              Cost: <strong className="mono pv">{fmt(mo.reduce((s, o) => s + o.totalCost, 0))}</strong>
                             </div>
                             {createdByUsers.length > 0 && (
                               <div style={{ gridColumn: 'span 2', marginTop: 4, fontSize: 10, color: '#64748B' }}>
@@ -7081,7 +7202,7 @@ export default function App() {
                       <div style={{ marginTop: 12, padding: 12, background: '#F8FAFB', borderRadius: 8, fontSize: 12 }}>
                         <strong>Summary:</strong> {bgOrders.length} orders | Total Qty:{' '}
                         {bgOrders.reduce((s, o) => s + o.quantity, 0)} | Total Cost:{' '}
-                        <strong className="mono">
+                        <strong className="mono pv">
                           {fmt(
                             bgOrders.reduce((s, o) => {
                               const cp = catalogLookup[o.materialNo];
@@ -7121,8 +7242,8 @@ export default function App() {
                       },
                       {
                         l: 'Total Spend',
-                        v: fmt(stats.totalCost),
-                        sub: `Avg ${fmt(avgOrderVal)}/order`,
+                        v: <span className="pv">{fmt(stats.totalCost)}</span>,
+                        sub: <span className="pv">{`Avg ${fmt(avgOrderVal)}/order`}</span>,
                         bg: 'linear-gradient(135deg,#1E40AF,#3B82F6)',
                         i: DollarSign,
                       },
@@ -7323,7 +7444,7 @@ export default function App() {
                               color: '#2563EB',
                             }}
                           >
-                            <strong>{m.materialNo}</strong> — {m.qty} units, {fmt(m.cost)}
+                            <strong>{m.materialNo}</strong> — {m.qty} units, <span className="pv">{fmt(m.cost)}</span>
                           </div>
                         ))}
                       </div>
@@ -7433,7 +7554,7 @@ export default function App() {
                           style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 10, color: '#64748B' }}
                         >
                           <div style={{ width: 8, height: 8, borderRadius: '50%', background: s.color }} />
-                          {s.name} ({fmt(s.value)})
+                          {s.name} (<span className="pv">{fmt(s.value)}</span>)
                         </div>
                       ))}
                     </div>
@@ -7504,7 +7625,7 @@ export default function App() {
                           </div>
                           <div>
                             <div style={{ fontSize: 10, color: '#94A3B8', textTransform: 'uppercase' }}>Value</div>
-                            <div className="mono" style={{ fontSize: 14, fontWeight: 700 }}>
+                            <div className="mono pv" style={{ fontSize: 14, fontWeight: 700 }}>
                               {fmt(engValue)}
                             </div>
                           </div>
@@ -7645,6 +7766,7 @@ export default function App() {
                 addNotifEntry,
                 notify,
                 sendScheduledReport,
+                api,
               }}
             />
           )}
@@ -8968,7 +9090,7 @@ export default function App() {
                         <div style={{ textAlign: 'right' }}>
                           <div style={{ fontSize: 11, color: '#64748B', marginBottom: 4 }}>Actual from Orders</div>
                           <div style={{ fontSize: 12, fontWeight: 600 }}>
-                            {actualItems} items | {fmt(actualCost)}
+                            {actualItems} items | <span className="pv">{fmt(actualCost)}</span>
                           </div>
                         </div>
                       </div>
@@ -8989,7 +9111,8 @@ export default function App() {
                           <AlertTriangle size={12} />
                           <span>
                             Group metadata out of sync — will auto-sync on save (Group: {selectedBulkGroup.items} items
-                            / {fmt(selectedBulkGroup.totalCost || 0)} → Actual: {actualItems} items / {fmt(actualCost)})
+                            / <span className="pv">{fmt(selectedBulkGroup.totalCost || 0)}</span> → Actual:{' '}
+                            {actualItems} items / <span className="pv">{fmt(actualCost)}</span>)
                           </span>
                         </div>
                       )}
@@ -9108,7 +9231,7 @@ export default function App() {
                               color: '#0B7A3E',
                             }}
                           >
-                            {fmt(actualCost)}
+                            <span className="pv">{fmt(actualCost)}</span>
                           </div>
                         </div>
                       </div>
@@ -9347,7 +9470,7 @@ export default function App() {
                                         border: '1.5px solid #BBF7D0',
                                       }}
                                     >
-                                      {fmt(o.totalCost || 0)}
+                                      <span className="pv">{fmt(o.totalCost || 0)}</span>
                                     </div>
                                   </div>
                                 </div>
@@ -9941,7 +10064,7 @@ export default function App() {
                           color: '#0B7A3E',
                         }}
                       >
-                        {fmt(editingOrder.totalCost || 0)}
+                        <span className="pv">{fmt(editingOrder.totalCost || 0)}</span>
                       </div>
                     </div>
                   </div>
@@ -10307,9 +10430,11 @@ export default function App() {
                           <td className="td" style={{ textAlign: 'center', fontWeight: 600 }}>
                             {o.quantity}
                           </td>
-                          <td className="td mono">{fmt(o.listPrice)}</td>
+                          <td className="td mono">
+                            <span className="pv">{fmt(o.listPrice)}</span>
+                          </td>
                           <td className="td mono" style={{ fontWeight: 600 }}>
-                            {fmt(o.totalCost)}
+                            <span className="pv">{fmt(o.totalCost)}</span>
                           </td>
                           <td className="td" style={{ color: '#64748B' }}>
                             {o.orderDate}
@@ -10353,7 +10478,7 @@ export default function App() {
                   <div style={{ fontSize: 12 }}>
                     <strong style={{ color: '#059669' }}>Summary:</strong> {historyImportData.length} orders | Total
                     Qty: {historyImportData.reduce((s, o) => s + (Number(o.quantity) || 0), 0)} | Total Value:{' '}
-                    <strong className="mono">
+                    <strong className="mono pv">
                       {fmt(historyImportData.reduce((s, o) => s + (Number(o.totalCost) || 0), 0))}
                     </strong>
                   </div>
@@ -10471,6 +10596,8 @@ export default function App() {
                 scheduledNotifs,
                 LS_KEYS,
                 api,
+                blurPrices,
+                setBlurPrices,
               }}
             />
           )}
@@ -10831,16 +10958,18 @@ export default function App() {
                           {r.found ? r.description : 'Not found in catalog'}
                         </td>
                         <td className="td mono" style={{ textAlign: 'right' }}>
-                          {r.found && r.transferPrice > 0 ? fmt(r.transferPrice) : '\u2014'}
+                          <span className="pv">{r.found && r.transferPrice > 0 ? fmt(r.transferPrice) : '\u2014'}</span>
                         </td>
                         <td className="td mono" style={{ textAlign: 'right', fontWeight: 600 }}>
-                          {r.found && r.sgPrice > 0 ? fmt(r.sgPrice) : '\u2014'}
+                          <span className="pv">{r.found && r.sgPrice > 0 ? fmt(r.sgPrice) : '\u2014'}</span>
                         </td>
                         <td className="td mono" style={{ textAlign: 'right' }}>
-                          {r.found && r.distPrice > 0 ? fmt(r.distPrice) : '\u2014'}
+                          <span className="pv">{r.found && r.distPrice > 0 ? fmt(r.distPrice) : '\u2014'}</span>
                         </td>
                         <td className="td mono" style={{ textAlign: 'right' }}>
-                          {r.found && r.rspEur > 0 ? `\u20AC${r.rspEur.toLocaleString()}` : '\u2014'}
+                          <span className="pv">
+                            {r.found && r.rspEur > 0 ? `\u20AC${r.rspEur.toLocaleString()}` : '\u2014'}
+                          </span>
                         </td>
                       </tr>
                     ))}
@@ -10973,13 +11102,13 @@ export default function App() {
                     style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginTop: 6 }}
                   >
                     <div>
-                      Unit Price: <strong className="mono">{fmt(catalogLookup[newOrder.materialNo].sg)}</strong>
+                      Unit Price: <strong className="mono pv">{fmt(catalogLookup[newOrder.materialNo].sg)}</strong>
                     </div>
                     <div>
-                      Dist: <strong className="mono">{fmt(catalogLookup[newOrder.materialNo].dist)}</strong>
+                      Dist: <strong className="mono pv">{fmt(catalogLookup[newOrder.materialNo].dist)}</strong>
                     </div>
                     <div>
-                      TP: <strong className="mono">{fmt(catalogLookup[newOrder.materialNo].tp)}</strong>
+                      TP: <strong className="mono pv">{fmt(catalogLookup[newOrder.materialNo].tp)}</strong>
                     </div>
                   </div>
                 </div>
@@ -11262,7 +11391,7 @@ export default function App() {
                             color: item.listPrice > 0 ? '#0B7A3E' : '#94A3B8',
                           }}
                         >
-                          {item.listPrice > 0 ? fmt(item.listPrice) : '—'}
+                          <span className="pv">{item.listPrice > 0 ? fmt(item.listPrice) : '—'}</span>
                         </td>
                         <td
                           className="mono"
@@ -11274,9 +11403,11 @@ export default function App() {
                             color: item.listPrice > 0 ? '#0B7A3E' : '#94A3B8',
                           }}
                         >
-                          {item.listPrice > 0
-                            ? fmt((parseFloat(item.listPrice) || 0) * (parseInt(item.quantity) || 0))
-                            : '—'}
+                          <span className="pv">
+                            {item.listPrice > 0
+                              ? fmt((parseFloat(item.listPrice) || 0) * (parseInt(item.quantity) || 0))
+                              : '—'}
+                          </span>
                         </td>
                         <td style={{ padding: '8px 10px' }}>
                           {bulkItems.length > 1 && (
@@ -11304,7 +11435,7 @@ export default function App() {
                 }}
               >
                 Grand Total:{' '}
-                <span className="mono" style={{ color: '#0B7A3E', marginLeft: 8, fontSize: 15 }}>
+                <span className="mono pv" style={{ color: '#0B7A3E', marginLeft: 8, fontSize: 15 }}>
                   {fmt(bulkItems.reduce((s, i) => s + (parseFloat(i.listPrice) || 0) * (parseInt(i.quantity) || 0), 0))}
                 </span>
               </div>
@@ -11531,13 +11662,13 @@ export default function App() {
                   style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginTop: 6 }}
                 >
                   <div>
-                    Unit Price: <strong className="mono">{fmt(catalogLookup[selectedOrder.materialNo].sg)}</strong>
+                    Unit Price: <strong className="mono pv">{fmt(catalogLookup[selectedOrder.materialNo].sg)}</strong>
                   </div>
                   <div>
-                    Dist: <strong className="mono">{fmt(catalogLookup[selectedOrder.materialNo].dist)}</strong>
+                    Dist: <strong className="mono pv">{fmt(catalogLookup[selectedOrder.materialNo].dist)}</strong>
                   </div>
                   <div>
-                    TP: <strong className="mono">{fmt(catalogLookup[selectedOrder.materialNo].tp)}</strong>
+                    TP: <strong className="mono pv">{fmt(catalogLookup[selectedOrder.materialNo].tp)}</strong>
                   </div>
                 </div>
               </div>
@@ -11664,8 +11795,14 @@ export default function App() {
 
             <div className="grid-2" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginTop: 14 }}>
               {[
-                { l: 'Price', v: selectedOrder.listPrice > 0 ? fmt(selectedOrder.listPrice) : '—' },
-                { l: 'Total', v: selectedOrder.totalCost > 0 ? fmt(selectedOrder.totalCost) : '—' },
+                {
+                  l: 'Price',
+                  v: <span className="pv">{selectedOrder.listPrice > 0 ? fmt(selectedOrder.listPrice) : '—'}</span>,
+                },
+                {
+                  l: 'Total',
+                  v: <span className="pv">{selectedOrder.totalCost > 0 ? fmt(selectedOrder.totalCost) : '—'}</span>,
+                },
                 { l: 'Ordered', v: fmtDate(selectedOrder.orderDate) },
                 { l: 'By', v: selectedOrder.orderBy || '—' },
                 { l: 'Arrival', v: selectedOrder.arrivalDate ? fmtDate(selectedOrder.arrivalDate) : '—' },

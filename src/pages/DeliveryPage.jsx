@@ -68,7 +68,9 @@ const DeliveryPage = ({
   const [arrivalCheckedByFilter, setArrivalCheckedByFilter] = useState('All');
 
   // Unique list of users who have checked arrivals
-  const arrivalCheckedByUsers = [...new Set(orders.filter((o) => o.arrivalCheckedBy).map((o) => o.arrivalCheckedBy))].sort();
+  const arrivalCheckedByUsers = [
+    ...new Set(orders.filter((o) => o.arrivalCheckedBy).map((o) => o.arrivalCheckedBy)),
+  ].sort();
 
   return (
     <div>
@@ -238,7 +240,8 @@ const DeliveryPage = ({
           if (!hasApproved) return false;
           if (arrivalMonthFilter !== 'All' && bg.month !== arrivalMonthFilter) return false;
           if (arrivalOrderByFilter !== 'All' && !bgOrds.some((o) => o.orderBy === arrivalOrderByFilter)) return false;
-          if (arrivalCheckedByFilter !== 'All' && !bgOrds.some((o) => o.arrivalCheckedBy === arrivalCheckedByFilter)) return false;
+          if (arrivalCheckedByFilter !== 'All' && !bgOrds.some((o) => o.arrivalCheckedBy === arrivalCheckedByFilter))
+            return false;
           return true;
         });
 
@@ -309,13 +312,43 @@ const DeliveryPage = ({
               <thead>
                 <tr style={{ background: '#F8FAFB' }}>
                   <th className="th" style={{ width: 36 }}></th>
-                  <SortTh label="Group ID" sortKey="id" sortCfg={bulkGroupSort} onSort={(k) => toggleSort(setBulkGroupSort, k)} />
-                  <SortTh label="Month" sortKey="month" sortCfg={bulkGroupSort} onSort={(k) => toggleSort(setBulkGroupSort, k)} />
-                  <SortTh label="Items" sortKey="_itemCount" sortCfg={bulkGroupSort} onSort={(k) => toggleSort(setBulkGroupSort, k)} style={{ width: 70 }} />
-                  <SortTh label="Total Cost" sortKey="totalCost" sortCfg={bulkGroupSort} onSort={(k) => toggleSort(setBulkGroupSort, k)} />
-                  <SortTh label="Approved" sortKey="approvedDate" sortCfg={bulkGroupSort} onSort={(k) => toggleSort(setBulkGroupSort, k)} />
-                  <th className="th" style={{ width: 120 }}>Progress</th>
-                  <th className="th" style={{ width: 110 }}>Action</th>
+                  <SortTh
+                    label="Group ID"
+                    sortKey="id"
+                    sortCfg={bulkGroupSort}
+                    onSort={(k) => toggleSort(setBulkGroupSort, k)}
+                  />
+                  <SortTh
+                    label="Month"
+                    sortKey="month"
+                    sortCfg={bulkGroupSort}
+                    onSort={(k) => toggleSort(setBulkGroupSort, k)}
+                  />
+                  <SortTh
+                    label="Items"
+                    sortKey="_itemCount"
+                    sortCfg={bulkGroupSort}
+                    onSort={(k) => toggleSort(setBulkGroupSort, k)}
+                    style={{ width: 70 }}
+                  />
+                  <SortTh
+                    label="Total Cost"
+                    sortKey="totalCost"
+                    sortCfg={bulkGroupSort}
+                    onSort={(k) => toggleSort(setBulkGroupSort, k)}
+                  />
+                  <SortTh
+                    label="Approved"
+                    sortKey="approvedDate"
+                    sortCfg={bulkGroupSort}
+                    onSort={(k) => toggleSort(setBulkGroupSort, k)}
+                  />
+                  <th className="th" style={{ width: 120 }}>
+                    Progress
+                  </th>
+                  <th className="th" style={{ width: 110 }}>
+                    Action
+                  </th>
                 </tr>
               </thead>
               <tbody>
@@ -325,488 +358,534 @@ const DeliveryPage = ({
                       No bulk groups match the selected filters
                     </td>
                   </tr>
-                ) : bulkPageItems.map((bg) => {
-                const bgOrders = bg._bgOrders;
-                const fullyReceived = bg._fullyReceived;
-                const hasBackOrder = bg._hasBackOrder;
-                const unapprovedCount = bgOrders.filter((o) => o.approvalStatus !== 'approved').length;
-                const isExpanded = selectedBulkForArrival === bg.id;
-                return (
-                  <Fragment key={bg.id}>
-                    <tr
-                      style={{
-                        borderBottom: '1px solid #F0F2F5',
-                        background: isExpanded ? '#E6F4ED' : 'transparent',
-                        cursor: 'pointer',
-                      }}
-                      onClick={() => {
-                        setSelectedBulkForArrival(isExpanded ? null : bg.id);
-                        setArrivalItems(bgOrders);
-                      }}
-                    >
-                      <td className="td" style={{ textAlign: 'center' }}>
-                        {fullyReceived === bgOrders.length ? (
-                          <CheckCircle size={16} color="#059669" />
-                        ) : hasBackOrder ? (
-                          <AlertCircle size={16} color="#DC2626" />
-                        ) : (
-                          <Clock size={16} color="#D97706" />
-                        )}
-                      </td>
-                      <td className="td mono" style={{ fontSize: 11, fontWeight: 600, color: '#4338CA' }}>{bg.id}</td>
-                      <td className="td" style={{ fontWeight: 600 }}>{bg.month}</td>
-                      <td className="td" style={{ textAlign: 'center', fontWeight: 600 }}>{bgOrders.length}</td>
-                      <td className="td mono" style={{ fontSize: 11 }}>{fmt(bg.totalCost)}</td>
-                      <td className="td" style={{ fontSize: 11, color: bg.approvedDate ? '#1A202C' : '#94A3B8' }}>
-                        {bg.approvedDate ? fmtDate(bg.approvedDate) : '\u2014'}
-                      </td>
-                      <td className="td">
-                        <Pill
-                          bg={fullyReceived === bgOrders.length ? '#D1FAE5' : hasBackOrder ? '#FEE2E2' : '#FEF3C7'}
-                          color={fullyReceived === bgOrders.length ? '#059669' : hasBackOrder ? '#DC2626' : '#D97706'}
-                        >
-                          {fullyReceived}/{bgOrders.length} received
-                        </Pill>
-                      </td>
-                      <td className="td" onClick={(e) => e.stopPropagation()}>
-                        <button
-                          className={isExpanded ? 'bp' : 'bs'}
+                ) : (
+                  bulkPageItems.map((bg) => {
+                    const bgOrders = bg._bgOrders;
+                    const fullyReceived = bg._fullyReceived;
+                    const hasBackOrder = bg._hasBackOrder;
+                    const unapprovedCount = bgOrders.filter((o) => o.approvalStatus !== 'approved').length;
+                    const isExpanded = selectedBulkForArrival === bg.id;
+                    return (
+                      <Fragment key={bg.id}>
+                        <tr
+                          style={{
+                            borderBottom: '1px solid #F0F2F5',
+                            background: isExpanded ? '#E6F4ED' : 'transparent',
+                            cursor: 'pointer',
+                          }}
                           onClick={() => {
                             setSelectedBulkForArrival(isExpanded ? null : bg.id);
                             setArrivalItems(bgOrders);
                           }}
-                          style={{ padding: '5px 12px', fontSize: 11 }}
                         >
-                          {isExpanded ? 'Hide' : 'Check Items'}
-                        </button>
-                      </td>
-                    </tr>
+                          <td className="td" style={{ textAlign: 'center' }}>
+                            {fullyReceived === bgOrders.length ? (
+                              <CheckCircle size={16} color="#059669" />
+                            ) : hasBackOrder ? (
+                              <AlertCircle size={16} color="#DC2626" />
+                            ) : (
+                              <Clock size={16} color="#D97706" />
+                            )}
+                          </td>
+                          <td className="td mono" style={{ fontSize: 11, fontWeight: 600, color: '#4338CA' }}>
+                            {bg.id}
+                          </td>
+                          <td className="td" style={{ fontWeight: 600 }}>
+                            {bg.month}
+                          </td>
+                          <td className="td" style={{ textAlign: 'center', fontWeight: 600 }}>
+                            {bgOrders.length}
+                          </td>
+                          <td className="td mono" style={{ fontSize: 11 }}>
+                            <span className="pv">{fmt(bg.totalCost)}</span>
+                          </td>
+                          <td className="td" style={{ fontSize: 11, color: bg.approvedDate ? '#1A202C' : '#94A3B8' }}>
+                            {bg.approvedDate ? fmtDate(bg.approvedDate) : '\u2014'}
+                          </td>
+                          <td className="td">
+                            <Pill
+                              bg={fullyReceived === bgOrders.length ? '#D1FAE5' : hasBackOrder ? '#FEE2E2' : '#FEF3C7'}
+                              color={
+                                fullyReceived === bgOrders.length ? '#059669' : hasBackOrder ? '#DC2626' : '#D97706'
+                              }
+                            >
+                              {fullyReceived}/{bgOrders.length} received
+                            </Pill>
+                          </td>
+                          <td className="td" onClick={(e) => e.stopPropagation()}>
+                            <button
+                              className={isExpanded ? 'bp' : 'bs'}
+                              onClick={() => {
+                                setSelectedBulkForArrival(isExpanded ? null : bg.id);
+                                setArrivalItems(bgOrders);
+                              }}
+                              style={{ padding: '5px 12px', fontSize: 11 }}
+                            >
+                              {isExpanded ? 'Hide' : 'Check Items'}
+                            </button>
+                          </td>
+                        </tr>
 
-                    {/* Expanded Items List */}
-                    {isExpanded && (
-                    <tr>
-                      <td colSpan={8} style={{ padding: 0 }}>
-                      <div style={{ padding: '16px 20px', background: '#F8FAFB', borderBottom: '2px solid #E2E8F0' }}>
-                        {unapprovedCount > 0 && (
-                          <div
-                            style={{
-                              padding: '10px 16px',
-                              background: '#FEF3C7',
-                              border: '1px solid #FDE68A',
-                              borderRadius: 8,
-                              marginBottom: 12,
-                              display: 'flex',
-                              alignItems: 'center',
-                              gap: 8,
-                              fontSize: 12,
-                              color: '#92400E',
-                            }}
-                          >
-                            <AlertTriangle size={16} />
-                            <span>
-                              <strong>{unapprovedCount} order(s)</strong> not yet approved — arrival inputs disabled
-                              until approved.
-                            </span>
-                          </div>
-                        )}
-                        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
-                          <thead>
-                            <tr style={{ background: '#F8FAFB' }}>
-                              <th className="th" style={{ width: 30 }}>
-                                <input
-                                  type="checkbox"
-                                  checked={bgOrders.every((o) => arrivalSelected.has(o.id)) && bgOrders.length > 0}
-                                  onChange={(e) => {
-                                    const ids = bgOrders.map((o) => o.id);
-                                    setArrivalSelected((prev) => {
-                                      const next = new Set(prev);
-                                      if (e.target.checked) ids.forEach((id) => next.add(id));
-                                      else ids.forEach((id) => next.delete(id));
-                                      return next;
-                                    });
-                                  }}
-                                />
-                              </th>
-                              <SortTh
-                                label="Material No."
-                                sortKey="materialNo"
-                                sortCfg={bulkArrivalSort}
-                                onSort={(k) => toggleSort(setBulkArrivalSort, k)}
-                              />
-                              <SortTh
-                                label="Description"
-                                sortKey="description"
-                                sortCfg={bulkArrivalSort}
-                                onSort={(k) => toggleSort(setBulkArrivalSort, k)}
-                              />
-                              <SortTh
-                                label="Approved"
-                                sortKey="approvalSentDate"
-                                sortCfg={bulkArrivalSort}
-                                onSort={(k) => toggleSort(setBulkArrivalSort, k)}
-                                style={{ width: 90 }}
-                              />
-                              <SortTh
-                                label="Ordered"
-                                sortKey="quantity"
-                                sortCfg={bulkArrivalSort}
-                                onSort={(k) => toggleSort(setBulkArrivalSort, k)}
-                                style={{ width: 70 }}
-                              />
-                              <th className="th" style={{ width: 80 }}>
-                                Received
-                              </th>
-                              <th className="th" style={{ width: 70 }}>
-                                B/O
-                              </th>
-                              <th className="th" style={{ width: 90 }}>
-                                Checked By
-                              </th>
-                              <th className="th" style={{ width: 100 }}>
-                                Status
-                              </th>
-                              <th className="th" style={{ width: 120 }}>
-                                Action
-                              </th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {applySortData(bgOrders, bulkArrivalSort).map((o, idx) => {
-                              const pv = pendingArrival[o.id];
-                              const dispQty = pv ? pv.qtyReceived : o.qtyReceived || 0;
-                              const dispBO = pv ? pv.qtyReceived - o.quantity : (o.qtyReceived || 0) - o.quantity;
-                              const hasPending = !!pv;
-                              return (
-                                <tr
-                                  key={o.id}
+                        {/* Expanded Items List */}
+                        {isExpanded && (
+                          <tr>
+                            <td colSpan={8} style={{ padding: 0 }}>
+                              <div
+                                style={{
+                                  padding: '16px 20px',
+                                  background: '#F8FAFB',
+                                  borderBottom: '2px solid #E2E8F0',
+                                }}
+                              >
+                                {unapprovedCount > 0 && (
+                                  <div
+                                    style={{
+                                      padding: '10px 16px',
+                                      background: '#FEF3C7',
+                                      border: '1px solid #FDE68A',
+                                      borderRadius: 8,
+                                      marginBottom: 12,
+                                      display: 'flex',
+                                      alignItems: 'center',
+                                      gap: 8,
+                                      fontSize: 12,
+                                      color: '#92400E',
+                                    }}
+                                  >
+                                    <AlertTriangle size={16} />
+                                    <span>
+                                      <strong>{unapprovedCount} order(s)</strong> not yet approved — arrival inputs
+                                      disabled until approved.
+                                    </span>
+                                  </div>
+                                )}
+                                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                                  <thead>
+                                    <tr style={{ background: '#F8FAFB' }}>
+                                      <th className="th" style={{ width: 30 }}>
+                                        <input
+                                          type="checkbox"
+                                          checked={
+                                            bgOrders.every((o) => arrivalSelected.has(o.id)) && bgOrders.length > 0
+                                          }
+                                          onChange={(e) => {
+                                            const ids = bgOrders.map((o) => o.id);
+                                            setArrivalSelected((prev) => {
+                                              const next = new Set(prev);
+                                              if (e.target.checked) ids.forEach((id) => next.add(id));
+                                              else ids.forEach((id) => next.delete(id));
+                                              return next;
+                                            });
+                                          }}
+                                        />
+                                      </th>
+                                      <SortTh
+                                        label="Material No."
+                                        sortKey="materialNo"
+                                        sortCfg={bulkArrivalSort}
+                                        onSort={(k) => toggleSort(setBulkArrivalSort, k)}
+                                      />
+                                      <SortTh
+                                        label="Description"
+                                        sortKey="description"
+                                        sortCfg={bulkArrivalSort}
+                                        onSort={(k) => toggleSort(setBulkArrivalSort, k)}
+                                      />
+                                      <SortTh
+                                        label="Order By"
+                                        sortKey="orderBy"
+                                        sortCfg={bulkArrivalSort}
+                                        onSort={(k) => toggleSort(setBulkArrivalSort, k)}
+                                        style={{ width: 100 }}
+                                      />
+                                      <SortTh
+                                        label="Approved"
+                                        sortKey="approvalSentDate"
+                                        sortCfg={bulkArrivalSort}
+                                        onSort={(k) => toggleSort(setBulkArrivalSort, k)}
+                                        style={{ width: 90 }}
+                                      />
+                                      <SortTh
+                                        label="Ordered"
+                                        sortKey="quantity"
+                                        sortCfg={bulkArrivalSort}
+                                        onSort={(k) => toggleSort(setBulkArrivalSort, k)}
+                                        style={{ width: 70 }}
+                                      />
+                                      <th className="th" style={{ width: 80 }}>
+                                        Received
+                                      </th>
+                                      <th className="th" style={{ width: 70 }}>
+                                        B/O
+                                      </th>
+                                      <th className="th" style={{ width: 90 }}>
+                                        Checked By
+                                      </th>
+                                      <th className="th" style={{ width: 100 }}>
+                                        Status
+                                      </th>
+                                      <th className="th" style={{ width: 120 }}>
+                                        Action
+                                      </th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {applySortData(bgOrders, bulkArrivalSort).map((o, idx) => {
+                                      const pv = pendingArrival[o.id];
+                                      const dispQty = pv ? pv.qtyReceived : o.qtyReceived || 0;
+                                      const dispBO = pv
+                                        ? pv.qtyReceived - o.quantity
+                                        : (o.qtyReceived || 0) - o.quantity;
+                                      const hasPending = !!pv;
+                                      return (
+                                        <tr
+                                          key={o.id}
+                                          style={{
+                                            borderBottom: '1px solid #F0F2F5',
+                                            background: hasPending ? '#FFFBEB' : 'transparent',
+                                          }}
+                                        >
+                                          <td className="td">
+                                            <input
+                                              type="checkbox"
+                                              checked={arrivalSelected.has(o.id)}
+                                              onChange={(e) => {
+                                                setArrivalSelected((prev) => {
+                                                  const next = new Set(prev);
+                                                  if (e.target.checked) next.add(o.id);
+                                                  else next.delete(o.id);
+                                                  return next;
+                                                });
+                                              }}
+                                            />
+                                          </td>
+                                          <td
+                                            className="td mono"
+                                            style={{ fontSize: 11, color: '#0B7A3E', fontWeight: 600 }}
+                                          >
+                                            {o.materialNo || '\u2014'}
+                                          </td>
+                                          <td
+                                            className="td"
+                                            style={{
+                                              maxWidth: 180,
+                                              overflow: 'hidden',
+                                              textOverflow: 'ellipsis',
+                                              whiteSpace: 'nowrap',
+                                            }}
+                                          >
+                                            {o.description}
+                                          </td>
+                                          <td className="td" style={{ fontSize: 11 }}>
+                                            {o.orderBy || '\u2014'}
+                                          </td>
+                                          <td
+                                            className="td"
+                                            style={{ fontSize: 11, color: o.approvalSentDate ? '#1A202C' : '#94A3B8' }}
+                                          >
+                                            {o.approvalSentDate ? fmtDate(o.approvalSentDate) : '\u2014'}
+                                          </td>
+                                          <td className="td" style={{ textAlign: 'center', fontWeight: 600 }}>
+                                            {o.quantity}
+                                          </td>
+                                          <td className="td" style={{ textAlign: 'center' }}>
+                                            <input
+                                              type="number"
+                                              min="0"
+                                              max={o.quantity}
+                                              value={dispQty}
+                                              disabled={o.approvalStatus !== 'approved'}
+                                              title={
+                                                o.approvalStatus !== 'approved' ? 'Order must be approved first' : ''
+                                              }
+                                              onChange={(e) => {
+                                                const val = Math.max(
+                                                  0,
+                                                  Math.min(o.quantity, parseInt(e.target.value) || 0),
+                                                );
+                                                setPendingArrival((prev) => ({
+                                                  ...prev,
+                                                  [o.id]: { qtyReceived: val, backOrder: val - o.quantity },
+                                                }));
+                                              }}
+                                              style={{
+                                                width: 50,
+                                                padding: '4px 6px',
+                                                textAlign: 'center',
+                                                borderRadius: 6,
+                                                border: hasPending ? '2px solid #F59E0B' : '1px solid #E2E8F0',
+                                                fontSize: 12,
+                                                opacity: o.approvalStatus !== 'approved' ? 0.5 : 1,
+                                                cursor: o.approvalStatus !== 'approved' ? 'not-allowed' : 'text',
+                                              }}
+                                            />
+                                          </td>
+                                          <td
+                                            className="td"
+                                            style={{
+                                              textAlign: 'center',
+                                              fontWeight: 600,
+                                              color: dispBO < 0 ? '#DC2626' : '#059669',
+                                            }}
+                                          >
+                                            {dispBO < 0 ? dispBO : '\u2713'}
+                                          </td>
+                                          <td className="td" style={{ fontSize: 11, color: '#64748B' }}>
+                                            {o.arrivalCheckedBy || '\u2014'}
+                                          </td>
+                                          <td className="td">
+                                            <Pill
+                                              bg={
+                                                (o.qtyReceived || 0) >= o.quantity && o.quantity > 0
+                                                  ? '#D1FAE5'
+                                                  : o.arrivalDate && (o.qtyReceived || 0) < o.quantity
+                                                    ? '#FEE2E2'
+                                                    : '#FEF3C7'
+                                              }
+                                              color={
+                                                (o.qtyReceived || 0) >= o.quantity && o.quantity > 0
+                                                  ? '#059669'
+                                                  : o.arrivalDate && (o.qtyReceived || 0) < o.quantity
+                                                    ? '#DC2626'
+                                                    : '#D97706'
+                                              }
+                                            >
+                                              {(o.qtyReceived || 0) >= o.quantity && o.quantity > 0
+                                                ? `${o.qtyReceived || 0}/${o.quantity} Arrived`
+                                                : o.arrivalDate && (o.qtyReceived || 0) < o.quantity
+                                                  ? `${o.qtyReceived || 0}/${o.quantity} Back Order`
+                                                  : `0/${o.quantity} Awaiting`}
+                                            </Pill>
+                                          </td>
+                                          <td className="td">
+                                            <button
+                                              className={hasPending || !o.arrivalDate ? 'bp' : 'bs'}
+                                              disabled={!hasPending && !!o.arrivalDate}
+                                              onClick={() => confirmArrival(o.id)}
+                                              style={{
+                                                padding: '4px 10px',
+                                                fontSize: 11,
+                                                borderRadius: 6,
+                                                opacity: hasPending || !o.arrivalDate ? 1 : 0.4,
+                                                cursor: hasPending || !o.arrivalDate ? 'pointer' : 'default',
+                                              }}
+                                            >
+                                              {hasPending
+                                                ? o.arrivalDate
+                                                  ? 'Update'
+                                                  : 'Confirm'
+                                                : o.arrivalDate
+                                                  ? o.status === 'Received'
+                                                    ? '\u2713 Done'
+                                                    : 'Confirmed'
+                                                  : 'Confirm'}
+                                            </button>
+                                          </td>
+                                        </tr>
+                                      );
+                                    })}
+                                  </tbody>
+                                </table>
+
+                                {/* Batch Confirm + Notify Actions */}
+                                <div
                                   style={{
-                                    borderBottom: '1px solid #F0F2F5',
-                                    background: hasPending ? '#FFFBEB' : 'transparent',
+                                    display: 'flex',
+                                    gap: 10,
+                                    marginTop: 16,
+                                    paddingTop: 16,
+                                    borderTop: '1px solid #E8ECF0',
+                                    flexWrap: 'wrap',
                                   }}
                                 >
-                                  <td className="td">
-                                    <input
-                                      type="checkbox"
-                                      checked={arrivalSelected.has(o.id)}
-                                      onChange={(e) => {
-                                        setArrivalSelected((prev) => {
-                                          const next = new Set(prev);
-                                          if (e.target.checked) next.add(o.id);
-                                          else next.delete(o.id);
-                                          return next;
-                                        });
-                                      }}
-                                    />
-                                  </td>
-                                  <td className="td mono" style={{ fontSize: 11, color: '#0B7A3E', fontWeight: 600 }}>
-                                    {o.materialNo || '\u2014'}
-                                  </td>
-                                  <td
-                                    className="td"
-                                    style={{
-                                      maxWidth: 180,
-                                      overflow: 'hidden',
-                                      textOverflow: 'ellipsis',
-                                      whiteSpace: 'nowrap',
-                                    }}
-                                  >
-                                    {o.description}
-                                  </td>
-                                  <td
-                                    className="td"
-                                    style={{ fontSize: 11, color: o.approvalSentDate ? '#1A202C' : '#94A3B8' }}
-                                  >
-                                    {o.approvalSentDate ? fmtDate(o.approvalSentDate) : '\u2014'}
-                                  </td>
-                                  <td className="td" style={{ textAlign: 'center', fontWeight: 600 }}>
-                                    {o.quantity}
-                                  </td>
-                                  <td className="td" style={{ textAlign: 'center' }}>
-                                    <input
-                                      type="number"
-                                      min="0"
-                                      max={o.quantity}
-                                      value={dispQty}
-                                      disabled={o.approvalStatus !== 'approved'}
-                                      title={o.approvalStatus !== 'approved' ? 'Order must be approved first' : ''}
-                                      onChange={(e) => {
-                                        const val = Math.max(0, Math.min(o.quantity, parseInt(e.target.value) || 0));
-                                        setPendingArrival((prev) => ({
-                                          ...prev,
-                                          [o.id]: { qtyReceived: val, backOrder: val - o.quantity },
-                                        }));
-                                      }}
-                                      style={{
-                                        width: 50,
-                                        padding: '4px 6px',
-                                        textAlign: 'center',
-                                        borderRadius: 6,
-                                        border: hasPending ? '2px solid #F59E0B' : '1px solid #E2E8F0',
-                                        fontSize: 12,
-                                        opacity: o.approvalStatus !== 'approved' ? 0.5 : 1,
-                                        cursor: o.approvalStatus !== 'approved' ? 'not-allowed' : 'text',
-                                      }}
-                                    />
-                                  </td>
-                                  <td
-                                    className="td"
-                                    style={{
-                                      textAlign: 'center',
-                                      fontWeight: 600,
-                                      color: dispBO < 0 ? '#DC2626' : '#059669',
-                                    }}
-                                  >
-                                    {dispBO < 0 ? dispBO : '\u2713'}
-                                  </td>
-                                  <td className="td" style={{ fontSize: 11, color: '#64748B' }}>
-                                    {o.arrivalCheckedBy || '\u2014'}
-                                  </td>
-                                  <td className="td">
-                                    <Pill
-                                      bg={
-                                        (o.qtyReceived || 0) >= o.quantity && o.quantity > 0
-                                          ? '#D1FAE5'
-                                          : o.arrivalDate && (o.qtyReceived || 0) < o.quantity
-                                            ? '#FEE2E2'
-                                            : '#FEF3C7'
-                                      }
-                                      color={
-                                        (o.qtyReceived || 0) >= o.quantity && o.quantity > 0
-                                          ? '#059669'
-                                          : o.arrivalDate && (o.qtyReceived || 0) < o.quantity
-                                            ? '#DC2626'
-                                            : '#D97706'
-                                      }
-                                    >
-                                      {(o.qtyReceived || 0) >= o.quantity && o.quantity > 0
-                                        ? `${o.qtyReceived || 0}/${o.quantity} Arrived`
-                                        : o.arrivalDate && (o.qtyReceived || 0) < o.quantity
-                                          ? `${o.qtyReceived || 0}/${o.quantity} Back Order`
-                                          : `0/${o.quantity} Awaiting`}
-                                    </Pill>
-                                  </td>
-                                  <td className="td">
-                                    <button
-                                      className={hasPending || !o.arrivalDate ? 'bp' : 'bs'}
-                                      disabled={!hasPending && !!o.arrivalDate}
-                                      onClick={() => confirmArrival(o.id)}
-                                      style={{
-                                        padding: '4px 10px',
-                                        fontSize: 11,
-                                        borderRadius: 6,
-                                        opacity: hasPending || !o.arrivalDate ? 1 : 0.4,
-                                        cursor: hasPending || !o.arrivalDate ? 'pointer' : 'default',
-                                      }}
-                                    >
-                                      {hasPending
-                                        ? o.arrivalDate
-                                          ? 'Update'
-                                          : 'Confirm'
-                                        : o.arrivalDate
-                                          ? o.status === 'Received'
-                                            ? '\u2713 Done'
-                                            : 'Confirmed'
-                                          : 'Confirm'}
-                                    </button>
-                                  </td>
-                                </tr>
-                              );
-                            })}
-                          </tbody>
-                        </table>
-
-                        {/* Batch Confirm + Notify Actions */}
-                        <div
-                          style={{
-                            display: 'flex',
-                            gap: 10,
-                            marginTop: 16,
-                            paddingTop: 16,
-                            borderTop: '1px solid #E8ECF0',
-                            flexWrap: 'wrap',
-                          }}
-                        >
-                          {(() => {
-                            const selIds = bgOrders
-                              .filter((o) => arrivalSelected.has(o.id) && o.status !== 'Received')
-                              .map((o) => o.id);
-                            return selIds.length > 0 ? (
-                              <button
-                                className="bp"
-                                onClick={() => batchConfirmArrival(selIds)}
-                                style={{ padding: '8px 16px', display: 'flex', alignItems: 'center', gap: 6 }}
-                              >
-                                <CheckCircle size={14} /> Batch Confirm ({selIds.length} selected)
-                              </button>
-                            ) : null;
-                          })()}
-                          <button
-                            className="be"
-                            onClick={() => {
-                              const summary = bgOrders
-                                .map(
-                                  (o) =>
-                                    `\u2022 ${o.materialNo}: ${o.qtyReceived}/${o.quantity} ${o.qtyReceived >= o.quantity ? '\u2713' : '(B/O: ' + (o.quantity - o.qtyReceived) + ')'}`,
-                                )
-                                .join('\n');
-                              notify('Email Sent', `Arrival report for ${bg.month} sent`, 'success');
-                              addNotifEntry({
-                                id: `N-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-                                type: 'email',
-                                to: 'service-sg@miltenyibiotec.com',
-                                subject: `Arrival Check: ${bg.month}`,
-                                date: new Date().toISOString().slice(0, 10),
-                                status: 'Sent',
-                              });
-                            }}
-                          >
-                            <Mail size={14} /> Email Report
-                          </button>
-                          {waConnected ? (
-                            <button
-                              className="bw"
-                              onClick={async () => {
-                                const received = bgOrders.filter((o) => o.qtyReceived >= o.quantity).length;
-                                const backorder = bgOrders.filter((o) => o.qtyReceived < o.quantity).length;
-                                const itemsList =
-                                  bgOrders
-                                    .slice(0, 5)
-                                    .map((o) => `\u2022 ${o.description.slice(0, 30)}: ${o.qtyReceived}/${o.quantity}`)
-                                    .join('\n') + (bgOrders.length > 5 ? `\n...and ${bgOrders.length - 5} more` : '');
-                                const arrMsg = fillTemplate(
-                                  waMessageTemplates.partArrival?.message ||
-                                    '\u2705 *Part Arrival Verified*\n\nMonth: {month}\nDate: {date}\nItems: {totalItems}\nReceived: {received}\nBack Orders: {backOrders}\nVerified By: {verifiedBy}\n\n{itemsList}',
-                                  {
-                                    month: bg.month,
-                                    totalItems: bgOrders.length,
-                                    received,
-                                    backOrders: backorder,
-                                    verifiedBy: currentUser?.name || 'Admin',
-                                    date: new Date().toISOString().slice(0, 10),
-                                    itemsList,
-                                  },
-                                );
-                                try {
-                                  if (waNotifyRules.partArrivalDone) {
-                                    for (const user of users.filter(
-                                      (u) => u.role !== 'admin' && u.status === 'active' && u.phone,
-                                    )) {
-                                      await fetch(`${WA_API_URL}/send`, {
-                                        method: 'POST',
-                                        headers: {
-                                          'Content-Type': 'application/json',
-                                          Authorization: `Bearer ${api.getToken()}`,
-                                        },
-                                        body: JSON.stringify({
-                                          phone: user.phone,
-                                          template: 'custom',
-                                          data: { message: arrMsg },
-                                        }),
-                                      });
-                                    }
-                                  }
-                                  notify('WhatsApp Sent', `Arrival report for ${bg.month} sent`, 'success');
-                                  addNotifEntry({
-                                    id: `N-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-                                    type: 'whatsapp',
-                                    to: 'SG Service Team',
-                                    subject: `Arrival: ${bg.month} - ${received} full, ${backorder} B/O`,
-                                    date: new Date().toISOString().slice(0, 10),
-                                    status: 'Delivered',
-                                  });
-                                } catch (e) {
-                                  notify('Error', 'Failed to send WhatsApp', 'error');
-                                }
-                              }}
-                            >
-                              <MessageSquare size={14} /> WhatsApp Report
-                            </button>
-                          ) : (
-                            <button
-                              className="bs"
-                              onClick={() => {
-                                setPage('whatsapp');
-                                notify('Connect WhatsApp', 'Please scan QR code first', 'info');
-                              }}
-                              style={{ opacity: 0.7 }}
-                            >
-                              <MessageSquare size={14} /> WhatsApp (Not Connected)
-                            </button>
-                          )}
-                          <button
-                            className="bp"
-                            onClick={async () => {
-                              const allReceived = bgOrders.every((o) => o.qtyReceived >= o.quantity);
-                              if (allReceived) {
-                                setBulkGroups((prev) =>
-                                  prev.map((g) => (g.id === bg.id ? { ...g, status: 'Completed' } : g)),
-                                );
-                                dbSync(
-                                  api.updateBulkGroup(bg.id, { status: 'Completed' }),
-                                  'Bulk group completion not saved',
-                                );
-                                notify('Arrival Complete', `${bg.month} marked as fully received`, 'success');
-                                if (waConnected && waNotifyRules.partArrivalDone) {
-                                  try {
-                                    const completeItemsList =
-                                      bgOrders
-                                        .slice(0, 5)
+                                  {(() => {
+                                    const selIds = bgOrders
+                                      .filter((o) => arrivalSelected.has(o.id) && o.status !== 'Received')
+                                      .map((o) => o.id);
+                                    return selIds.length > 0 ? (
+                                      <button
+                                        className="bp"
+                                        onClick={() => batchConfirmArrival(selIds)}
+                                        style={{ padding: '8px 16px', display: 'flex', alignItems: 'center', gap: 6 }}
+                                      >
+                                        <CheckCircle size={14} /> Batch Confirm ({selIds.length} selected)
+                                      </button>
+                                    ) : null;
+                                  })()}
+                                  <button
+                                    className="be"
+                                    onClick={() => {
+                                      const summary = bgOrders
                                         .map(
-                                          (o) => `\u2022 ${o.description.slice(0, 30)}: ${o.qtyReceived}/${o.quantity}`,
+                                          (o) =>
+                                            `\u2022 ${o.materialNo}: ${o.qtyReceived}/${o.quantity} ${o.qtyReceived >= o.quantity ? '\u2713' : '(B/O: ' + (o.quantity - o.qtyReceived) + ')'}`,
                                         )
-                                        .join('\n') +
-                                      (bgOrders.length > 5 ? `\n...and ${bgOrders.length - 5} more` : '');
-                                    const completeMsg = fillTemplate(
-                                      waMessageTemplates.partArrival?.message ||
-                                        '\u2705 *Part Arrival Verified*\n\nMonth: {month}\nDate: {date}\nItems: {totalItems}\nReceived: {received}\nBack Orders: {backOrders}\nVerified By: {verifiedBy}\n\n{itemsList}',
-                                      {
-                                        month: bg.month,
-                                        totalItems: bgOrders.length,
-                                        received: bgOrders.length,
-                                        backOrders: 0,
-                                        verifiedBy: currentUser?.name || 'Admin',
+                                        .join('\n');
+                                      notify('Email Sent', `Arrival report for ${bg.month} sent`, 'success');
+                                      addNotifEntry({
+                                        id: `N-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+                                        type: 'email',
+                                        to: 'service-sg@miltenyibiotec.com',
+                                        subject: `Arrival Check: ${bg.month}`,
                                         date: new Date().toISOString().slice(0, 10),
-                                        itemsList: completeItemsList,
-                                      },
-                                    );
-                                    await fetch(`${WA_API_URL}/send`, {
-                                      method: 'POST',
-                                      headers: {
-                                        'Content-Type': 'application/json',
-                                        Authorization: `Bearer ${api.getToken()}`,
-                                      },
-                                      body: JSON.stringify({
-                                        phone: users.find((u) => u.name === bg.createdBy)?.phone || '+65 9111 2222',
-                                        template: 'custom',
-                                        data: { message: completeMsg },
-                                      }),
-                                    });
-                                  } catch (e) {
-                                    /* ignore */
-                                  }
-                                }
-                              } else {
-                                notify(
-                                  'Incomplete',
-                                  `${bgOrders.filter((o) => o.qtyReceived < o.quantity).length} items still pending`,
-                                  'error',
-                                );
-                              }
-                            }}
-                          >
-                            <CheckCircle size={14} /> Mark Complete
-                          </button>
-                          <button className="bs" onClick={() => setSelectedBulkForArrival(null)}>
-                            Close
-                          </button>
-                        </div>
-                      </div>
-                      </td>
-                    </tr>
-                    )}
-                  </Fragment>
-                );
-              })}
+                                        status: 'Sent',
+                                      });
+                                    }}
+                                  >
+                                    <Mail size={14} /> Email Report
+                                  </button>
+                                  {waConnected ? (
+                                    <button
+                                      className="bw"
+                                      onClick={async () => {
+                                        const received = bgOrders.filter((o) => o.qtyReceived >= o.quantity).length;
+                                        const backorder = bgOrders.filter((o) => o.qtyReceived < o.quantity).length;
+                                        const itemsList =
+                                          bgOrders
+                                            .slice(0, 5)
+                                            .map(
+                                              (o) =>
+                                                `\u2022 ${o.description.slice(0, 30)}: ${o.qtyReceived}/${o.quantity}`,
+                                            )
+                                            .join('\n') +
+                                          (bgOrders.length > 5 ? `\n...and ${bgOrders.length - 5} more` : '');
+                                        const arrMsg = fillTemplate(
+                                          waMessageTemplates.partArrival?.message ||
+                                            '\u2705 *Part Arrival Verified*\n\nMonth: {month}\nDate: {date}\nItems: {totalItems}\nReceived: {received}\nBack Orders: {backOrders}\nVerified By: {verifiedBy}\n\n{itemsList}',
+                                          {
+                                            month: bg.month,
+                                            totalItems: bgOrders.length,
+                                            received,
+                                            backOrders: backorder,
+                                            verifiedBy: currentUser?.name || 'Admin',
+                                            date: new Date().toISOString().slice(0, 10),
+                                            itemsList,
+                                          },
+                                        );
+                                        try {
+                                          if (waNotifyRules.partArrivalDone) {
+                                            for (const user of users.filter(
+                                              (u) => u.role !== 'admin' && u.status === 'active' && u.phone,
+                                            )) {
+                                              await fetch(`${WA_API_URL}/send`, {
+                                                method: 'POST',
+                                                headers: {
+                                                  'Content-Type': 'application/json',
+                                                  Authorization: `Bearer ${api.getToken()}`,
+                                                },
+                                                body: JSON.stringify({
+                                                  phone: user.phone,
+                                                  template: 'custom',
+                                                  data: { message: arrMsg },
+                                                }),
+                                              });
+                                            }
+                                          }
+                                          notify('WhatsApp Sent', `Arrival report for ${bg.month} sent`, 'success');
+                                          addNotifEntry({
+                                            id: `N-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+                                            type: 'whatsapp',
+                                            to: 'SG Service Team',
+                                            subject: `Arrival: ${bg.month} - ${received} full, ${backorder} B/O`,
+                                            date: new Date().toISOString().slice(0, 10),
+                                            status: 'Delivered',
+                                          });
+                                        } catch (e) {
+                                          notify('Error', 'Failed to send WhatsApp', 'error');
+                                        }
+                                      }}
+                                    >
+                                      <MessageSquare size={14} /> WhatsApp Report
+                                    </button>
+                                  ) : (
+                                    <button
+                                      className="bs"
+                                      onClick={() => {
+                                        setPage('whatsapp');
+                                        notify('Connect WhatsApp', 'Please scan QR code first', 'info');
+                                      }}
+                                      style={{ opacity: 0.7 }}
+                                    >
+                                      <MessageSquare size={14} /> WhatsApp (Not Connected)
+                                    </button>
+                                  )}
+                                  <button
+                                    className="bp"
+                                    onClick={async () => {
+                                      const allReceived = bgOrders.every((o) => o.qtyReceived >= o.quantity);
+                                      if (allReceived) {
+                                        setBulkGroups((prev) =>
+                                          prev.map((g) => (g.id === bg.id ? { ...g, status: 'Completed' } : g)),
+                                        );
+                                        dbSync(
+                                          api.updateBulkGroup(bg.id, { status: 'Completed' }),
+                                          'Bulk group completion not saved',
+                                        );
+                                        notify('Arrival Complete', `${bg.month} marked as fully received`, 'success');
+                                        if (waConnected && waNotifyRules.partArrivalDone) {
+                                          try {
+                                            const completeItemsList =
+                                              bgOrders
+                                                .slice(0, 5)
+                                                .map(
+                                                  (o) =>
+                                                    `\u2022 ${o.description.slice(0, 30)}: ${o.qtyReceived}/${o.quantity}`,
+                                                )
+                                                .join('\n') +
+                                              (bgOrders.length > 5 ? `\n...and ${bgOrders.length - 5} more` : '');
+                                            const completeMsg = fillTemplate(
+                                              waMessageTemplates.partArrival?.message ||
+                                                '\u2705 *Part Arrival Verified*\n\nMonth: {month}\nDate: {date}\nItems: {totalItems}\nReceived: {received}\nBack Orders: {backOrders}\nVerified By: {verifiedBy}\n\n{itemsList}',
+                                              {
+                                                month: bg.month,
+                                                totalItems: bgOrders.length,
+                                                received: bgOrders.length,
+                                                backOrders: 0,
+                                                verifiedBy: currentUser?.name || 'Admin',
+                                                date: new Date().toISOString().slice(0, 10),
+                                                itemsList: completeItemsList,
+                                              },
+                                            );
+                                            await fetch(`${WA_API_URL}/send`, {
+                                              method: 'POST',
+                                              headers: {
+                                                'Content-Type': 'application/json',
+                                                Authorization: `Bearer ${api.getToken()}`,
+                                              },
+                                              body: JSON.stringify({
+                                                phone:
+                                                  users.find((u) => u.name === bg.createdBy)?.phone || '+65 9111 2222',
+                                                template: 'custom',
+                                                data: { message: completeMsg },
+                                              }),
+                                            });
+                                          } catch (e) {
+                                            /* ignore */
+                                          }
+                                        }
+                                      } else {
+                                        notify(
+                                          'Incomplete',
+                                          `${bgOrders.filter((o) => o.qtyReceived < o.quantity).length} items still pending`,
+                                          'error',
+                                        );
+                                      }
+                                    }}
+                                  >
+                                    <CheckCircle size={14} /> Mark Complete
+                                  </button>
+                                  <button className="bs" onClick={() => setSelectedBulkForArrival(null)}>
+                                    Close
+                                  </button>
+                                </div>
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </Fragment>
+                    );
+                  })
+                )}
               </tbody>
             </table>
             {/* Bulk pagination */}
@@ -934,6 +1013,13 @@ const DeliveryPage = ({
                     onSort={(k) => toggleSort(setSingleArrivalSort, k)}
                   />
                   <SortTh
+                    label="Order By"
+                    sortKey="orderBy"
+                    sortCfg={singleArrivalSort}
+                    onSort={(k) => toggleSort(setSingleArrivalSort, k)}
+                    style={{ width: 100 }}
+                  />
+                  <SortTh
                     label="Approved"
                     sortKey="approvalSentDate"
                     sortCfg={singleArrivalSort}
@@ -1002,6 +1088,9 @@ const DeliveryPage = ({
                           style={{ maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
                         >
                           {o.description}
+                        </td>
+                        <td className="td" style={{ fontSize: 11 }}>
+                          {o.orderBy || '\u2014'}
                         </td>
                         <td className="td" style={{ fontSize: 11, color: o.approvalSentDate ? '#1A202C' : '#94A3B8' }}>
                           {o.approvalSentDate ? fmtDate(o.approvalSentDate) : '\u2014'}
@@ -1483,6 +1572,7 @@ const DeliveryPage = ({
                       { l: 'Type', k: 'bulkGroupId' },
                       { l: 'Material', k: 'materialNo' },
                       { l: 'Description', k: 'description' },
+                      { l: 'Order By', k: 'orderBy' },
                       { l: 'Approved', k: 'approvalSentDate' },
                       { l: 'Ordered', k: 'quantity' },
                       { l: 'Recv', k: 'qtyReceived' },
@@ -1505,7 +1595,7 @@ const DeliveryPage = ({
                 <tbody>
                   {allPageItems.length === 0 ? (
                     <tr>
-                      <td colSpan={11} style={{ padding: 24, textAlign: 'center', color: '#94A3B8', fontSize: 13 }}>
+                      <td colSpan={12} style={{ padding: 24, textAlign: 'center', color: '#94A3B8', fontSize: 13 }}>
                         No orders with status &quot;{arrivalStatusFilter}&quot;
                       </td>
                     </tr>
@@ -1538,6 +1628,9 @@ const DeliveryPage = ({
                           style={{ maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
                         >
                           {o.description}
+                        </td>
+                        <td className="td" style={{ fontSize: 11 }}>
+                          {o.orderBy || '\u2014'}
                         </td>
                         <td className="td" style={{ fontSize: 11, color: o.approvalSentDate ? '#1A202C' : '#94A3B8' }}>
                           {o.approvalSentDate ? fmtDate(o.approvalSentDate) : '\u2014'}
