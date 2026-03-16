@@ -165,6 +165,7 @@ export default function App() {
     return mod === 'service' ? 'service' : 'dashboard';
   });
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [ordersMenuOpen, setOrdersMenuOpen] = useState(false);
   const [orders, setOrders] = useState([]);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('All');
@@ -3404,9 +3405,17 @@ export default function App() {
     { id: 'dashboard', label: 'Dashboard', icon: Home, perm: 'dashboard', module: 'inventory' },
     { id: 'catalog', label: 'Parts Catalog', icon: Database, perm: 'catalog', module: 'inventory' },
     { id: 'localinventory', label: 'Local Inventory', icon: Warehouse, perm: 'dashboard', module: 'inventory' },
-    { id: 'allorders', label: 'All Orders', icon: ShoppingCart, perm: 'orders', module: 'inventory' },
-    { id: 'orders', label: 'Single Orders', icon: Package, perm: 'orders', module: 'inventory' },
-    { id: 'bulkorders', label: 'Bulk Orders', icon: Layers, perm: 'bulkOrders', module: 'inventory' },
+    {
+      id: 'orders-group',
+      label: 'Orders',
+      icon: ShoppingCart,
+      module: 'inventory',
+      children: [
+        { id: 'allorders', label: 'All Orders', icon: ShoppingCart, perm: 'orders' },
+        { id: 'orders', label: 'Single Orders', icon: Package, perm: 'orders' },
+        { id: 'bulkorders', label: 'Bulk Orders', icon: Layers, perm: 'bulkOrders' },
+      ],
+    },
     { id: 'analytics', label: 'Analytics', icon: BarChart3, perm: 'analytics', module: 'inventory' },
     { id: 'forecasting', label: 'Forecasting', icon: TrendingUp, perm: 'analytics', module: 'inventory' },
     { id: 'stockcheck', label: 'Stock Check', icon: ClipboardList, perm: 'stockCheck', module: 'inventory' },
@@ -3419,9 +3428,18 @@ export default function App() {
     { id: 'users', label: 'User Management', icon: Users, perm: 'users', module: 'shared' },
     { id: 'settings', label: 'Settings', icon: Settings, perm: 'settings', module: 'shared' },
   ];
-  const navItems = allNavItems.filter(
-    (n) => (n.module === activeModule || n.module === 'shared') && hasPermission(n.perm),
-  );
+  const navItems = allNavItems
+    .filter((n) => n.module === activeModule || n.module === 'shared')
+    .map((n) => {
+      if (!n.children) return hasPermission(n.perm) ? n : null;
+      const visibleChildren = n.children.filter((c) => hasPermission(c.perm));
+      return visibleChildren.length > 0 ? { ...n, children: visibleChildren } : null;
+    })
+    .filter(Boolean);
+
+  useEffect(() => {
+    if (['allorders', 'orders', 'bulkorders'].includes(page)) setOrdersMenuOpen(true);
+  }, [page]);
 
   // ════════════════════════════ AI BOT PROCESSING ════════════════════════════
   const processAiMessage = async (userMessage) => {
@@ -5322,62 +5340,109 @@ export default function App() {
           )}
         </div>
         <nav style={{ padding: '12px 10px', flex: 1, overflowY: 'auto' }}>
-          {navItems.map((item) => (
-            <div
-              key={item.id}
-              className={`ni ${page === item.id ? 'a' : ''}`}
-              onClick={() => {
-                setPage(item.id);
-                setCatalogPage(0);
-                if (window.innerWidth <= 768) setSidebarOpen(false);
-              }}
-              title={item.label}
-            >
-              <item.icon size={18} />
-              {sidebarOpen && <span>{item.label}</span>}
-              {item.id === 'catalog' && sidebarOpen && (
-                <span
-                  style={{
-                    marginLeft: 'auto',
-                    fontSize: 10,
-                    background: '#E6F4ED',
-                    color: '#0B7A3E',
-                    padding: '2px 6px',
-                    borderRadius: 8,
-                    fontWeight: 700,
-                  }}
-                >
-                  {partsCatalog.length}
-                </span>
-              )}
-              {item.id === 'whatsapp' && sidebarOpen && (
-                <span
-                  style={{
-                    marginLeft: 'auto',
-                    width: 8,
-                    height: 8,
-                    borderRadius: '50%',
-                    background: waConnected ? '#25D366' : '#E2E8F0',
-                  }}
-                />
-              )}
-              {item.id === 'users' && sidebarOpen && pendingUsers.length > 0 && (
-                <span
-                  style={{
-                    marginLeft: 'auto',
-                    fontSize: 10,
-                    background: '#FEE2E2',
-                    color: '#DC2626',
-                    padding: '2px 6px',
-                    borderRadius: 8,
-                    fontWeight: 700,
-                  }}
-                >
-                  {pendingUsers.length}
-                </span>
-              )}
-            </div>
-          ))}
+          {navItems.map((item) => {
+            if (item.children) {
+              const isChildActive = item.children.some((c) => page === c.id);
+              return (
+                <div key={item.id}>
+                  <div
+                    className={`ni ${isChildActive ? 'a' : ''}`}
+                    onClick={() => {
+                      if (sidebarOpen) {
+                        setOrdersMenuOpen((prev) => !prev);
+                      } else {
+                        setPage('allorders');
+                        setCatalogPage(0);
+                      }
+                    }}
+                    title={item.label}
+                  >
+                    <item.icon size={18} />
+                    {sidebarOpen && <span>{item.label}</span>}
+                    {sidebarOpen && (
+                      <span style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center' }}>
+                        {ordersMenuOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                      </span>
+                    )}
+                  </div>
+                  {sidebarOpen &&
+                    ordersMenuOpen &&
+                    item.children.map((child) => (
+                      <div
+                        key={child.id}
+                        className={`ni ${page === child.id ? 'a' : ''}`}
+                        onClick={() => {
+                          setPage(child.id);
+                          setCatalogPage(0);
+                          if (window.innerWidth <= 768) setSidebarOpen(false);
+                        }}
+                        title={child.label}
+                        style={{ paddingLeft: 36 }}
+                      >
+                        <child.icon size={16} />
+                        <span>{child.label}</span>
+                      </div>
+                    ))}
+                </div>
+              );
+            }
+            return (
+              <div
+                key={item.id}
+                className={`ni ${page === item.id ? 'a' : ''}`}
+                onClick={() => {
+                  setPage(item.id);
+                  setCatalogPage(0);
+                  if (window.innerWidth <= 768) setSidebarOpen(false);
+                }}
+                title={item.label}
+              >
+                <item.icon size={18} />
+                {sidebarOpen && <span>{item.label}</span>}
+                {item.id === 'catalog' && sidebarOpen && (
+                  <span
+                    style={{
+                      marginLeft: 'auto',
+                      fontSize: 10,
+                      background: '#E6F4ED',
+                      color: '#0B7A3E',
+                      padding: '2px 6px',
+                      borderRadius: 8,
+                      fontWeight: 700,
+                    }}
+                  >
+                    {partsCatalog.length}
+                  </span>
+                )}
+                {item.id === 'whatsapp' && sidebarOpen && (
+                  <span
+                    style={{
+                      marginLeft: 'auto',
+                      width: 8,
+                      height: 8,
+                      borderRadius: '50%',
+                      background: waConnected ? '#25D366' : '#E2E8F0',
+                    }}
+                  />
+                )}
+                {item.id === 'users' && sidebarOpen && pendingUsers.length > 0 && (
+                  <span
+                    style={{
+                      marginLeft: 'auto',
+                      fontSize: 10,
+                      background: '#FEE2E2',
+                      color: '#DC2626',
+                      padding: '2px 6px',
+                      borderRadius: 8,
+                      fontWeight: 700,
+                    }}
+                  >
+                    {pendingUsers.length}
+                  </span>
+                )}
+              </div>
+            );
+          })}
         </nav>
         <div style={{ padding: '12px 10px', borderTop: '1px solid #F0F2F5', flexShrink: 0 }}>
           <div className="ni" onClick={() => setSidebarOpen(!sidebarOpen)}>
