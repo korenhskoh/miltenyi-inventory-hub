@@ -1166,7 +1166,18 @@ export default function SettingsPage({
                     <span style={{ fontWeight: 600, color: '#0B7A3E' }}>{user?.name || username}</span>
                     {username !== 'admin' && (
                       <button
-                        onClick={() => setWaAllowedSenders((prev) => prev.filter((u) => u !== username))}
+                        onClick={async () => {
+                          const newSenders = (Array.isArray(waAllowedSenders) ? waAllowedSenders : []).filter(
+                            (u) => u !== username,
+                          );
+                          setWaAllowedSenders(newSenders);
+                          try {
+                            await api.setConfigKey('waAllowedSenders', newSenders);
+                            notify('Sender Removed', `${username} removed from WhatsApp senders`, 'success');
+                          } catch (e) {
+                            notify('Save Failed', 'Could not save sender assignment: ' + e.message, 'error');
+                          }
+                        }}
                         style={{
                           background: 'none',
                           border: 'none',
@@ -1189,7 +1200,11 @@ export default function SettingsPage({
                   Select user to add...
                 </option>
                 {users
-                  .filter((u) => u.status === 'active' && !waAllowedSenders.includes(u.username))
+                  .filter(
+                    (u) =>
+                      u.status === 'active' &&
+                      !(Array.isArray(waAllowedSenders) ? waAllowedSenders : []).includes(u.username),
+                  )
                   .map((u) => (
                     <option key={u.id} value={u.username}>
                       {u.name} ({u.username})
@@ -1199,11 +1214,17 @@ export default function SettingsPage({
               <button
                 className="bp"
                 style={{ padding: '8px 16px' }}
-                onClick={() => {
+                onClick={async () => {
                   const select = document.getElementById('addWaSender');
                   if (select.value) {
-                    setWaAllowedSenders((prev) => [...prev, select.value]);
-                    notify('Sender Added', `${select.value} can now connect WhatsApp`, 'success');
+                    const newSenders = [...(Array.isArray(waAllowedSenders) ? waAllowedSenders : []), select.value];
+                    setWaAllowedSenders(newSenders);
+                    try {
+                      await api.setConfigKey('waAllowedSenders', newSenders);
+                      notify('Sender Added', `${select.value} can now connect WhatsApp`, 'success');
+                    } catch (e) {
+                      notify('Save Failed', 'Could not save sender assignment: ' + e.message, 'error');
+                    }
                     select.value = '';
                   }
                 }}

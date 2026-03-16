@@ -7657,6 +7657,7 @@ export default function App() {
                 addNotifEntry,
                 notify,
                 sendScheduledReport,
+                api,
               }}
             />
           )}
