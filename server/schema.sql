@@ -235,3 +235,15 @@ CREATE TABLE IF NOT EXISTS inventory_transactions (
 );
 CREATE INDEX IF NOT EXISTS idx_inv_txn_material ON inventory_transactions(material_no);
 CREATE INDEX IF NOT EXISTS idx_inv_txn_created ON inventory_transactions(created_at);
+
+-- Wishlist: saved items users can quickly pick when creating orders
+CREATE TABLE IF NOT EXISTS wishlist (
+  id VARCHAR(50) PRIMARY KEY,
+  user_id VARCHAR(50) NOT NULL,
+  material_no VARCHAR(30),
+  description TEXT,
+  list_price NUMERIC(12, 2) DEFAULT 0,
+  quantity INTEGER DEFAULT 1,
+  created_at TIMESTAMP DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_wishlist_user ON wishlist(user_id);
