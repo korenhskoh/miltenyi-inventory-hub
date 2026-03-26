@@ -1671,7 +1671,23 @@ export default function SettingsPage({
         >
           Save
         </button>
-        <button className="bs">Reset</button>
+        <button
+          className="bs"
+          onClick={async () => {
+            const cfg = await api.getConfig();
+            if (cfg && Object.keys(cfg).length) {
+              if (cfg.emailConfig) setEmailConfig((prev) => ({ ...prev, ...cfg.emailConfig }));
+              if (cfg.emailTemplates) setEmailTemplates((prev) => ({ ...prev, ...cfg.emailTemplates }));
+              if (cfg.priceConfig) setPriceConfig((prev) => ({ ...prev, ...cfg.priceConfig }));
+              if (cfg.customLogo !== undefined) setCustomLogo(cfg.customLogo);
+              notify('Reset', 'Settings reloaded from database', 'success');
+            } else {
+              notify('Reset Failed', 'Could not reload settings from database', 'error');
+            }
+          }}
+        >
+          Reset
+        </button>
       </div>
     </div>
   );

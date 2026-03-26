@@ -675,7 +675,7 @@ export default function WhatsAppPage({
                   Active Keyword Triggers:
                 </div>
                 {[
-                  { keyword: '"price" + part number', response: 'Returns SG/Dist/Transfer prices' },
+                  { keyword: '"price" + part number', response: 'Returns SG/Dist/RSP prices' },
                   { keyword: '"status" + order ID', response: 'Returns order status details' },
                   { keyword: '"help"', response: 'Lists available commands' },
                   { keyword: '"stock"', response: 'Returns recent stock check info' },
