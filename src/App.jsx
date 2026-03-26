@@ -5922,7 +5922,7 @@ export default function App() {
                           Category
                         </th>
                         {[
-                          { k: 'tp', l: 'Transfer' },
+                          { k: 'tp', l: 'RSP Price' },
                           { k: 'sg', l: 'Unit Price' },
                           { k: 'dist', l: 'Dist Price' },
                         ].map((h) => (
@@ -10711,7 +10711,7 @@ export default function App() {
                 { key: 'c', label: 'Category' },
                 { key: 'sg', label: 'Unit Price (SG)' },
                 { key: 'dist', label: 'Distributor Price' },
-                { key: 'tp', label: 'Transfer Price' },
+                { key: 'tp', label: 'RSP Price' },
                 { key: 'rsp', label: 'RSP EUR' },
               ].map((f) => (
                 <div key={f.key} style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
@@ -10754,7 +10754,7 @@ export default function App() {
                         'Category',
                         'Unit Price',
                         'Dist Price',
-                        'Transfer Price',
+                        'RSP Price',
                         'RSP EUR',
                       ].map((h) => (
                         <th key={h} className="th" style={{ whiteSpace: 'nowrap' }}>
@@ -10973,7 +10973,7 @@ export default function App() {
                       <th className="th">Material No.</th>
                       <th className="th">Description</th>
                       <th className="th" style={{ textAlign: 'right' }}>
-                        Transfer
+                        RSP Price
                       </th>
                       <th className="th" style={{ textAlign: 'right' }}>
                         Unit Price
@@ -12146,7 +12146,7 @@ export default function App() {
               {[
                 { l: 'Unit Price', v: fmt(selectedPart.singaporePrice), c: '#0B7A3E' },
                 { l: 'Dist Price', v: fmt(selectedPart.distributorPrice), c: '#2563EB' },
-                { l: 'Transfer (SGD)', v: fmt(selectedPart.transferPrice), c: '#7C3AED' },
+                { l: 'RSP Price', v: fmt(selectedPart.transferPrice), c: '#7C3AED' },
                 { l: 'RSP (EUR)', v: `€${selectedPart.rspEur?.toLocaleString()}`, c: '#D97706' },
                 {
                   l: 'Margin',
