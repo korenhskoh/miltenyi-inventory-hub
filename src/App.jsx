@@ -221,6 +221,12 @@ export default function App() {
   const [bulkSort, setBulkSort] = useState({ key: null, dir: 'asc' });
   const [arrivalSort, setArrivalSort] = useState({ key: 'approvalSentDate', dir: 'desc' });
   const [partsCatalog, setPartsCatalog] = useState([]);
+  const [catalogUploadMeta, setCatalogUploadMeta] = useState(() => {
+    try {
+      const saved = localStorage.getItem('mih_catalogUploadMeta');
+      return saved ? JSON.parse(saved) : null;
+    } catch { return null; }
+  });
   const [priceConfig, setPriceConfig] = useState(PRICE_CONFIG_DEFAULT);
   const [blurPrices, setBlurPrices] = useState(() => {
     try {
@@ -641,7 +647,7 @@ export default function App() {
 
   // ── Scheduled Reports State (must be declared before sendScheduledReport) ──
   const [scheduledNotifs, setScheduledNotifs] = useState({
-    enabled: true,
+    enabled: false,
     frequency: 'weekly',
     dayOfWeek: 1,
     dayOfMonth: 1,
@@ -661,6 +667,8 @@ export default function App() {
 
   // ── Scheduled Reports: build & send ──
   const sendScheduledReport = useCallback(async () => {
+    if (!scheduledNotifs.enabled) return;
+    if (!scheduledNotifs.emailEnabled && !scheduledNotifs.whatsappEnabled) return;
     const rpts = scheduledNotifs.reports || {};
     const recipients = (scheduledNotifs.recipients || []).filter(Boolean);
     if (recipients.length === 0) return;
@@ -5844,6 +5852,28 @@ export default function App() {
                   </div>
                 ))}
               </div>
+              {catalogUploadMeta && (
+                <div
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 6,
+                    marginBottom: 12,
+                    padding: '6px 12px',
+                    background: '#F0FDF4',
+                    border: '1px solid #BBF7D0',
+                    borderRadius: 8,
+                    fontSize: 11,
+                    color: '#15803D',
+                  }}
+                >
+                  <Upload size={12} />
+                  <span style={{ fontWeight: 600 }}>{catalogUploadMeta.fileName}</span>
+                  <span style={{ color: '#64748B' }}>
+                    updated {new Date(catalogUploadMeta.uploadedAt).toLocaleString()} by {catalogUploadMeta.uploadedBy}
+                  </span>
+                </div>
+              )}
               <div style={{ display: 'flex', gap: 10, marginBottom: 16, flexWrap: 'wrap', alignItems: 'center' }}>
                 <div style={{ position: 'relative', flex: 1, maxWidth: 360 }}>
                   <Search size={15} style={{ position: 'absolute', left: 10, top: 10, color: '#94A3B8' }} />
@@ -10841,6 +10871,14 @@ export default function App() {
                       rspEur: p.rsp || 0,
                     })),
                   );
+                  const meta = {
+                    fileName: catalogMapperData.fileName,
+                    uploadedAt: new Date().toISOString(),
+                    uploadedBy: currentUser?.name || 'System',
+                    partsCount: mapped.length,
+                  };
+                  setCatalogUploadMeta(meta);
+                  try { localStorage.setItem('mih_catalogUploadMeta', JSON.stringify(meta)); } catch {}
                   if (uploadResult) {
                     notify(
                       'Catalog Uploaded',
