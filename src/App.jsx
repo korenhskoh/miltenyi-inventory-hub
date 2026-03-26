@@ -1098,9 +1098,9 @@ export default function App() {
         if (o.bulkGroupId) return false;
         const ms =
           !search ||
-          o.materialNo.toLowerCase().includes(search.toLowerCase()) ||
-          o.description.toLowerCase().includes(search.toLowerCase()) ||
-          o.orderBy.toLowerCase().includes(search.toLowerCase());
+          (o.materialNo || '').toLowerCase().includes(search.toLowerCase()) ||
+          (o.description || '').toLowerCase().includes(search.toLowerCase()) ||
+          (o.orderBy || '').toLowerCase().includes(search.toLowerCase());
         const mm = singleOrderMonth === 'All' || o.month === singleOrderMonth;
         const mu = orderByFilter === 'All' || o.orderBy === orderByFilter;
         return ms && mm && mu && (statusFilter === 'All' || o.status === statusFilter);
@@ -1208,8 +1208,8 @@ export default function App() {
           if (!i.length) return null;
           return {
             name: c.short,
-            sg: Math.round(i.reduce((s, p) => s + p.sg, 0) / i.length),
-            dist: Math.round(i.reduce((s, p) => s + p.dist, 0) / i.length),
+            sg: Math.round(i.reduce((s, p) => s + (p.sg || 0), 0) / i.length),
+            dist: Math.round(i.reduce((s, p) => s + (p.dist || 0), 0) / i.length),
             count: i.length,
             color: c.color,
           };
@@ -1225,8 +1225,8 @@ export default function App() {
     });
     return {
       total: t,
-      avgSg: t > 0 ? partsCatalog.reduce((s, p) => s + p.sg, 0) / t : 0,
-      avgDist: t > 0 ? partsCatalog.reduce((s, p) => s + p.dist, 0) / t : 0,
+      avgSg: t > 0 ? partsCatalog.reduce((s, p) => s + (p.sg || 0), 0) / t : 0,
+      avgDist: t > 0 ? partsCatalog.reduce((s, p) => s + (p.dist || 0), 0) / t : 0,
       catCounts: cc,
     };
   }, [partsCatalog]);
@@ -3463,7 +3463,7 @@ export default function App() {
         const p = catalogLookupLocal[matNo];
         return {
           type: 'price',
-          text: `📦 **${p.d}** (${matNo})\n\n💰 **Prices (${priceConfig.year}):**\n• Unit Price: ${fmt(p.sg)}\n• Distributor: ${fmt(p.dist)}\n• Transfer: ${fmt(p.tp)}\n\nWould you like to place an order?`,
+          text: `📦 **${p.d}** (${matNo})\n\n💰 **Prices (${priceConfig.year}):**\n• Unit Price: ${fmt(p.sg)}\n• Distributor: ${fmt(p.dist)}\n• RSP Price: ${fmt(p.tp)}\n\nWould you like to place an order?`,
         };
       }
       if (matNo)
@@ -7648,6 +7648,7 @@ export default function App() {
                           >
                             {eng
                               .split(' ')
+                              .filter(Boolean)
                               .map((w) => w[0])
                               .join('')}
                           </div>
@@ -11936,7 +11937,7 @@ export default function App() {
                     value={selectedOrder.qtyReceived || 0}
                     onChange={(e) => {
                       const val = parseInt(e.target.value) || 0;
-                      const newBackOrder = val - selectedOrder.quantity;
+                      const newBackOrder = selectedOrder.quantity - val;
                       const newStatus = val >= selectedOrder.quantity ? 'Received' : selectedOrder.status;
                       const updatedOrder = {
                         ...selectedOrder,
@@ -12147,10 +12148,10 @@ export default function App() {
                 { l: 'Unit Price', v: fmt(selectedPart.singaporePrice), c: '#0B7A3E' },
                 { l: 'Dist Price', v: fmt(selectedPart.distributorPrice), c: '#2563EB' },
                 { l: 'RSP Price', v: fmt(selectedPart.transferPrice), c: '#7C3AED' },
-                { l: 'RSP (EUR)', v: `€${selectedPart.rspEur?.toLocaleString()}`, c: '#D97706' },
+                { l: 'RSP (EUR)', v: selectedPart.rspEur ? `€${selectedPart.rspEur.toLocaleString()}` : '—', c: '#D97706' },
                 {
                   l: 'Margin',
-                  v: `${selectedPart.singaporePrice > 0 ? (((selectedPart.singaporePrice - selectedPart.distributorPrice) / selectedPart.singaporePrice) * 100).toFixed(1) : 0}%`,
+                  v: `${selectedPart.singaporePrice > 0 ? (((selectedPart.singaporePrice - (selectedPart.distributorPrice || 0)) / selectedPart.singaporePrice) * 100).toFixed(1) : 0}%`,
                   c: '#059669',
                 },
                 { l: 'Year', v: priceConfig.year, c: '#64748B' },
@@ -12186,6 +12187,7 @@ export default function App() {
                       selectedPart.singaporePrice || selectedPart.transferPrice || selectedPart.distributorPrice || 0,
                     orderBy: '',
                     remark: '',
+                    bulkGroupId: '',
                   });
                   setSelectedPart(null);
                 }}

@@ -255,7 +255,7 @@ const DeliveryPage = ({
               (arrivalCheckedByFilter === 'All' || o.arrivalCheckedBy === arrivalCheckedByFilter),
           );
           const fullyReceived = bgOrds.filter((o) => o.qtyReceived >= o.quantity && o.quantity > 0).length;
-          const hasBackOrder = bgOrds.some((o) => o.backOrder < 0);
+          const hasBackOrder = bgOrds.some((o) => (o.qtyReceived || 0) > 0 && (o.qtyReceived || 0) < o.quantity);
           // Latest approval date from the group's orders
           const approvedDate = bgOrds.reduce((latest, o) => {
             if (!o.approvalSentDate) return latest;

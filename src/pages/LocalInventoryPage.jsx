@@ -121,7 +121,7 @@ export default function LocalInventoryPage({ isAdmin, currentUser: _currentUser,
   const [chargeOutItems, setChargeOutItems] = useState([{ materialNo: '', lotsNumber: '', quantity: 1, notes: '' }]);
   const [showBulkSearch, setShowBulkSearch] = useState(false);
   const [bulkSearchInput, setBulkSearchInput] = useState('');
-  const [bulkSearchResults, setBulkSearchResults] = useState([]);
+  const [bulkSearchResults, setBulkSearchResults] = useState({ found: [], notFound: [], totalSearched: 0 });
 
   // Add/Edit form
   const [formData, setFormData] = useState({
@@ -1259,7 +1259,7 @@ export default function LocalInventoryPage({ isAdmin, currentUser: _currentUser,
                 className="li-btn li-btn-secondary"
                 onClick={() => {
                   setBulkSearchInput('');
-                  setBulkSearchResults([]);
+                  setBulkSearchResults({ found: [], notFound: [], totalSearched: 0 });
                 }}
               >
                 Clear
