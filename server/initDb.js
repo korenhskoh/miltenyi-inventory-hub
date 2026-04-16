@@ -91,9 +91,10 @@ export async function initDatabase() {
         urgentRequest: true,
       };
 
-      // scheduledNotifs
+      // scheduledNotifs — default DISABLED to avoid unintended outbound
+      // traffic on a fresh install. Admins opt in from Settings.
       const scheduledNotifs = {
-        enabled: true,
+        enabled: false,
         frequency: 'weekly',
         dayOfWeek: 1,
         dayOfMonth: 1,

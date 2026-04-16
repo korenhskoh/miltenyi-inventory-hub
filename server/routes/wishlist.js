@@ -1,12 +1,17 @@
 import { Router } from 'express';
+import { randomUUID } from 'crypto';
 import { query } from '../db.js';
 import { snakeToCamel, camelToSnake } from '../utils.js';
 import { pickAllowed, requireFields } from '../validation.js';
 
 const router = Router();
 
-const WISHLIST_FIELDS = ['id', 'user_id', 'material_no', 'description', 'list_price', 'quantity'];
-const WISHLIST_REQUIRED = ['id', 'user_id'];
+// Fields the client may supply. `id` is deliberately excluded — the server
+// generates it to prevent clients from choosing/overwriting PKs (mass-
+// assignment / ID collision). `user_id` is also excluded and is always
+// overwritten from the auth context below.
+const WISHLIST_FIELDS = ['material_no', 'description', 'list_price', 'quantity'];
+const WISHLIST_REQUIRED = ['user_id'];
 
 // GET / — list wishlist items for the authenticated user
 router.get('/', async (req, res) => {
@@ -24,6 +29,7 @@ router.post('/', async (req, res) => {
   try {
     const snakeBody = pickAllowed(camelToSnake(req.body), WISHLIST_FIELDS);
     snakeBody.user_id = req.user.id; // always use authenticated user
+    snakeBody.id = randomUUID(); // server-generated PK
     const err = requireFields(snakeBody, WISHLIST_REQUIRED);
     if (err) return res.status(400).json({ error: err });
 
@@ -34,6 +40,10 @@ router.post('/', async (req, res) => {
     const result = await query(sql, values);
     res.status(201).json(snakeToCamel(result.rows[0]));
   } catch (e) {
+    // 23505 = unique_violation (PK collision — extremely unlikely with UUID v4)
+    if (e.code === '23505') {
+      return res.status(409).json({ error: 'Wishlist item already exists' });
+    }
     res.status(500).json({ error: e.message });
   }
 });
