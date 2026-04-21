@@ -223,6 +223,22 @@ CREATE INDEX IF NOT EXISTS idx_machines_region ON machines(region);
 ALTER TABLE machines ADD COLUMN IF NOT EXISTS model VARCHAR(100);
 CREATE INDEX IF NOT EXISTS idx_machines_model ON machines(model);
 
+-- Migration: Widen string columns to TEXT so imports can't be rejected for
+-- exceeding VARCHAR(N) caps. Running multiple times is a no-op in Postgres.
+ALTER TABLE machines ALTER COLUMN name TYPE TEXT;
+ALTER TABLE machines ALTER COLUMN modality TYPE TEXT;
+ALTER TABLE machines ALTER COLUMN location TYPE TEXT;
+ALTER TABLE machines ALTER COLUMN status TYPE TEXT;
+ALTER TABLE machines ALTER COLUMN serial_number TYPE TEXT;
+ALTER TABLE machines ALTER COLUMN customer_name TYPE TEXT;
+ALTER TABLE machines ALTER COLUMN customer_contact TYPE TEXT;
+ALTER TABLE machines ALTER COLUMN customer_email TYPE TEXT;
+ALTER TABLE machines ALTER COLUMN contract_type TYPE TEXT;
+ALTER TABLE machines ALTER COLUMN country TYPE TEXT;
+ALTER TABLE machines ALTER COLUMN sap_code TYPE TEXT;
+ALTER TABLE machines ALTER COLUMN iqoq TYPE TEXT;
+ALTER TABLE machines ALTER COLUMN model TYPE TEXT;
+
 -- FCA (Field Change Action) master list — one row per FCA
 CREATE TABLE IF NOT EXISTS fca_definitions (
   id SERIAL PRIMARY KEY,
