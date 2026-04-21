@@ -1455,7 +1455,7 @@ export default function App() {
         api.getConfig(),
         api.getCatalog(),
         api.getAuditLog(),
-        api.getMachines(),
+        api.getMachines({ all: true }),
         api.getWishlist(),
       ]);
       if (apiOrders !== null) setOrders(numOrders(apiOrders));
@@ -1703,7 +1703,7 @@ export default function App() {
           break;
         }
         case 'service': {
-          const m = await api.getMachines();
+          const m = await api.getMachines({ all: true });
           if (m) setMachines(m);
           break;
         }

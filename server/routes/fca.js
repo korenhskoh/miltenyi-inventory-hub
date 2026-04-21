@@ -220,7 +220,11 @@ router.delete(
   }),
 );
 
-// GET /:id/statuses — all instrument statuses for a given FCA
+// GET /:id/statuses — all instrument statuses for a given FCA.
+// An instrument matches the FCA if either (a) its model field equals
+// instrument_model (case-insensitive) or (b) model is blank but the
+// instrument's name contains instrument_model. The fallback lets FCAs apply
+// to instruments whose admins haven't filled the new Model field yet.
 router.get(
   '/:id/statuses',
   asyncHandler(async (req, res) => {
@@ -228,7 +232,10 @@ router.get(
       `SELECT m.id AS machine_id, m.name, m.serial_number, m.region, m.country, m.model, m.modality,
               s.id AS status_id, s.status, s.completed_date, s.notes, s.updated_by, s.updated_at
        FROM fca_definitions d
-       JOIN machines m ON m.model = d.instrument_model
+       JOIN machines m ON (
+         (NULLIF(TRIM(m.model), '') IS NOT NULL AND LOWER(m.model) = LOWER(d.instrument_model))
+         OR (NULLIF(TRIM(m.model), '') IS NULL AND m.name ILIKE '%' || d.instrument_model || '%')
+       )
        LEFT JOIN fca_status s ON s.fca_id = d.id AND s.machine_id = m.id
        WHERE d.id = $1
        ORDER BY m.region, m.country, m.serial_number`,
@@ -242,10 +249,10 @@ router.get(
 router.get(
   '/machine/:machineId/statuses',
   asyncHandler(async (req, res) => {
-    const mRes = await query('SELECT id, model FROM machines WHERE id = $1', [req.params.machineId]);
+    const mRes = await query('SELECT id, model, name FROM machines WHERE id = $1', [req.params.machineId]);
     if (mRes.rows.length === 0) return res.status(404).json({ error: 'Instrument not found' });
-    const { id: machineId, model } = mRes.rows[0];
-    if (!model) return res.json([]);
+    const { id: machineId, model, name } = mRes.rows[0];
+    const trimmedModel = (model || '').trim();
 
     const result = await query(
       `SELECT d.id AS fca_id, d.fca_number, d.instrument_model, d.title, d.released_date,
@@ -253,9 +260,10 @@ router.get(
               s.id AS status_id, s.status, s.completed_date, s.notes, s.updated_by, s.updated_at
        FROM fca_definitions d
        LEFT JOIN fca_status s ON s.fca_id = d.id AND s.machine_id = $1
-       WHERE d.instrument_model = $2
+       WHERE (LENGTH($2) > 0 AND LOWER(d.instrument_model) = LOWER($2))
+          OR (LENGTH($2) = 0 AND $3 ILIKE '%' || d.instrument_model || '%')
        ORDER BY d.fca_number`,
-      [machineId, model],
+      [machineId, trimmedModel, name || ''],
     );
     res.json(result.rows.map(snakeToCamel));
   }),

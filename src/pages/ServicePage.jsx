@@ -1207,8 +1207,43 @@ function Registry({
   setShowModal,
   setDeleteMachine,
   setShowInstrumentFca,
+  isAdmin,
+  handleResetAll,
+  resetting,
 }) {
   const isOverseas = region === 'overseas';
+  const [showResetModal, setShowResetModal] = useState(false);
+  const [resetConfirmText, setResetConfirmText] = useState('');
+
+  // Client-side pagination. All rows are already loaded via ?all=true; we just
+  // slice for display so the table stays snappy with large datasets.
+  const [pageSize, setPageSize] = useState(() => {
+    try {
+      const saved = parseInt(localStorage.getItem('svc_pageSize'), 10);
+      return [50, 100, 200].includes(saved) ? saved : 50;
+    } catch {
+      return 50;
+    }
+  });
+  const [page, setPage] = useState(1);
+  useEffect(() => {
+    try {
+      localStorage.setItem('svc_pageSize', String(pageSize));
+    } catch {
+      /* ignore */
+    }
+  }, [pageSize]);
+  // Reset to first page whenever a filter / search / region change alters the list
+  useEffect(() => {
+    setPage(1);
+  }, [search, filterModality, filterContract, filterMaint, filterCountry, region, pageSize]);
+  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+  const safePage = Math.min(page, totalPages);
+  const pageStart = (safePage - 1) * pageSize;
+  const pagedRows = filtered.slice(pageStart, pageStart + pageSize);
+  const rangeStart = filtered.length === 0 ? 0 : pageStart + 1;
+  const rangeEnd = Math.min(filtered.length, pageStart + pagedRows.length);
+
   return (
     <div className="svc-registry">
       {/* Toolbar */}
@@ -1291,6 +1326,19 @@ function Registry({
           >
             <Upload size={14} /> Import
           </button>
+          {isAdmin && (
+            <button
+              className="svc-btn svc-btn--danger svc-btn--sm"
+              onClick={() => {
+                setResetConfirmText('');
+                setShowResetModal(true);
+              }}
+              title={`Delete all ${isOverseas ? 'overseas' : 'local'} instruments`}
+              disabled={resetting}
+            >
+              <Trash2 size={14} /> Reset
+            </button>
+          )}
           <button
             className="svc-btn svc-btn--primary svc-btn--sm"
             onClick={() => {
@@ -1303,9 +1351,27 @@ function Registry({
         </div>
       </div>
 
-      {/* Result count */}
-      <div className="svc-result-count">
-        {loading ? 'Loading\u2026' : `${filtered.length} instrument${filtered.length !== 1 ? 's' : ''} found`}
+      {/* Result count + page size */}
+      <div className="svc-result-count svc-pagination-top">
+        <span>
+          {loading
+            ? 'Loading\u2026'
+            : filtered.length === 0
+              ? 'No instruments found'
+              : `Showing ${rangeStart}-${rangeEnd} of ${filtered.length} instrument${filtered.length !== 1 ? 's' : ''}`}
+        </span>
+        <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginLeft: 'auto' }}>
+          <span>Per page</span>
+          <select
+            className="svc-select svc-select--sm"
+            value={pageSize}
+            onChange={(e) => setPageSize(parseInt(e.target.value, 10))}
+          >
+            <option value={50}>50</option>
+            <option value={100}>100</option>
+            <option value={200}>200</option>
+          </select>
+        </label>
       </div>
 
       {/* Desktop Table */}
@@ -1345,13 +1411,13 @@ function Registry({
                   </td>
                 </tr>
               ) : (
-                filtered.map((m, i) => {
+                pagedRows.map((m, i) => {
                   const cs = contractStatus(m);
                   const dl = daysLeftFromToday(m.warrantyEnd);
                   const dlClass = dl === null ? '' : dl < 0 ? 'badge-red' : dl <= 30 ? 'badge-amber' : 'badge-green';
                   return (
                     <tr key={m.id} className={cs === 'Expired' ? 'svc-row--alert' : ''}>
-                      <td className="svc-td-num">{i + 1}</td>
+                      <td className="svc-td-num">{pageStart + i + 1}</td>
                       <td>{m.country || '\u2014'}</td>
                       <td>
                         <div>{m.name || '\u2014'}</div>
@@ -1453,12 +1519,12 @@ function Registry({
                   </td>
                 </tr>
               ) : (
-                filtered.map((m, i) => {
+                pagedRows.map((m, i) => {
                   const cs = contractStatus(m);
                   const ms = maintenanceStatus(m);
                   return (
                     <tr key={m.id} className={cs === 'Expired' || ms === 'Overdue' ? 'svc-row--alert' : ''}>
-                      <td className="svc-td-num">{i + 1}</td>
+                      <td className="svc-td-num">{pageStart + i + 1}</td>
                       <td>
                         <span className="svc-mono">{m.serialNumber || '\u2014'}</span>
                       </td>
@@ -1534,14 +1600,14 @@ function Registry({
             {loading ? 'Loading instruments\u2026' : 'No instruments found. Add one to get started.'}
           </div>
         ) : (
-          filtered.map((m, i) => {
+          pagedRows.map((m, i) => {
             const cs = contractStatus(m);
             const ms = maintenanceStatus(m);
             return (
               <div key={m.id} className={`svc-mcard ${cs === 'Expired' || (!isOverseas && ms === 'Overdue') ? 'svc-mcard--alert' : ''}`}>
                 <div className="svc-mcard__head">
                   <div className="svc-mcard__title">
-                    <span className="svc-mcard__num">#{i + 1}</span>
+                    <span className="svc-mcard__num">#{pageStart + i + 1}</span>
                     <span className="svc-mcard__name">{m.name || (isOverseas ? m.country : m.modality) || 'Instrument'}</span>
                   </div>
                   <div className="svc-mcard__actions">
@@ -1647,6 +1713,88 @@ function Registry({
           })
         )}
       </div>
+
+      {/* Pagination controls */}
+      {filtered.length > pageSize && (
+        <div className="svc-pagination">
+          <button
+            type="button"
+            className="svc-btn svc-btn--ghost svc-btn--sm"
+            disabled={safePage <= 1}
+            onClick={() => setPage((p) => Math.max(1, p - 1))}
+          >
+            ‹ Prev
+          </button>
+          <span className="svc-pagination__info">
+            Page {safePage} of {totalPages}
+          </span>
+          <button
+            type="button"
+            className="svc-btn svc-btn--ghost svc-btn--sm"
+            disabled={safePage >= totalPages}
+            onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+          >
+            Next ›
+          </button>
+        </div>
+      )}
+
+      {/* Reset confirmation modal */}
+      {showResetModal && (
+        <div className="svc-modal-overlay" onClick={() => !resetting && setShowResetModal(false)}>
+          <div className="svc-modal svc-modal--sm" onClick={(e) => e.stopPropagation()}>
+            <div className="svc-modal__header">
+              <h2>Reset {isOverseas ? 'Overseas' : 'Local'} Registry</h2>
+              <button
+                type="button"
+                className="svc-icon-btn"
+                onClick={() => !resetting && setShowResetModal(false)}
+                disabled={resetting}
+              >
+                <X size={20} />
+              </button>
+            </div>
+            <div className="svc-modal__body">
+              <p style={{ color: 'var(--svc-text-muted)', marginBottom: 12, lineHeight: 1.5 }}>
+                This will permanently delete <strong>every {isOverseas ? 'overseas' : 'local'} instrument
+                </strong> and all of their FCA status records. This cannot be undone.
+              </p>
+              <p style={{ fontSize: 13, marginBottom: 8 }}>
+                Type <code>RESET</code> to confirm:
+              </p>
+              <input
+                className="svc-input"
+                value={resetConfirmText}
+                onChange={(e) => setResetConfirmText(e.target.value)}
+                placeholder="RESET"
+                autoFocus
+              />
+              <div className="svc-modal__footer">
+                <button
+                  type="button"
+                  className="svc-btn svc-btn--ghost"
+                  onClick={() => setShowResetModal(false)}
+                  disabled={resetting}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="svc-btn svc-btn--danger"
+                  disabled={resetting || resetConfirmText !== 'RESET'}
+                  onClick={async () => {
+                    await handleResetAll(region);
+                    setShowResetModal(false);
+                    setResetConfirmText('');
+                  }}
+                >
+                  {resetting ? 'Resetting…' : `Reset ${isOverseas ? 'Overseas' : 'Local'} Registry`}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -2188,9 +2336,24 @@ function FcaPage({ isAdmin, notify, fcaList, fcaLoading, reloadFcas, instrumentM
           {statusesLoading ? (
             <p style={{ color: 'var(--svc-text-muted)' }}>Loading…</p>
           ) : statuses.length === 0 ? (
-            <p style={{ color: 'var(--svc-text-muted)' }}>
-              No instruments registered with model "{selectedFca.instrumentModel}".
-            </p>
+            <div
+              style={{
+                padding: 14,
+                background: 'var(--svc-surface-2)',
+                border: '1px solid var(--svc-border)',
+                borderRadius: 8,
+                color: 'var(--svc-text-muted)',
+                fontSize: 13,
+                lineHeight: 1.5,
+              }}
+            >
+              No instruments match model <strong>"{selectedFca.instrumentModel}"</strong>.
+              <br />
+              Instruments are matched by their <strong>Instrument Model</strong> field (exact, case-insensitive)
+              or — when that field is blank — by their name containing this model text. To link existing
+              instruments, edit them and set the Instrument Model field to
+              "{selectedFca.instrumentModel}".
+            </div>
           ) : (
             <div className="svc-table-wrapper">
               <table className="svc-table">
@@ -2290,17 +2453,58 @@ export default function ServicePage({ isAdmin = false, notify, machines, setMach
   const [filterContract, setFilterContract] = useState('All');
   const [filterMaint, setFilterMaint] = useState('All');
   const [filterCountry, setFilterCountry] = useState('All');
-  const [region, setRegion] = useState('local'); // 'local' | 'overseas'
+  // Region survives refresh — otherwise overseas imports look "missing" on reload
+  const [region, setRegion] = useState(() => {
+    try {
+      const saved = localStorage.getItem('svc_region');
+      return saved === 'overseas' ? 'overseas' : 'local';
+    } catch {
+      return 'local';
+    }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem('svc_region', region);
+    } catch {
+      /* ignore quota / privacy-mode errors */
+    }
+  }, [region]);
   const [showModal, setShowModal] = useState(false);
   const [editMachine, setEditMachine] = useState(null);
   const [deleteMachine, setDeleteMachine] = useState(null);
   const [showImport, setShowImport] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [resetting, setResetting] = useState(false);
+
+  const handleResetAll = useCallback(
+    async (scopeRegion) => {
+      setResetting(true);
+      const res = await api.resetAllMachines({ region: scopeRegion });
+      setResetting(false);
+      if (res.ok) {
+        notify?.(
+          'Registry reset',
+          `${res.deleted} ${scopeRegion} instrument(s) removed`,
+          'success',
+        );
+        // Drop the deleted rows from local state and refresh summary
+        setMachines((prev) => prev.filter((m) => (m.region || 'local') !== scopeRegion));
+        const sRes = await api.getMachineSummary({ region: scopeRegion });
+        if (sRes) setSummary(sRes);
+      } else {
+        notify?.('Reset failed', res.error || 'Could not reset the registry', 'error');
+      }
+    },
+    [notify, setMachines],
+  );
 
   // Load data (region-scoped). Summary is recomputed when region changes.
   const loadData = useCallback(async () => {
     setLoading(true);
-    const [mRes, sRes] = await Promise.all([api.getMachines(), api.getMachineSummary({ region })]);
+    const [mRes, sRes] = await Promise.all([
+      api.getMachines({ all: true }),
+      api.getMachineSummary({ region }),
+    ]);
     if (mRes) setMachines(mRes);
     if (sRes) setSummary(sRes);
     setLoading(false);
@@ -2583,6 +2787,9 @@ export default function ServicePage({ isAdmin = false, notify, machines, setMach
             setShowModal={setShowModal}
             setDeleteMachine={setDeleteMachine}
             setShowInstrumentFca={setShowInstrumentFca}
+            isAdmin={isAdmin}
+            handleResetAll={handleResetAll}
+            resetting={resetting}
           />
         )}
 
@@ -2853,6 +3060,13 @@ const SERVICE_CSS = `
 .svc-filter-group { display: flex; align-items: center; gap: 4px; color: var(--svc-text-subtle); }
 .svc-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .svc-result-count { font-size: 12px; color: var(--svc-text-muted); margin-bottom: 10px; }
+.svc-pagination-top { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.svc-pagination-top label { font-size: 12px; color: var(--svc-text-muted); }
+.svc-pagination {
+  display: flex; align-items: center; justify-content: center;
+  gap: 10px; margin-top: 14px;
+}
+.svc-pagination__info { font-size: 12px; color: var(--svc-text-muted); min-width: 120px; text-align: center; }
 
 /* Table */
 .svc-table-wrapper { overflow-x: auto; border-radius: 10px; border: 1px solid var(--svc-border); }

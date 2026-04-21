@@ -713,6 +713,29 @@ async function deleteMachine(id) {
   }
 }
 
+// Admin-only: wipe the entire instrument registry. Pass { region } to scope
+// the reset to just local or overseas instruments.
+async function resetAllMachines(filters = {}) {
+  try {
+    const params = new URLSearchParams();
+    for (const [k, v] of Object.entries(filters)) {
+      if (v !== '' && v !== null && v !== undefined && v !== 'All') params.append(k, v);
+    }
+    const qs = params.toString();
+    const res = handleResponse(
+      await fetch(`${BASE}/api/machines/all${qs ? `?${qs}` : ''}`, {
+        method: 'DELETE',
+        headers: authHeadersGet(),
+      }),
+    );
+    const data = await res.json();
+    if (!res.ok) return { ok: false, error: data.error || `HTTP ${res.status}` };
+    return { ok: true, deleted: data.deleted };
+  } catch (err) {
+    return { ok: false, error: err.message || 'Network error' };
+  }
+}
+
 async function bulkImportMachines(machines) {
   try {
     const res = handleResponse(
@@ -1131,6 +1154,7 @@ const api = {
   createMachine,
   updateMachine,
   deleteMachine,
+  resetAllMachines,
   bulkImportMachines,
   getFcaList,
   getFcaSummary,
