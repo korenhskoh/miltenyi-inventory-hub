@@ -43,8 +43,9 @@ const PORT = process.env.PORT || 3001;
 // Security Middleware
 app.use(helmet({ contentSecurityPolicy: false })); // CSP off for SPA inline styles
 if (process.env.NODE_ENV === 'production' && !process.env.FRONTEND_URL) {
-  logger.error('FATAL: FRONTEND_URL must be set in production (CORS allowlist)');
-  process.exit(1);
+  logger.warn(
+    'SECURITY: FRONTEND_URL is not set — CORS is falling back to reflecting the request origin (any origin allowed). Set FRONTEND_URL to lock down CORS.',
+  );
 }
 app.use(
   cors({
