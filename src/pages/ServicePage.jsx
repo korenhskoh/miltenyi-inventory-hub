@@ -1209,6 +1209,36 @@ function Registry({
   setShowInstrumentFca,
 }) {
   const isOverseas = region === 'overseas';
+
+  // Client-side pagination. All rows are already loaded via ?all=true; we just
+  // slice for display so the table stays snappy with large datasets.
+  const [pageSize, setPageSize] = useState(() => {
+    try {
+      const saved = parseInt(localStorage.getItem('svc_pageSize'), 10);
+      return [50, 100, 200].includes(saved) ? saved : 50;
+    } catch {
+      return 50;
+    }
+  });
+  const [page, setPage] = useState(1);
+  useEffect(() => {
+    try {
+      localStorage.setItem('svc_pageSize', String(pageSize));
+    } catch {
+      /* ignore */
+    }
+  }, [pageSize]);
+  // Reset to first page whenever a filter / search / region change alters the list
+  useEffect(() => {
+    setPage(1);
+  }, [search, filterModality, filterContract, filterMaint, filterCountry, region, pageSize]);
+  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+  const safePage = Math.min(page, totalPages);
+  const pageStart = (safePage - 1) * pageSize;
+  const pagedRows = filtered.slice(pageStart, pageStart + pageSize);
+  const rangeStart = filtered.length === 0 ? 0 : pageStart + 1;
+  const rangeEnd = Math.min(filtered.length, pageStart + pagedRows.length);
+
   return (
     <div className="svc-registry">
       {/* Toolbar */}
@@ -1303,9 +1333,27 @@ function Registry({
         </div>
       </div>
 
-      {/* Result count */}
-      <div className="svc-result-count">
-        {loading ? 'Loading\u2026' : `${filtered.length} instrument${filtered.length !== 1 ? 's' : ''} found`}
+      {/* Result count + page size */}
+      <div className="svc-result-count svc-pagination-top">
+        <span>
+          {loading
+            ? 'Loading\u2026'
+            : filtered.length === 0
+              ? 'No instruments found'
+              : `Showing ${rangeStart}-${rangeEnd} of ${filtered.length} instrument${filtered.length !== 1 ? 's' : ''}`}
+        </span>
+        <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginLeft: 'auto' }}>
+          <span>Per page</span>
+          <select
+            className="svc-select svc-select--sm"
+            value={pageSize}
+            onChange={(e) => setPageSize(parseInt(e.target.value, 10))}
+          >
+            <option value={50}>50</option>
+            <option value={100}>100</option>
+            <option value={200}>200</option>
+          </select>
+        </label>
       </div>
 
       {/* Desktop Table */}
@@ -1345,13 +1393,13 @@ function Registry({
                   </td>
                 </tr>
               ) : (
-                filtered.map((m, i) => {
+                pagedRows.map((m, i) => {
                   const cs = contractStatus(m);
                   const dl = daysLeftFromToday(m.warrantyEnd);
                   const dlClass = dl === null ? '' : dl < 0 ? 'badge-red' : dl <= 30 ? 'badge-amber' : 'badge-green';
                   return (
                     <tr key={m.id} className={cs === 'Expired' ? 'svc-row--alert' : ''}>
-                      <td className="svc-td-num">{i + 1}</td>
+                      <td className="svc-td-num">{pageStart + i + 1}</td>
                       <td>{m.country || '\u2014'}</td>
                       <td>
                         <div>{m.name || '\u2014'}</div>
@@ -1453,12 +1501,12 @@ function Registry({
                   </td>
                 </tr>
               ) : (
-                filtered.map((m, i) => {
+                pagedRows.map((m, i) => {
                   const cs = contractStatus(m);
                   const ms = maintenanceStatus(m);
                   return (
                     <tr key={m.id} className={cs === 'Expired' || ms === 'Overdue' ? 'svc-row--alert' : ''}>
-                      <td className="svc-td-num">{i + 1}</td>
+                      <td className="svc-td-num">{pageStart + i + 1}</td>
                       <td>
                         <span className="svc-mono">{m.serialNumber || '\u2014'}</span>
                       </td>
@@ -1534,14 +1582,14 @@ function Registry({
             {loading ? 'Loading instruments\u2026' : 'No instruments found. Add one to get started.'}
           </div>
         ) : (
-          filtered.map((m, i) => {
+          pagedRows.map((m, i) => {
             const cs = contractStatus(m);
             const ms = maintenanceStatus(m);
             return (
               <div key={m.id} className={`svc-mcard ${cs === 'Expired' || (!isOverseas && ms === 'Overdue') ? 'svc-mcard--alert' : ''}`}>
                 <div className="svc-mcard__head">
                   <div className="svc-mcard__title">
-                    <span className="svc-mcard__num">#{i + 1}</span>
+                    <span className="svc-mcard__num">#{pageStart + i + 1}</span>
                     <span className="svc-mcard__name">{m.name || (isOverseas ? m.country : m.modality) || 'Instrument'}</span>
                   </div>
                   <div className="svc-mcard__actions">
@@ -1647,6 +1695,31 @@ function Registry({
           })
         )}
       </div>
+
+      {/* Pagination controls */}
+      {filtered.length > pageSize && (
+        <div className="svc-pagination">
+          <button
+            type="button"
+            className="svc-btn svc-btn--ghost svc-btn--sm"
+            disabled={safePage <= 1}
+            onClick={() => setPage((p) => Math.max(1, p - 1))}
+          >
+            ‹ Prev
+          </button>
+          <span className="svc-pagination__info">
+            Page {safePage} of {totalPages}
+          </span>
+          <button
+            type="button"
+            className="svc-btn svc-btn--ghost svc-btn--sm"
+            disabled={safePage >= totalPages}
+            onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+          >
+            Next ›
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -2886,6 +2959,13 @@ const SERVICE_CSS = `
 .svc-filter-group { display: flex; align-items: center; gap: 4px; color: var(--svc-text-subtle); }
 .svc-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .svc-result-count { font-size: 12px; color: var(--svc-text-muted); margin-bottom: 10px; }
+.svc-pagination-top { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.svc-pagination-top label { font-size: 12px; color: var(--svc-text-muted); }
+.svc-pagination {
+  display: flex; align-items: center; justify-content: center;
+  gap: 10px; margin-top: 14px;
+}
+.svc-pagination__info { font-size: 12px; color: var(--svc-text-muted); min-width: 120px; text-align: center; }
 
 /* Table */
 .svc-table-wrapper { overflow-x: auto; border-radius: 10px; border: 1px solid var(--svc-border); }
