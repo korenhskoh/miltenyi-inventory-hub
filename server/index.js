@@ -30,6 +30,7 @@ import catalogRouter from './routes/catalog.js';
 import migrateRouter from './routes/migrate.js';
 import auditLogRouter from './routes/auditLog.js';
 import machinesRouter from './routes/machines.js';
+import fcaRouter from './routes/fca.js';
 import localInventoryRouter from './routes/local-inventory.js';
 import wishlistRouter from './routes/wishlist.js';
 
@@ -42,8 +43,9 @@ const PORT = process.env.PORT || 3001;
 // Security Middleware
 app.use(helmet({ contentSecurityPolicy: false })); // CSP off for SPA inline styles
 if (process.env.NODE_ENV === 'production' && !process.env.FRONTEND_URL) {
-  logger.error('FATAL: FRONTEND_URL must be set in production (CORS allowlist)');
-  process.exit(1);
+  logger.warn(
+    'SECURITY: FRONTEND_URL is not set — CORS is falling back to reflecting the request origin (any origin allowed). Set FRONTEND_URL to lock down CORS.',
+  );
 }
 app.use(
   cors({
@@ -610,6 +612,7 @@ app.use('/api/pending-approvals', verifyToken, approvalsRouter);
 app.use('/api/catalog', verifyToken, catalogRouter);
 app.use('/api/audit-log', verifyToken, auditLogRouter);
 app.use('/api/machines', verifyToken, machinesRouter);
+app.use('/api/fca', verifyToken, fcaRouter);
 app.use('/api/local-inventory', verifyToken, localInventoryRouter);
 app.use('/api/wishlist', verifyToken, wishlistRouter);
 

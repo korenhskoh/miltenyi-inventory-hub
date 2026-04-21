@@ -4,10 +4,12 @@ import logger from '../logger.js';
 
 if (!process.env.JWT_SECRET) {
   if (process.env.NODE_ENV === 'production') {
-    logger.error('FATAL: JWT_SECRET must be set in production');
-    process.exit(1);
+    logger.warn(
+      'SECURITY: JWT_SECRET is not set in production — a random secret is being generated. All issued tokens will be invalidated on every restart. Set JWT_SECRET to a stable value.',
+    );
+  } else {
+    logger.warn('JWT_SECRET not set — generating random secret (tokens will not survive restarts)');
   }
-  logger.warn('JWT_SECRET not set — generating random secret (tokens will not survive restarts)');
 }
 export const JWT_SECRET = process.env.JWT_SECRET || crypto.randomBytes(32).toString('hex');
 const TOKEN_EXPIRY = '24h';

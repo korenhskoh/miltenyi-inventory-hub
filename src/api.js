@@ -729,6 +729,133 @@ async function bulkImportMachines(machines) {
   }
 }
 
+// ─── FCA (Field Change Actions) ───
+
+async function getFcaList(filters = {}) {
+  try {
+    const params = new URLSearchParams();
+    for (const [k, v] of Object.entries(filters)) {
+      if (v !== '' && v !== null && v !== undefined && v !== 'All') params.append(k, v);
+    }
+    const qs = params.toString();
+    const res = handleResponse(
+      await fetch(`${BASE}/api/fca${qs ? `?${qs}` : ''}`, { headers: authHeadersGet() }),
+    );
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
+async function getFcaSummary() {
+  try {
+    const res = handleResponse(await fetch(`${BASE}/api/fca/summary`, { headers: authHeadersGet() }));
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
+async function createFca(payload) {
+  try {
+    const res = handleResponse(
+      await fetch(`${BASE}/api/fca`, {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify(payload),
+      }),
+    );
+    const data = await res.json();
+    if (!res.ok) return { ok: false, error: data.error || `HTTP ${res.status}` };
+    return { ok: true, fca: data };
+  } catch (err) {
+    return { ok: false, error: err.message || 'Network error' };
+  }
+}
+
+async function updateFca(id, updates) {
+  try {
+    const res = handleResponse(
+      await fetch(`${BASE}/api/fca/${id}`, {
+        method: 'PUT',
+        headers: authHeaders(),
+        body: JSON.stringify(updates),
+      }),
+    );
+    const data = await res.json();
+    if (!res.ok) return { ok: false, error: data.error || `HTTP ${res.status}` };
+    return { ok: true, fca: data };
+  } catch (err) {
+    return { ok: false, error: err.message || 'Network error' };
+  }
+}
+
+async function deleteFca(id) {
+  try {
+    const res = handleResponse(
+      await fetch(`${BASE}/api/fca/${id}`, { method: 'DELETE', headers: authHeadersGet() }),
+    );
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+// Fetch PDF as blob URL so it can be opened in a new tab / <iframe src>
+async function fetchFcaPdfBlobUrl(id) {
+  try {
+    const res = await fetch(`${BASE}/api/fca/${id}/pdf`, { headers: authHeadersGet() });
+    if (!res.ok) return null;
+    const blob = await res.blob();
+    return URL.createObjectURL(blob);
+  } catch {
+    return null;
+  }
+}
+
+async function getFcaStatusesForFca(fcaId) {
+  try {
+    const res = handleResponse(
+      await fetch(`${BASE}/api/fca/${fcaId}/statuses`, { headers: authHeadersGet() }),
+    );
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
+async function getFcaStatusesForMachine(machineId) {
+  try {
+    const res = handleResponse(
+      await fetch(`${BASE}/api/fca/machine/${machineId}/statuses`, { headers: authHeadersGet() }),
+    );
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
+async function upsertFcaStatus(payload) {
+  try {
+    const res = handleResponse(
+      await fetch(`${BASE}/api/fca/status`, {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify(payload),
+      }),
+    );
+    const data = await res.json();
+    if (!res.ok) return { ok: false, error: data.error || `HTTP ${res.status}` };
+    return { ok: true, status: data };
+  } catch (err) {
+    return { ok: false, error: err.message || 'Network error' };
+  }
+}
+
 async function sendEmail({ to, subject, html, smtp, attachments }) {
   try {
     const res = handleResponse(
@@ -1005,6 +1132,15 @@ const api = {
   updateMachine,
   deleteMachine,
   bulkImportMachines,
+  getFcaList,
+  getFcaSummary,
+  createFca,
+  updateFca,
+  deleteFca,
+  fetchFcaPdfBlobUrl,
+  getFcaStatusesForFca,
+  getFcaStatusesForMachine,
+  upsertFcaStatus,
   sendEmail,
   getLocalInventory,
   getLocalInventorySummary,
