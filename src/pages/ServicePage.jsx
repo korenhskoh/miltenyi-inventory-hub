@@ -19,6 +19,9 @@ import {
   Filter,
   Globe,
   Home,
+  FileText,
+  ShieldAlert,
+  ExternalLink,
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import api from '../api.js';
@@ -165,6 +168,7 @@ const EMPTY_MACHINE = {
   region: 'local',
   name: '',
   serialNumber: '',
+  model: '',
   modality: '',
   location: '',
   customerName: '',
@@ -266,6 +270,15 @@ function MachineModal({ machine, region, onSave, onClose, saving }) {
                 value={form.serialNumber}
                 onChange={(e) => set('serialNumber', e.target.value)}
                 placeholder="e.g. SN-20250001"
+              />
+            </Field>
+            <Field label="Instrument Model">
+              <input
+                className="svc-input"
+                value={form.model}
+                onChange={(e) => set('model', e.target.value)}
+                placeholder="e.g. Prodigy, MACSQUANT 10"
+                list="svc-instrument-models"
               />
             </Field>
             <Field label="Modality" required={!isOverseas}>
@@ -607,6 +620,7 @@ const IMPORT_COLUMNS_LOCAL = [
     label: 'Serial Number',
     aliases: ['serial no', 'serial', 'sn', 'serialno', 'serialnumber'],
   },
+  { key: 'model', label: 'Model', aliases: ['instrument model', 'machine model', 'device model'] },
   { key: 'modality', label: 'Modality', aliases: ['type', 'category', 'device type', 'instrument type'] },
   { key: 'location', label: 'Location', aliases: ['site', 'lab', 'room', 'building'] },
   {
@@ -666,6 +680,7 @@ const IMPORT_COLUMNS_OVERSEAS = [
     label: 'SN',
     aliases: ['serial', 'serial no', 'serial number', 'serialno', 'serialnumber'],
   },
+  { key: 'model', label: 'Model', aliases: ['instrument model', 'machine model', 'device model'] },
   { key: 'location', label: 'Location', aliases: ['site', 'lab', 'room', 'building'] },
   { key: 'deliveryDate', label: 'Delivery Date', aliases: ['delivery', 'delivered', 'ship date', 'shipped'] },
   {
@@ -1056,6 +1071,7 @@ function Registry({
   setEditMachine,
   setShowModal,
   setDeleteMachine,
+  setShowInstrumentFca,
 }) {
   const isOverseas = region === 'overseas';
   return (
@@ -1242,6 +1258,13 @@ function Registry({
                       <td>
                         <div className="svc-row-actions">
                           <button
+                            className="svc-icon-btn"
+                            title="FCA Status"
+                            onClick={() => setShowInstrumentFca?.(m)}
+                          >
+                            <ShieldAlert size={14} />
+                          </button>
+                          <button
                             className="svc-icon-btn svc-icon-btn--edit"
                             title="Edit"
                             onClick={() => {
@@ -1335,6 +1358,13 @@ function Registry({
                       <td>
                         <div className="svc-row-actions">
                           <button
+                            className="svc-icon-btn"
+                            title="FCA Status"
+                            onClick={() => setShowInstrumentFca?.(m)}
+                          >
+                            <ShieldAlert size={14} />
+                          </button>
+                          <button
                             className="svc-icon-btn svc-icon-btn--edit"
                             title="Edit"
                             onClick={() => {
@@ -1380,6 +1410,13 @@ function Registry({
                     <span className="svc-mcard__name">{m.name || (isOverseas ? m.country : m.modality) || 'Instrument'}</span>
                   </div>
                   <div className="svc-mcard__actions">
+                    <button
+                      className="svc-icon-btn"
+                      title="FCA Status"
+                      onClick={() => setShowInstrumentFca?.(m)}
+                    >
+                      <ShieldAlert size={15} />
+                    </button>
                     <button
                       className="svc-icon-btn svc-icon-btn--edit"
                       onClick={() => {
@@ -1479,12 +1516,640 @@ function Registry({
   );
 }
 
+// ─── FCA (Field Change Actions) ──────────────────────────────────────────────
+
+const FCA_STATUSES = ['Not Applicable', 'Pending', 'In Progress', 'Completed'];
+
+function fcaStatusBadgeClass(status) {
+  switch (status) {
+    case 'Completed':
+      return 'badge-green';
+    case 'In Progress':
+      return 'badge-amber';
+    case 'Not Applicable':
+      return 'badge-gray';
+    case 'Pending':
+    default:
+      return 'badge-red';
+  }
+}
+
+// Convert a File to base64 (chunked to avoid stack overflow on large files)
+async function fileToBase64(file) {
+  const buf = await file.arrayBuffer();
+  const bytes = new Uint8Array(buf);
+  const chunk = 0x8000;
+  let binary = '';
+  for (let i = 0; i < bytes.length; i += chunk) {
+    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+  }
+  return btoa(binary);
+}
+
+function FcaEditModal({ fca, onSave, onClose, saving }) {
+  const [form, setForm] = useState(() => ({
+    fcaNumber: fca?.fcaNumber ?? '',
+    instrumentModel: fca?.instrumentModel || '',
+    title: fca?.title || '',
+    description: fca?.description || '',
+    releasedDate: fca?.releasedDate ? String(fca.releasedDate).slice(0, 10) : '',
+    pdfFile: null,
+    pdfFilename: fca?.pdfFilename || '',
+    hasPdf: !!fca?.hasPdf,
+  }));
+  const [fileErr, setFileErr] = useState('');
+  const set = (k, v) => setForm((p) => ({ ...p, [k]: v }));
+
+  const handleFileChange = (e) => {
+    setFileErr('');
+    const f = e.target.files?.[0] || null;
+    if (!f) {
+      set('pdfFile', null);
+      return;
+    }
+    if (f.type !== 'application/pdf' && !/\.pdf$/i.test(f.name)) {
+      setFileErr('Only PDF files are allowed');
+      set('pdfFile', null);
+      return;
+    }
+    if (f.size > 10 * 1024 * 1024) {
+      setFileErr('PDF exceeds 10MB limit');
+      set('pdfFile', null);
+      return;
+    }
+    set('pdfFile', f);
+  };
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    if (fileErr) return;
+    const payload = {
+      fcaNumber: Number(form.fcaNumber),
+      instrumentModel: form.instrumentModel.trim(),
+      title: form.title.trim(),
+      description: form.description,
+      releasedDate: form.releasedDate || null,
+    };
+    if (form.pdfFile) {
+      payload.pdfBase64 = await fileToBase64(form.pdfFile);
+      payload.pdfFilename = form.pdfFile.name;
+    }
+    onSave(payload);
+  };
+
+  return (
+    <div className="svc-modal-overlay" onClick={onClose}>
+      <div className="svc-modal" onClick={(e) => e.stopPropagation()}>
+        <div className="svc-modal__header">
+          <h2>{fca ? `Edit FCA ${fca.fcaNumber}` : 'Add FCA'}</h2>
+          <button type="button" className="svc-icon-btn" onClick={onClose}>
+            <X size={20} />
+          </button>
+        </div>
+        <form onSubmit={handleSubmit} className="svc-modal__body">
+          <div className="svc-grid-2">
+            <Field label="FCA Number" required>
+              <input
+                type="number"
+                min="1"
+                className="svc-input"
+                value={form.fcaNumber}
+                onChange={(e) => set('fcaNumber', e.target.value)}
+                required
+              />
+            </Field>
+            <Field label="Instrument Model" required>
+              <input
+                className="svc-input"
+                value={form.instrumentModel}
+                onChange={(e) => set('instrumentModel', e.target.value)}
+                placeholder="e.g. Prodigy, MACSQUANT 10"
+                list="svc-instrument-models"
+                required
+              />
+            </Field>
+            <Field label="Released Date">
+              <input
+                type="date"
+                className="svc-input"
+                value={form.releasedDate}
+                onChange={(e) => set('releasedDate', e.target.value)}
+              />
+            </Field>
+          </div>
+          <Field label="Title">
+            <input
+              className="svc-input"
+              value={form.title}
+              onChange={(e) => set('title', e.target.value)}
+              placeholder="Short summary of the FCA"
+            />
+          </Field>
+          <Field label="Description">
+            <textarea
+              className="svc-textarea"
+              rows={4}
+              value={form.description}
+              onChange={(e) => set('description', e.target.value)}
+            />
+          </Field>
+          <Field label={form.hasPdf ? 'Replace PDF (optional, 10MB max)' : 'PDF (optional, 10MB max)'}>
+            <input type="file" accept="application/pdf,.pdf" className="svc-input" onChange={handleFileChange} />
+            {fileErr && <div style={{ fontSize: 12, color: '#f87171', marginTop: 4 }}>{fileErr}</div>}
+            {form.hasPdf && !form.pdfFile && !fileErr && (
+              <div style={{ fontSize: 12, color: 'var(--svc-text-subtle)', marginTop: 4 }}>
+                Current: {form.pdfFilename || 'uploaded PDF'} — leave blank to keep.
+              </div>
+            )}
+          </Field>
+          <div className="svc-modal__footer">
+            <button type="button" className="svc-btn svc-btn--ghost" onClick={onClose}>
+              Cancel
+            </button>
+            <button type="submit" className="svc-btn svc-btn--primary" disabled={saving || !!fileErr}>
+              {saving ? 'Saving...' : fca ? 'Save Changes' : 'Create FCA'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+function InstrumentFcaStatusModal({ machine, onClose, notify }) {
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      const data = await api.getFcaStatusesForMachine(machine.id);
+      if (!cancelled) {
+        setRows(data || []);
+        setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [machine.id]);
+
+  const updateRow = async (row, patch) => {
+    const next = { ...row, ...patch };
+    setRows((prev) => prev.map((r) => (r.fcaId === row.fcaId ? next : r)));
+    const res = await api.upsertFcaStatus({
+      fcaId: row.fcaId,
+      machineId: machine.id,
+      status: next.status || 'Pending',
+      completedDate: next.completedDate || null,
+      notes: next.notes || null,
+    });
+    if (!res.ok) {
+      notify?.('Update failed', res.error || 'Could not save FCA status', 'error');
+    }
+  };
+
+  const openPdf = async (fcaId) => {
+    const url = await api.fetchFcaPdfBlobUrl(fcaId);
+    if (!url) {
+      notify?.('PDF unavailable', 'Could not load PDF.', 'error');
+      return;
+    }
+    window.open(url, '_blank', 'noopener');
+  };
+
+  return (
+    <div className="svc-modal-overlay" onClick={onClose}>
+      <div className="svc-modal svc-modal--lg" onClick={(e) => e.stopPropagation()}>
+        <div className="svc-modal__header">
+          <h2>
+            FCA Status — {machine.name || machine.serialNumber}
+            {machine.model ? ` (${machine.model})` : ''}
+          </h2>
+          <button type="button" className="svc-icon-btn" onClick={onClose}>
+            <X size={20} />
+          </button>
+        </div>
+        <div className="svc-modal__body">
+          {!machine.model ? (
+            <p style={{ color: 'var(--svc-text-muted)' }}>
+              This instrument has no Model set. Edit the instrument and fill in the Instrument Model to match FCAs.
+            </p>
+          ) : loading ? (
+            <p style={{ color: 'var(--svc-text-muted)' }}>Loading FCA list…</p>
+          ) : rows.length === 0 ? (
+            <p style={{ color: 'var(--svc-text-muted)' }}>No FCAs defined for model "{machine.model}".</p>
+          ) : (
+            <div className="svc-table-wrapper">
+              <table className="svc-table">
+                <thead>
+                  <tr>
+                    <th>FCA</th>
+                    <th>Title</th>
+                    <th>Status</th>
+                    <th>Completed</th>
+                    <th>Notes</th>
+                    <th>PDF</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((r) => (
+                    <tr key={r.fcaId}>
+                      <td>
+                        <strong>FCA {r.fcaNumber}</strong>
+                      </td>
+                      <td className="svc-remark" title={r.title || ''}>
+                        {r.title || '—'}
+                      </td>
+                      <td>
+                        <select
+                          className="svc-select svc-select--sm"
+                          value={r.status || 'Pending'}
+                          onChange={(e) => updateRow(r, { status: e.target.value })}
+                        >
+                          {FCA_STATUSES.map((s) => (
+                            <option key={s} value={s}>
+                              {s}
+                            </option>
+                          ))}
+                        </select>
+                      </td>
+                      <td>
+                        <input
+                          type="date"
+                          className="svc-input"
+                          value={r.completedDate ? String(r.completedDate).slice(0, 10) : ''}
+                          onChange={(e) => updateRow(r, { completedDate: e.target.value || null })}
+                        />
+                      </td>
+                      <td>
+                        <input
+                          className="svc-input"
+                          value={r.notes || ''}
+                          placeholder="Optional notes"
+                          onBlur={(e) => {
+                            if ((e.target.value || '') !== (r.notes || '')) {
+                              updateRow(r, { notes: e.target.value });
+                            }
+                          }}
+                          onChange={(e) =>
+                            setRows((prev) => prev.map((x) => (x.fcaId === r.fcaId ? { ...x, notes: e.target.value } : x)))
+                          }
+                        />
+                      </td>
+                      <td>
+                        {r.hasPdf ? (
+                          <button
+                            type="button"
+                            className="svc-btn svc-btn--ghost svc-btn--sm"
+                            onClick={() => openPdf(r.fcaId)}
+                          >
+                            <FileText size={13} /> View
+                          </button>
+                        ) : (
+                          <span style={{ color: 'var(--svc-text-subtle)', fontSize: 12 }}>—</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function FcaPage({ isAdmin, notify, fcaList, fcaLoading, reloadFcas, instrumentModels }) {
+  const [selectedModel, setSelectedModel] = useState('');
+  const [selectedFca, setSelectedFca] = useState(null);
+  const [statuses, setStatuses] = useState([]);
+  const [statusesLoading, setStatusesLoading] = useState(false);
+  const [showEdit, setShowEdit] = useState(false);
+  const [editFca, setEditFca] = useState(null);
+  const [saving, setSaving] = useState(false);
+
+  const models = useMemo(
+    () => [...new Set([...fcaList.map((f) => f.instrumentModel), ...instrumentModels])].filter(Boolean).sort(),
+    [fcaList, instrumentModels],
+  );
+
+  useEffect(() => {
+    if (!selectedModel && models.length > 0) setSelectedModel(models[0]);
+  }, [models, selectedModel]);
+
+  const fcasForModel = useMemo(
+    () =>
+      fcaList
+        .filter((f) => f.instrumentModel === selectedModel)
+        .slice()
+        .sort((a, b) => a.fcaNumber - b.fcaNumber),
+    [fcaList, selectedModel],
+  );
+
+  const openFcaDetail = useCallback(async (fca) => {
+    setSelectedFca(fca);
+    setStatusesLoading(true);
+    const rows = await api.getFcaStatusesForFca(fca.id);
+    setStatuses(rows || []);
+    setStatusesLoading(false);
+  }, []);
+
+  const openPdf = async (fcaId) => {
+    const url = await api.fetchFcaPdfBlobUrl(fcaId);
+    if (!url) {
+      notify?.('PDF unavailable', 'Could not load PDF.', 'error');
+      return;
+    }
+    window.open(url, '_blank', 'noopener');
+  };
+
+  const handleSave = async (payload) => {
+    setSaving(true);
+    const res = editFca ? await api.updateFca(editFca.id, payload) : await api.createFca(payload);
+    setSaving(false);
+    if (res.ok) {
+      notify?.(editFca ? 'FCA updated' : 'FCA created', `FCA ${res.fca.fcaNumber} saved`, 'success');
+      setShowEdit(false);
+      setEditFca(null);
+      await reloadFcas();
+      if (selectedFca && editFca && selectedFca.id === editFca.id) {
+        setSelectedFca(res.fca);
+      }
+    } else {
+      notify?.('Save failed', res.error || 'Unable to save FCA', 'error');
+    }
+  };
+
+  const handleDelete = async (fca) => {
+    if (!window.confirm(`Delete FCA ${fca.fcaNumber} (${fca.instrumentModel})? This also removes all instrument status records.`)) {
+      return;
+    }
+    const ok = await api.deleteFca(fca.id);
+    if (ok) {
+      notify?.('Deleted', `FCA ${fca.fcaNumber} removed`, 'success');
+      await reloadFcas();
+      if (selectedFca?.id === fca.id) {
+        setSelectedFca(null);
+        setStatuses([]);
+      }
+    } else {
+      notify?.('Delete failed', 'Could not delete FCA', 'error');
+    }
+  };
+
+  const handleStatusChange = async (row, patch) => {
+    if (!selectedFca) return;
+    const next = { ...row, ...patch };
+    setStatuses((prev) => prev.map((r) => (r.machineId === row.machineId ? next : r)));
+    const res = await api.upsertFcaStatus({
+      fcaId: selectedFca.id,
+      machineId: row.machineId,
+      status: next.status || 'Pending',
+      completedDate: next.completedDate || null,
+      notes: next.notes || null,
+    });
+    if (!res.ok) {
+      notify?.('Update failed', res.error || 'Unable to update status', 'error');
+    }
+  };
+
+  // Per-FCA completion roll-up
+  const getRollup = (fca) => {
+    const forThis = statuses.filter((s) => s.machineId && selectedFca?.id === fca.id);
+    if (!forThis.length) return null;
+    const done = forThis.filter((s) => s.status === 'Completed').length;
+    return `${done}/${forThis.length}`;
+  };
+
+  return (
+    <div className="svc-fca">
+      <div className="svc-fca__toolbar">
+        <div className="svc-filter-group">
+          <Filter size={13} />
+          <select
+            className="svc-select svc-select--sm"
+            value={selectedModel}
+            onChange={(e) => {
+              setSelectedModel(e.target.value);
+              setSelectedFca(null);
+              setStatuses([]);
+            }}
+          >
+            {models.length === 0 && <option value="">No FCAs yet</option>}
+            {models.map((m) => (
+              <option key={m} value={m}>
+                {m}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div style={{ color: 'var(--svc-text-muted)', fontSize: 12 }}>
+          {fcaLoading
+            ? 'Loading FCAs…'
+            : `${fcasForModel.length} FCA${fcasForModel.length !== 1 ? 's' : ''} for ${selectedModel || '—'}`}
+        </div>
+        <div style={{ marginLeft: 'auto' }}>
+          {isAdmin && (
+            <button
+              type="button"
+              className="svc-btn svc-btn--primary svc-btn--sm"
+              onClick={() => {
+                setEditFca(null);
+                setShowEdit(true);
+              }}
+            >
+              <Plus size={14} /> Add FCA
+            </button>
+          )}
+        </div>
+      </div>
+
+      <div className="svc-fca__grid">
+        {fcasForModel.map((f) => {
+          const active = selectedFca?.id === f.id;
+          return (
+            <button
+              type="button"
+              key={f.id}
+              className={`svc-fca-card ${active ? 'active' : ''}`}
+              onClick={() => openFcaDetail(f)}
+            >
+              <div className="svc-fca-card__num">FCA {f.fcaNumber}</div>
+              <div className="svc-fca-card__title">{f.title || '(untitled)'}</div>
+              <div className="svc-fca-card__meta">
+                {f.hasPdf ? (
+                  <span className="svc-badge badge-green">
+                    <FileText size={11} /> PDF
+                  </span>
+                ) : (
+                  <span className="svc-badge badge-gray">No PDF</span>
+                )}
+                {f.releasedDate && (
+                  <span className="svc-fca-card__date">{fmtDate(f.releasedDate)}</span>
+                )}
+              </div>
+            </button>
+          );
+        })}
+        {!fcaLoading && fcasForModel.length === 0 && (
+          <div className="svc-fca__empty">
+            No FCAs for {selectedModel || 'this model'}.
+            {isAdmin && ' Click "Add FCA" to create one.'}
+          </div>
+        )}
+      </div>
+
+      {selectedFca && (
+        <div className="svc-fca__detail">
+          <div className="svc-fca__detail-head">
+            <div>
+              <h3>FCA {selectedFca.fcaNumber} — {selectedFca.instrumentModel}</h3>
+              {selectedFca.title && <div className="svc-fca__detail-title">{selectedFca.title}</div>}
+              {selectedFca.releasedDate && (
+                <div className="svc-sub-text">Released {fmtDate(selectedFca.releasedDate)}</div>
+              )}
+            </div>
+            <div className="svc-fca__detail-actions">
+              {selectedFca.hasPdf && (
+                <button type="button" className="svc-btn svc-btn--ghost svc-btn--sm" onClick={() => openPdf(selectedFca.id)}>
+                  <ExternalLink size={13} /> Open PDF
+                </button>
+              )}
+              {isAdmin && (
+                <>
+                  <button
+                    type="button"
+                    className="svc-btn svc-btn--ghost svc-btn--sm"
+                    onClick={() => {
+                      setEditFca(selectedFca);
+                      setShowEdit(true);
+                    }}
+                  >
+                    <Edit3 size={13} /> Edit
+                  </button>
+                  <button
+                    type="button"
+                    className="svc-btn svc-btn--danger svc-btn--sm"
+                    onClick={() => handleDelete(selectedFca)}
+                  >
+                    <Trash2 size={13} /> Delete
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+
+          {selectedFca.description && (
+            <p className="svc-fca__detail-desc">{selectedFca.description}</p>
+          )}
+
+          <h4 className="svc-section-heading" style={{ marginTop: 16 }}>
+            Instrument Status ({statuses.length})
+          </h4>
+          {statusesLoading ? (
+            <p style={{ color: 'var(--svc-text-muted)' }}>Loading…</p>
+          ) : statuses.length === 0 ? (
+            <p style={{ color: 'var(--svc-text-muted)' }}>
+              No instruments registered with model "{selectedFca.instrumentModel}".
+            </p>
+          ) : (
+            <div className="svc-table-wrapper">
+              <table className="svc-table">
+                <thead>
+                  <tr>
+                    <th>Instrument</th>
+                    <th>SN</th>
+                    <th>Region</th>
+                    <th>Country / Customer</th>
+                    <th>Status</th>
+                    <th>Completed</th>
+                    <th>Notes</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {statuses.map((r) => (
+                    <tr key={r.machineId}>
+                      <td>{r.name || '—'}</td>
+                      <td>
+                        <span className="svc-mono">{r.serialNumber || '—'}</span>
+                      </td>
+                      <td>
+                        <span className={`svc-badge ${r.region === 'overseas' ? 'badge-amber' : 'badge-green'}`}>
+                          {r.region || 'local'}
+                        </span>
+                      </td>
+                      <td>{r.country || '—'}</td>
+                      <td>
+                        <select
+                          className="svc-select svc-select--sm"
+                          value={r.status || 'Pending'}
+                          onChange={(e) => handleStatusChange(r, { status: e.target.value })}
+                        >
+                          {FCA_STATUSES.map((s) => (
+                            <option key={s} value={s}>
+                              {s}
+                            </option>
+                          ))}
+                        </select>
+                      </td>
+                      <td>
+                        <input
+                          type="date"
+                          className="svc-input"
+                          value={r.completedDate ? String(r.completedDate).slice(0, 10) : ''}
+                          onChange={(e) => handleStatusChange(r, { completedDate: e.target.value || null })}
+                        />
+                      </td>
+                      <td>
+                        <input
+                          className="svc-input"
+                          value={r.notes || ''}
+                          placeholder="Optional notes"
+                          onChange={(e) =>
+                            setStatuses((prev) =>
+                              prev.map((x) => (x.machineId === r.machineId ? { ...x, notes: e.target.value } : x)),
+                            )
+                          }
+                          onBlur={(e) => handleStatusChange(r, { notes: e.target.value })}
+                        />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
+      {showEdit && (
+        <FcaEditModal
+          fca={editFca}
+          onSave={handleSave}
+          onClose={() => {
+            setShowEdit(false);
+            setEditFca(null);
+          }}
+          saving={saving}
+        />
+      )}
+    </div>
+  );
+}
+
 // ─── Main ServicePage ─────────────────────────────────────────────────────────
 
 export default function ServicePage({ isAdmin = false, notify, machines, setMachines }) {
-  const [subPage, setSubPage] = useState('dashboard'); // 'dashboard' | 'machines'
+  const [subPage, setSubPage] = useState('dashboard'); // 'dashboard' | 'machines' | 'fca'
   const [summary, setSummary] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [fcaList, setFcaList] = useState([]);
+  const [fcaLoading, setFcaLoading] = useState(false);
+  const [showInstrumentFca, setShowInstrumentFca] = useState(null); // machine object
   const [search, setSearch] = useState('');
   const [filterModality, setFilterModality] = useState('All');
   const [filterContract, setFilterContract] = useState('All');
@@ -1506,9 +2171,20 @@ export default function ServicePage({ isAdmin = false, notify, machines, setMach
     setLoading(false);
   }, [setMachines, region]);
 
+  const reloadFcas = useCallback(async () => {
+    setFcaLoading(true);
+    const res = await api.getFcaList();
+    setFcaList(res || []);
+    setFcaLoading(false);
+  }, []);
+
   useEffect(() => {
     void loadData(); // eslint-disable-line react-hooks/set-state-in-effect
   }, [loadData]);
+
+  useEffect(() => {
+    void reloadFcas(); // eslint-disable-line react-hooks/set-state-in-effect
+  }, [reloadFcas]);
 
   // Reset non-applicable filters when region changes to avoid a stuck filter
   useEffect(() => {
@@ -1556,6 +2232,11 @@ export default function ServicePage({ isAdmin = false, notify, machines, setMach
         ),
       ].sort(),
     [machines, region],
+  );
+
+  const instrumentModels = useMemo(
+    () => [...new Set(machines.map((m) => m.model).filter(Boolean))].sort(),
+    [machines],
   );
 
   // CRUD handlers
@@ -1699,6 +2380,12 @@ export default function ServicePage({ isAdmin = false, notify, machines, setMach
           >
             <List size={15} /> Instrument Registry
           </button>
+          <button
+            className={`svc-subnav-btn ${subPage === 'fca' ? 'active' : ''}`}
+            onClick={() => setSubPage('fca')}
+          >
+            <ShieldAlert size={15} /> FCA
+          </button>
           <div className="svc-region-toggle" role="group" aria-label="Instrument region">
             <button
               type="button"
@@ -1729,6 +2416,15 @@ export default function ServicePage({ isAdmin = false, notify, machines, setMach
             machines={machines.filter((m) => (m.region || 'local') === region)}
             region={region}
           />
+        ) : subPage === 'fca' ? (
+          <FcaPage
+            isAdmin={isAdmin}
+            notify={notify}
+            fcaList={fcaList}
+            fcaLoading={fcaLoading}
+            reloadFcas={reloadFcas}
+            instrumentModels={instrumentModels}
+          />
         ) : (
           <Registry
             region={region}
@@ -1751,6 +2447,7 @@ export default function ServicePage({ isAdmin = false, notify, machines, setMach
             setEditMachine={setEditMachine}
             setShowModal={setShowModal}
             setDeleteMachine={setDeleteMachine}
+            setShowInstrumentFca={setShowInstrumentFca}
           />
         )}
 
@@ -1778,6 +2475,18 @@ export default function ServicePage({ isAdmin = false, notify, machines, setMach
             onClose={() => setShowImport(false)}
           />
         )}
+        {showInstrumentFca && (
+          <InstrumentFcaStatusModal
+            machine={showInstrumentFca}
+            notify={notify}
+            onClose={() => setShowInstrumentFca(null)}
+          />
+        )}
+        <datalist id="svc-instrument-models">
+          {instrumentModels.map((m) => (
+            <option key={m} value={m} />
+          ))}
+        </datalist>
       </div>
     </>
   );
@@ -1859,6 +2568,91 @@ const SERVICE_CSS = `
 }
 .svc-region-btn:hover { color: var(--svc-text); }
 .svc-region-btn.active { background: var(--svc-primary); color: #fff; }
+
+/* FCA page */
+.svc-fca { padding: 20px; }
+.svc-fca__toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+.svc-fca__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 12px;
+  margin-bottom: 20px;
+}
+.svc-fca-card {
+  text-align: left;
+  padding: 14px 16px;
+  border-radius: 10px;
+  border: 1px solid var(--svc-border);
+  background: var(--svc-surface);
+  color: var(--svc-text);
+  cursor: pointer;
+  transition: all 0.15s;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font: inherit;
+}
+.svc-fca-card:hover { transform: translateY(-1px); border-color: var(--svc-primary); }
+.svc-fca-card.active { border-color: var(--svc-primary); background: rgba(99,102,241,0.08); }
+.svc-fca-card__num { font-size: 15px; font-weight: 700; color: var(--svc-primary); }
+.svc-fca-card__title {
+  font-size: 12.5px;
+  color: var(--svc-text);
+  line-height: 1.35;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.svc-fca-card__meta {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  font-size: 11px;
+  color: var(--svc-text-muted);
+  margin-top: 2px;
+}
+.svc-fca-card__date { font-size: 11px; color: var(--svc-text-subtle); margin-left: auto; }
+.svc-fca__empty {
+  grid-column: 1 / -1;
+  padding: 32px;
+  text-align: center;
+  color: var(--svc-text-muted);
+  background: var(--svc-surface);
+  border: 1px dashed var(--svc-border);
+  border-radius: 10px;
+}
+.svc-fca__detail {
+  background: var(--svc-surface);
+  border: 1px solid var(--svc-border);
+  border-radius: 12px;
+  padding: 18px 20px;
+}
+.svc-fca__detail-head {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+.svc-fca__detail-head h3 { font-size: 15px; font-weight: 600; margin: 0; color: var(--svc-text); }
+.svc-fca__detail-title { font-size: 13px; color: var(--svc-text-muted); margin-top: 4px; }
+.svc-fca__detail-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.svc-fca__detail-desc {
+  font-size: 13px;
+  color: var(--svc-text-muted);
+  white-space: pre-wrap;
+  margin: 10px 0 0;
+  padding: 10px 12px;
+  background: var(--svc-surface-2);
+  border-radius: 8px;
+}
 
 /* Dashboard */
 .svc-dashboard { padding: 24px 20px; }

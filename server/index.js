@@ -30,6 +30,7 @@ import catalogRouter from './routes/catalog.js';
 import migrateRouter from './routes/migrate.js';
 import auditLogRouter from './routes/auditLog.js';
 import machinesRouter from './routes/machines.js';
+import fcaRouter from './routes/fca.js';
 import localInventoryRouter from './routes/local-inventory.js';
 import wishlistRouter from './routes/wishlist.js';
 
@@ -610,6 +611,7 @@ app.use('/api/pending-approvals', verifyToken, approvalsRouter);
 app.use('/api/catalog', verifyToken, catalogRouter);
 app.use('/api/audit-log', verifyToken, auditLogRouter);
 app.use('/api/machines', verifyToken, machinesRouter);
+app.use('/api/fca', verifyToken, fcaRouter);
 app.use('/api/local-inventory', verifyToken, localInventoryRouter);
 app.use('/api/wishlist', verifyToken, wishlistRouter);
 

@@ -219,6 +219,43 @@ ALTER TABLE machines ADD COLUMN IF NOT EXISTS iqoq_date DATE;
 ALTER TABLE machines ADD COLUMN IF NOT EXISTS iqoq_price NUMERIC(12,2);
 CREATE INDEX IF NOT EXISTS idx_machines_region ON machines(region);
 
+-- Migration: Instrument model (ties an instrument to an FCA family e.g. Prodigy, MACSQUANT 10)
+ALTER TABLE machines ADD COLUMN IF NOT EXISTS model VARCHAR(100);
+CREATE INDEX IF NOT EXISTS idx_machines_model ON machines(model);
+
+-- FCA (Field Change Action) master list — one row per FCA
+CREATE TABLE IF NOT EXISTS fca_definitions (
+  id SERIAL PRIMARY KEY,
+  fca_number INTEGER NOT NULL,
+  instrument_model VARCHAR(100) NOT NULL,
+  title VARCHAR(255),
+  description TEXT,
+  pdf_blob BYTEA,
+  pdf_filename VARCHAR(255),
+  pdf_size_bytes INTEGER,
+  released_date DATE,
+  created_at TIMESTAMP DEFAULT NOW(),
+  created_by VARCHAR(50),
+  updated_at TIMESTAMP DEFAULT NOW()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_fca_number_model ON fca_definitions(fca_number, instrument_model);
+CREATE INDEX IF NOT EXISTS idx_fca_instrument_model ON fca_definitions(instrument_model);
+
+-- Per-instrument application status for each FCA
+CREATE TABLE IF NOT EXISTS fca_status (
+  id SERIAL PRIMARY KEY,
+  fca_id INTEGER NOT NULL REFERENCES fca_definitions(id) ON DELETE CASCADE,
+  machine_id INTEGER NOT NULL REFERENCES machines(id) ON DELETE CASCADE,
+  status VARCHAR(30) NOT NULL DEFAULT 'Pending',
+  completed_date DATE,
+  notes TEXT,
+  updated_at TIMESTAMP DEFAULT NOW(),
+  updated_by VARCHAR(50)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_fca_status_unique ON fca_status(fca_id, machine_id);
+CREATE INDEX IF NOT EXISTS idx_fca_status_machine ON fca_status(machine_id);
+CREATE INDEX IF NOT EXISTS idx_fca_status_status ON fca_status(status);
+
 -- Local Inventory table for service spare parts tracking
 CREATE TABLE IF NOT EXISTS local_inventory (
   id SERIAL PRIMARY KEY,

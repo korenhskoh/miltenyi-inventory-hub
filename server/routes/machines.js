@@ -25,6 +25,7 @@ const MACHINE_FIELDS = [
   'contract_end',
   'contract_type',
   'remark',
+  'model',
   // Region split + overseas-specific
   'region',
   'country',
