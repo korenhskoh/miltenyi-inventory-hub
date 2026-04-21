@@ -5,6 +5,7 @@ import { pickAllowed } from '../validation.js';
 import { paginate, envelope } from '../pagination.js';
 import { asyncHandler } from '../middleware/errorHandler.js';
 import { requireAdmin } from '../middleware/auth.js';
+import logger from '../logger.js';
 
 const router = Router();
 
@@ -186,9 +187,14 @@ router.post(
         inserted.push(snakeToCamel(result.rows[0]));
       } catch (e) {
         errors.push({ row: idx + 1, error: e.message });
+        logger.warn({ row: idx + 1, err: e.message }, 'Bulk machine import: row failed');
       }
     }
 
+    logger.info(
+      { requested: machines.length, inserted: inserted.length, failed: errors.length },
+      'Bulk machine import complete',
+    );
     res.status(201).json({ inserted: inserted.length, errors, machines: inserted });
   }),
 );
