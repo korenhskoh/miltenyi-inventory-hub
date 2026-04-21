@@ -751,70 +751,117 @@ function autoMapColumns(headers, columns) {
 
 function ImportModal({ isAdmin, region = 'local', onImport, onClose }) {
   const importColumns = region === 'overseas' ? IMPORT_COLUMNS_OVERSEAS : IMPORT_COLUMNS_LOCAL;
-  const [step, setStep] = useState('upload'); // upload | map | preview | done
+  const [step, setStep] = useState('upload'); // upload | map | done
   const [headers, setHeaders] = useState([]);
   const [rows, setRows] = useState([]);
   const [fileName, setFileName] = useState('');
   const [colMap, setColMap] = useState({});
   const [importing, setImporting] = useState(false);
   const [result, setResult] = useState(null);
+  const [errorMsg, setErrorMsg] = useState('');
 
   const handleFile = (e) => {
+    setErrorMsg('');
     const f = e.target.files[0];
     if (!f) return;
     setFileName(f.name);
     const reader = new FileReader();
+    reader.onerror = () => setErrorMsg('Could not read the file. Please try again.');
     reader.onload = (evt) => {
-      const wb = XLSX.read(evt.target.result, { type: 'array', cellDates: true });
-      if (!wb.SheetNames?.length) return;
-      const ws = wb.Sheets[wb.SheetNames[0]];
-      const data = XLSX.utils.sheet_to_json(ws, { header: 1, raw: false, dateNF: 'YYYY-MM-DD' });
-      if (data.length < 2) return;
-      const hdrs = data[0].map(String);
-      setHeaders(hdrs);
-      setRows(data.slice(1).filter((r) => r.some((c) => c !== '' && c !== null && c !== undefined)));
-      setColMap(autoMapColumns(hdrs, importColumns));
-      setStep('map');
+      try {
+        const wb = XLSX.read(evt.target.result, { type: 'array', cellDates: true });
+        if (!wb.SheetNames?.length) {
+          setErrorMsg('The file has no sheets.');
+          return;
+        }
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        const data = XLSX.utils.sheet_to_json(ws, { header: 1, raw: false, dateNF: 'YYYY-MM-DD' });
+        if (!data.length) {
+          setErrorMsg('The first sheet is empty.');
+          return;
+        }
+        if (data.length < 2) {
+          setErrorMsg('The sheet must have a header row and at least one data row.');
+          return;
+        }
+        // Strip blank trailing header cells and any empty rows
+        const rawHeaders = (data[0] || []).map((h) => (h == null ? '' : String(h).trim()));
+        const lastNonEmpty = rawHeaders.reduce((last, h, i) => (h ? i : last), -1);
+        const hdrs = rawHeaders.slice(0, lastNonEmpty + 1);
+        if (hdrs.length === 0) {
+          setErrorMsg('The first row has no column headers.');
+          return;
+        }
+        const dataRows = data
+          .slice(1)
+          .filter((r) => Array.isArray(r) && r.some((c) => c !== '' && c !== null && c !== undefined));
+        if (dataRows.length === 0) {
+          setErrorMsg('No data rows were found below the header row.');
+          return;
+        }
+        setHeaders(hdrs);
+        setRows(dataRows);
+        setColMap(autoMapColumns(hdrs, importColumns));
+        setStep('map');
+      } catch (err) {
+        setErrorMsg(`Could not parse the file: ${err.message || 'unknown error'}`);
+      }
     };
     reader.readAsArrayBuffer(f);
   };
 
+  const mappedKeyCount = Object.values(colMap).filter(Boolean).length;
+
   const handleImport = async () => {
+    setErrorMsg('');
+    if (mappedKeyCount === 0) {
+      setErrorMsg('No columns are mapped. Map at least one column (or ask an admin) before importing.');
+      return;
+    }
     setImporting(true);
-    const machines = rows.map((row) => {
-      const obj = { region };
-      importColumns.forEach(({ key }) => {
-        const hdr = colMap[key];
-        if (!hdr) return;
-        const idx = headers.indexOf(hdr);
-        if (idx === -1) return;
-        let val = row[idx];
-        if (val === '' || val === undefined || val === null) return;
-        if (key === 'maintenancePeriodMonths') {
-          val = parseInt(val) || 12;
-        } else if (NUMBER_IMPORT_KEYS.has(key)) {
-          const cleaned = String(val).replace(/[^0-9.-]/g, '');
-          const n = parseFloat(cleaned);
-          val = Number.isFinite(n) ? n : null;
-        } else if (DATE_IMPORT_KEYS.has(key)) {
-          if (!String(val).match(/^\d{4}-\d{2}-\d{2}$/)) {
-            try {
-              val = new Date(val).toISOString().slice(0, 10);
-            } catch {
-              val = null;
+    try {
+      const machines = rows.map((row) => {
+        const obj = { region };
+        importColumns.forEach(({ key }) => {
+          const hdr = colMap[key];
+          if (!hdr) return;
+          const idx = headers.indexOf(hdr);
+          if (idx === -1) return;
+          let val = row[idx];
+          if (val === '' || val === undefined || val === null) return;
+          if (key === 'maintenancePeriodMonths') {
+            val = parseInt(val) || 12;
+          } else if (NUMBER_IMPORT_KEYS.has(key)) {
+            const cleaned = String(val).replace(/[^0-9.-]/g, '');
+            const n = parseFloat(cleaned);
+            val = Number.isFinite(n) ? n : null;
+          } else if (DATE_IMPORT_KEYS.has(key)) {
+            if (!String(val).match(/^\d{4}-\d{2}-\d{2}$/)) {
+              try {
+                val = new Date(val).toISOString().slice(0, 10);
+              } catch {
+                val = null;
+              }
             }
           }
-        }
-        obj[key] = val;
+          obj[key] = val;
+        });
+        return obj;
       });
-      return obj;
-    });
-    const res = await api.bulkImportMachines(machines);
-    setResult(res);
-    setImporting(false);
-    if (res?.inserted > 0) {
+      const res = await api.bulkImportMachines(machines);
+      if (!res) {
+        setErrorMsg('Import failed — could not reach the server. Check your connection and try again.');
+        setImporting(false);
+        return;
+      }
+      setResult(res);
+      setImporting(false);
+      // Always show the result screen so the user sees inserted/errors feedback
       setStep('done');
-      onImport(res.machines || []);
+      if (res.inserted > 0) onImport(res.machines || []);
+    } catch (err) {
+      setImporting(false);
+      setErrorMsg(`Import failed: ${err.message || 'unknown error'}`);
     }
   };
 
@@ -830,6 +877,22 @@ function ImportModal({ isAdmin, region = 'local', onImport, onClose }) {
           </button>
         </div>
         <div className="svc-modal__body">
+          {errorMsg && (
+            <div
+              style={{
+                background: 'rgba(239,68,68,0.1)',
+                border: '1px solid rgba(239,68,68,0.35)',
+                color: '#fecaca',
+                padding: '10px 12px',
+                borderRadius: 8,
+                fontSize: 13,
+                marginBottom: 14,
+              }}
+            >
+              {errorMsg}
+            </div>
+          )}
+
           {step === 'upload' && (
             <div className="svc-upload-zone">
               <Upload size={40} style={{ color: 'var(--svc-primary)', marginBottom: 12 }} />
@@ -847,7 +910,8 @@ function ImportModal({ isAdmin, region = 'local', onImport, onClose }) {
           {step === 'map' && (
             <>
               <p style={{ marginBottom: 4, color: 'var(--svc-text-muted)' }}>
-                <strong>{fileName}</strong> — {rows.length} data rows detected.
+                <strong>{fileName}</strong> — {rows.length} data rows detected,{' '}
+                {mappedKeyCount} column{mappedKeyCount !== 1 ? 's' : ''} auto-mapped.
               </p>
               <p style={{ marginBottom: 16, fontSize: 12, color: 'var(--svc-text-subtle)' }}>
                 {isAdmin
@@ -886,18 +950,58 @@ function ImportModal({ isAdmin, region = 'local', onImport, onClose }) {
           )}
 
           {step === 'done' && result && (
-            <div style={{ textAlign: 'center', padding: '24px 0' }}>
-              <CheckCircle size={48} style={{ color: '#22c55e', marginBottom: 12 }} />
-              <h3 style={{ marginBottom: 8 }}>Import Complete</h3>
-              <p style={{ color: 'var(--svc-text-muted)' }}>
-                ✅ {result.inserted} instrument(s) imported successfully
-                {result.errors?.length > 0 && (
-                  <span style={{ color: '#ef4444' }}>, ⚠️ {result.errors.length} row(s) failed</span>
+            <div style={{ padding: '16px 0' }}>
+              <div style={{ textAlign: 'center', marginBottom: 12 }}>
+                {result.inserted > 0 ? (
+                  <CheckCircle size={48} style={{ color: '#22c55e' }} />
+                ) : (
+                  <AlertTriangle size={48} style={{ color: '#ef4444' }} />
                 )}
-              </p>
-              <button className="svc-btn svc-btn--primary" style={{ marginTop: 16 }} onClick={onClose}>
-                Done
-              </button>
+                <h3 style={{ marginTop: 8 }}>
+                  {result.inserted > 0 ? 'Import Complete' : 'Import Failed'}
+                </h3>
+                <p style={{ color: 'var(--svc-text-muted)' }}>
+                  ✅ {result.inserted} instrument(s) imported successfully
+                  {result.errors?.length > 0 && (
+                    <span style={{ color: '#ef4444' }}>, ⚠️ {result.errors.length} row(s) failed</span>
+                  )}
+                </p>
+              </div>
+              {result.errors?.length > 0 && (
+                <div
+                  style={{
+                    maxHeight: 180,
+                    overflowY: 'auto',
+                    background: 'var(--svc-surface-2)',
+                    border: '1px solid var(--svc-border)',
+                    borderRadius: 8,
+                    padding: '8px 12px',
+                    fontSize: 12,
+                    color: 'var(--svc-text-muted)',
+                  }}
+                >
+                  {result.errors.slice(0, 50).map((err, i) => (
+                    <div key={i} style={{ marginBottom: 2 }}>
+                      Row {err.row}: {err.error}
+                    </div>
+                  ))}
+                  {result.errors.length > 50 && (
+                    <div style={{ marginTop: 4, fontStyle: 'italic' }}>
+                      …and {result.errors.length - 50} more
+                    </div>
+                  )}
+                </div>
+              )}
+              <div style={{ display: 'flex', justifyContent: 'center', gap: 8, marginTop: 16 }}>
+                {result.inserted === 0 && (
+                  <button className="svc-btn svc-btn--ghost" onClick={() => setStep('map')}>
+                    Back to Mapping
+                  </button>
+                )}
+                <button className="svc-btn svc-btn--primary" onClick={onClose}>
+                  Done
+                </button>
+              </div>
             </div>
           )}
         </div>
