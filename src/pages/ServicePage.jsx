@@ -739,12 +739,18 @@ function normalizeHeader(s) {
 
 // Auto-map spreadsheet headers to our canonical column keys via label/key/alias match
 function autoMapColumns(headers, columns) {
-  const normHeaders = headers.map((h) => ({ raw: h, norm: normalizeHeader(h) }));
+  // Use Array.from to densify — XLSX may hand us sparse arrays (merged/blank
+  // leading cells), which would leave undefined holes that find() trips over.
+  const normHeaders = Array.from(headers || [], (h) => ({ raw: h, norm: normalizeHeader(h) }));
   const map = {};
-  for (const { key, label, aliases = [] } of columns) {
-    const candidates = [label, key, ...aliases].map(normalizeHeader);
-    const hit = normHeaders.find((h) => candidates.includes(h.norm));
-    if (hit) map[key] = hit.raw;
+  for (const col of columns || []) {
+    if (!col || !col.key) continue;
+    const aliases = Array.isArray(col.aliases) ? col.aliases : [];
+    const candidates = [col.label, col.key, ...aliases]
+      .filter((c) => c != null)
+      .map(normalizeHeader);
+    const hit = normHeaders.find((h) => h && candidates.includes(h.norm));
+    if (hit) map[col.key] = hit.raw;
   }
   return map;
 }
@@ -784,8 +790,10 @@ function ImportModal({ isAdmin, region = 'local', onImport, onClose }) {
           setErrorMsg('The sheet must have a header row and at least one data row.');
           return;
         }
-        // Strip blank trailing header cells and any empty rows
-        const rawHeaders = (data[0] || []).map((h) => (h == null ? '' : String(h).trim()));
+        // Densify potentially-sparse arrays from XLSX (merged cells / blank
+        // leading columns produce holes that downstream code can't handle).
+        const headerRow = Array.from(data[0] || []);
+        const rawHeaders = headerRow.map((h) => (h == null ? '' : String(h).trim()));
         const lastNonEmpty = rawHeaders.reduce((last, h, i) => (h ? i : last), -1);
         const hdrs = rawHeaders.slice(0, lastNonEmpty + 1);
         if (hdrs.length === 0) {
@@ -794,7 +802,8 @@ function ImportModal({ isAdmin, region = 'local', onImport, onClose }) {
         }
         const dataRows = data
           .slice(1)
-          .filter((r) => Array.isArray(r) && r.some((c) => c !== '' && c !== null && c !== undefined));
+          .map((r) => Array.from(r || []))
+          .filter((r) => r.some((c) => c !== '' && c !== null && c !== undefined));
         if (dataRows.length === 0) {
           setErrorMsg('No data rows were found below the header row.');
           return;
