@@ -4,6 +4,7 @@ import { snakeToCamel, camelToSnake } from '../utils.js';
 import { pickAllowed, requireFields, sanitizeDates } from '../validation.js';
 import { paginate, envelope } from '../pagination.js';
 import { asyncHandler } from '../middleware/errorHandler.js';
+import { requireAdmin } from '../middleware/auth.js';
 
 const router = Router();
 
@@ -70,7 +71,7 @@ router.put('/:id', async (req, res) => {
 });
 
 // DELETE /all - delete all bulk groups
-router.delete('/all', async (req, res) => {
+router.delete('/all', requireAdmin, async (req, res) => {
   try {
     await query('DELETE FROM bulk_groups');
     res.json({ success: true });

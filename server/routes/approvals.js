@@ -4,6 +4,7 @@ import { snakeToCamel, camelToSnake } from '../utils.js';
 import { pickAllowed, sanitizeDates } from '../validation.js';
 import { paginate, envelope } from '../pagination.js';
 import { asyncHandler } from '../middleware/errorHandler.js';
+import { requireAdmin } from '../middleware/auth.js';
 
 const router = Router();
 
@@ -92,7 +93,7 @@ router.put('/:id', async (req, res) => {
 });
 
 // DELETE / - delete all approvals
-router.delete('/', async (req, res) => {
+router.delete('/', requireAdmin, async (req, res) => {
   try {
     await query('DELETE FROM pending_approvals');
     res.json({ success: true });

@@ -3,6 +3,7 @@ import { query } from '../db.js';
 import { snakeToCamel, camelToSnake } from '../utils.js';
 import { paginate, envelope } from '../pagination.js';
 import { asyncHandler } from '../middleware/errorHandler.js';
+import { requireAdmin } from '../middleware/auth.js';
 
 const router = Router();
 
@@ -73,7 +74,7 @@ router.post('/', async (req, res) => {
 });
 
 // DELETE / - clear all audit logs (admin)
-router.delete('/', async (req, res) => {
+router.delete('/', requireAdmin, async (req, res) => {
   try {
     await query('DELETE FROM audit_log');
     res.json({ success: true });
