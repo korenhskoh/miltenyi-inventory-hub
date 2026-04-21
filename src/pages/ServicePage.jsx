@@ -1207,8 +1207,13 @@ function Registry({
   setShowModal,
   setDeleteMachine,
   setShowInstrumentFca,
+  isAdmin,
+  handleResetAll,
+  resetting,
 }) {
   const isOverseas = region === 'overseas';
+  const [showResetModal, setShowResetModal] = useState(false);
+  const [resetConfirmText, setResetConfirmText] = useState('');
 
   // Client-side pagination. All rows are already loaded via ?all=true; we just
   // slice for display so the table stays snappy with large datasets.
@@ -1321,6 +1326,19 @@ function Registry({
           >
             <Upload size={14} /> Import
           </button>
+          {isAdmin && (
+            <button
+              className="svc-btn svc-btn--danger svc-btn--sm"
+              onClick={() => {
+                setResetConfirmText('');
+                setShowResetModal(true);
+              }}
+              title={`Delete all ${isOverseas ? 'overseas' : 'local'} instruments`}
+              disabled={resetting}
+            >
+              <Trash2 size={14} /> Reset
+            </button>
+          )}
           <button
             className="svc-btn svc-btn--primary svc-btn--sm"
             onClick={() => {
@@ -1718,6 +1736,63 @@ function Registry({
           >
             Next ›
           </button>
+        </div>
+      )}
+
+      {/* Reset confirmation modal */}
+      {showResetModal && (
+        <div className="svc-modal-overlay" onClick={() => !resetting && setShowResetModal(false)}>
+          <div className="svc-modal svc-modal--sm" onClick={(e) => e.stopPropagation()}>
+            <div className="svc-modal__header">
+              <h2>Reset {isOverseas ? 'Overseas' : 'Local'} Registry</h2>
+              <button
+                type="button"
+                className="svc-icon-btn"
+                onClick={() => !resetting && setShowResetModal(false)}
+                disabled={resetting}
+              >
+                <X size={20} />
+              </button>
+            </div>
+            <div className="svc-modal__body">
+              <p style={{ color: 'var(--svc-text-muted)', marginBottom: 12, lineHeight: 1.5 }}>
+                This will permanently delete <strong>every {isOverseas ? 'overseas' : 'local'} instrument
+                </strong> and all of their FCA status records. This cannot be undone.
+              </p>
+              <p style={{ fontSize: 13, marginBottom: 8 }}>
+                Type <code>RESET</code> to confirm:
+              </p>
+              <input
+                className="svc-input"
+                value={resetConfirmText}
+                onChange={(e) => setResetConfirmText(e.target.value)}
+                placeholder="RESET"
+                autoFocus
+              />
+              <div className="svc-modal__footer">
+                <button
+                  type="button"
+                  className="svc-btn svc-btn--ghost"
+                  onClick={() => setShowResetModal(false)}
+                  disabled={resetting}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="svc-btn svc-btn--danger"
+                  disabled={resetting || resetConfirmText !== 'RESET'}
+                  onClick={async () => {
+                    await handleResetAll(region);
+                    setShowResetModal(false);
+                    setResetConfirmText('');
+                  }}
+                >
+                  {resetting ? 'Resetting…' : `Reset ${isOverseas ? 'Overseas' : 'Local'} Registry`}
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
       )}
     </div>
@@ -2399,6 +2474,29 @@ export default function ServicePage({ isAdmin = false, notify, machines, setMach
   const [deleteMachine, setDeleteMachine] = useState(null);
   const [showImport, setShowImport] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [resetting, setResetting] = useState(false);
+
+  const handleResetAll = useCallback(
+    async (scopeRegion) => {
+      setResetting(true);
+      const res = await api.resetAllMachines({ region: scopeRegion });
+      setResetting(false);
+      if (res.ok) {
+        notify?.(
+          'Registry reset',
+          `${res.deleted} ${scopeRegion} instrument(s) removed`,
+          'success',
+        );
+        // Drop the deleted rows from local state and refresh summary
+        setMachines((prev) => prev.filter((m) => (m.region || 'local') !== scopeRegion));
+        const sRes = await api.getMachineSummary({ region: scopeRegion });
+        if (sRes) setSummary(sRes);
+      } else {
+        notify?.('Reset failed', res.error || 'Could not reset the registry', 'error');
+      }
+    },
+    [notify, setMachines],
+  );
 
   // Load data (region-scoped). Summary is recomputed when region changes.
   const loadData = useCallback(async () => {
@@ -2689,6 +2787,9 @@ export default function ServicePage({ isAdmin = false, notify, machines, setMach
             setShowModal={setShowModal}
             setDeleteMachine={setDeleteMachine}
             setShowInstrumentFca={setShowInstrumentFca}
+            isAdmin={isAdmin}
+            handleResetAll={handleResetAll}
+            resetting={resetting}
           />
         )}
 

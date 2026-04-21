@@ -4,6 +4,7 @@ import { snakeToCamel, camelToSnake } from '../utils.js';
 import { pickAllowed } from '../validation.js';
 import { paginate, envelope } from '../pagination.js';
 import { asyncHandler } from '../middleware/errorHandler.js';
+import { requireAdmin } from '../middleware/auth.js';
 
 const router = Router();
 
@@ -157,7 +158,9 @@ router.get(
   }),
 );
 
-// POST /bulk — bulk import machines
+// POST /bulk — bulk import machines.
+// Every row is inserted (sparse / unnamed rows get synthesised placeholders)
+// so the DB ends up with exactly what the user sent, not a validated subset.
 router.post(
   '/bulk',
   asyncHandler(async (req, res) => {
@@ -171,11 +174,8 @@ router.post(
     for (const [idx, machine] of machines.entries()) {
       try {
         const b = pickAllowed(camelToSnake(machine), MACHINE_FIELDS);
-        if (!b.name && !b.serial_number) {
-          errors.push({ row: idx + 1, error: 'name or serial_number required' });
-          continue;
-        }
-        if (!b.name) b.name = b.serial_number;
+        // Fill in defaults so no row is rejected just because of missing fields.
+        if (!b.name) b.name = b.serial_number ? String(b.serial_number) : `Imported row ${idx + 1}`;
         if (!b.modality) b.modality = 'Unknown';
         b.region = normalizeRegion(b.region);
         const keys = Object.keys(b);
@@ -190,6 +190,25 @@ router.post(
     }
 
     res.status(201).json({ inserted: inserted.length, errors, machines: inserted });
+  }),
+);
+
+// DELETE /all — wipe the instrument registry (admin only, region-scoped)
+router.delete(
+  '/all',
+  requireAdmin,
+  asyncHandler(async (req, res) => {
+    const { region } = req.query;
+    if (region && !VALID_REGIONS.has(region)) {
+      return res.status(400).json({ error: 'Invalid region' });
+    }
+    let result;
+    if (region) {
+      result = await query('DELETE FROM machines WHERE region = $1 RETURNING id', [region]);
+    } else {
+      result = await query('DELETE FROM machines RETURNING id');
+    }
+    res.json({ success: true, deleted: result.rowCount });
   }),
 );
 
