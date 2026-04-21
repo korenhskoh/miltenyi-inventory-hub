@@ -140,13 +140,20 @@ router.get(
     const countResult = await query(`SELECT COUNT(*) FROM machines${where}`, params);
     const total = parseInt(countResult.rows[0].count);
 
-    const dataResult = await query(`SELECT * FROM machines${where} ORDER BY id DESC LIMIT $${pi++} OFFSET $${pi++}`, [
-      ...params,
-      pageSize,
-      offset,
-    ]);
+    // Opt-in: return all rows without pagination. The registry needs every
+    // instrument to filter/search client-side; 50-row pages silently drop data.
+    const returnAll = req.query.all === 'true' || req.query.all === '1';
+    let dataResult;
+    if (returnAll) {
+      dataResult = await query(`SELECT * FROM machines${where} ORDER BY id DESC`, params);
+    } else {
+      dataResult = await query(
+        `SELECT * FROM machines${where} ORDER BY id DESC LIMIT $${pi++} OFFSET $${pi++}`,
+        [...params, pageSize, offset],
+      );
+    }
     const rows = dataResult.rows.map(snakeToCamel);
-    res.json(envelope(rows, total, page, pageSize));
+    res.json(envelope(rows, total, returnAll ? 1 : page, returnAll ? rows.length : pageSize));
   }),
 );
 

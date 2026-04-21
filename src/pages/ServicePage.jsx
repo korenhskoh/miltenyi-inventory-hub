@@ -2188,9 +2188,24 @@ function FcaPage({ isAdmin, notify, fcaList, fcaLoading, reloadFcas, instrumentM
           {statusesLoading ? (
             <p style={{ color: 'var(--svc-text-muted)' }}>Loading…</p>
           ) : statuses.length === 0 ? (
-            <p style={{ color: 'var(--svc-text-muted)' }}>
-              No instruments registered with model "{selectedFca.instrumentModel}".
-            </p>
+            <div
+              style={{
+                padding: 14,
+                background: 'var(--svc-surface-2)',
+                border: '1px solid var(--svc-border)',
+                borderRadius: 8,
+                color: 'var(--svc-text-muted)',
+                fontSize: 13,
+                lineHeight: 1.5,
+              }}
+            >
+              No instruments match model <strong>"{selectedFca.instrumentModel}"</strong>.
+              <br />
+              Instruments are matched by their <strong>Instrument Model</strong> field (exact, case-insensitive)
+              or — when that field is blank — by their name containing this model text. To link existing
+              instruments, edit them and set the Instrument Model field to
+              "{selectedFca.instrumentModel}".
+            </div>
           ) : (
             <div className="svc-table-wrapper">
               <table className="svc-table">
@@ -2290,7 +2305,22 @@ export default function ServicePage({ isAdmin = false, notify, machines, setMach
   const [filterContract, setFilterContract] = useState('All');
   const [filterMaint, setFilterMaint] = useState('All');
   const [filterCountry, setFilterCountry] = useState('All');
-  const [region, setRegion] = useState('local'); // 'local' | 'overseas'
+  // Region survives refresh — otherwise overseas imports look "missing" on reload
+  const [region, setRegion] = useState(() => {
+    try {
+      const saved = localStorage.getItem('svc_region');
+      return saved === 'overseas' ? 'overseas' : 'local';
+    } catch {
+      return 'local';
+    }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem('svc_region', region);
+    } catch {
+      /* ignore quota / privacy-mode errors */
+    }
+  }, [region]);
   const [showModal, setShowModal] = useState(false);
   const [editMachine, setEditMachine] = useState(null);
   const [deleteMachine, setDeleteMachine] = useState(null);
@@ -2300,7 +2330,10 @@ export default function ServicePage({ isAdmin = false, notify, machines, setMach
   // Load data (region-scoped). Summary is recomputed when region changes.
   const loadData = useCallback(async () => {
     setLoading(true);
-    const [mRes, sRes] = await Promise.all([api.getMachines(), api.getMachineSummary({ region })]);
+    const [mRes, sRes] = await Promise.all([
+      api.getMachines({ all: true }),
+      api.getMachineSummary({ region }),
+    ]);
     if (mRes) setMachines(mRes);
     if (sRes) setSummary(sRes);
     setLoading(false);
