@@ -737,6 +737,26 @@ function normalizeHeader(s) {
     .replace(/[\s_/()\-.,:;]/g, '');
 }
 
+// Copy the top-left value of each merged range into every other cell in the
+// range. Excel only stores the value in the anchor cell — without this, merged
+// header cells leave blank columns that can't be auto-mapped.
+function expandMerges(ws) {
+  const merges = ws && ws['!merges'];
+  if (!Array.isArray(merges)) return;
+  for (const m of merges) {
+    const srcAddr = XLSX.utils.encode_cell({ r: m.s.r, c: m.s.c });
+    const src = ws[srcAddr];
+    if (!src) continue;
+    for (let r = m.s.r; r <= m.e.r; r++) {
+      for (let c = m.s.c; c <= m.e.c; c++) {
+        if (r === m.s.r && c === m.s.c) continue;
+        const addr = XLSX.utils.encode_cell({ r, c });
+        if (!ws[addr]) ws[addr] = { ...src };
+      }
+    }
+  }
+}
+
 // Auto-map spreadsheet headers to our canonical column keys via label/key/alias match
 function autoMapColumns(headers, columns) {
   // Use Array.from to densify — XLSX may hand us sparse arrays (merged/blank
@@ -781,6 +801,8 @@ function ImportModal({ isAdmin, region = 'local', onImport, onClose }) {
           return;
         }
         const ws = wb.Sheets[wb.SheetNames[0]];
+        // Unmerge cells so headers spanning multiple columns are readable
+        expandMerges(ws);
         const data = XLSX.utils.sheet_to_json(ws, { header: 1, raw: false, dateNF: 'YYYY-MM-DD' });
         if (!data.length) {
           setErrorMsg('The first sheet is empty.');
