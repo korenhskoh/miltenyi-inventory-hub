@@ -3,6 +3,10 @@ import crypto from 'crypto';
 import logger from '../logger.js';
 
 if (!process.env.JWT_SECRET) {
+  if (process.env.NODE_ENV === 'production') {
+    logger.error('FATAL: JWT_SECRET must be set in production');
+    process.exit(1);
+  }
   logger.warn('JWT_SECRET not set — generating random secret (tokens will not survive restarts)');
 }
 export const JWT_SECRET = process.env.JWT_SECRET || crypto.randomBytes(32).toString('hex');

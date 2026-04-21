@@ -4965,14 +4965,14 @@ export default function App() {
       {
         key: 'service',
         label: 'Service',
-        desc: 'Track machines, maintenance & contracts',
+        desc: 'Track instruments, maintenance & contracts',
         icon: Wrench,
         defaultPage: 'service',
         gradient: 'linear-gradient(135deg, #4f46e5, #818cf8)',
         glow: 'rgba(99,102,241,',
         accent: '#a5b4fc',
         features: [
-          { icon: HardDrive, text: 'Machine Registry' },
+          { icon: HardDrive, text: 'Instrument Registry' },
           { icon: Activity, text: 'Maintenance Schedules' },
           { icon: FileBarChart, text: 'Contract Management' },
           { icon: Search, text: 'Serial Number Lookup' },

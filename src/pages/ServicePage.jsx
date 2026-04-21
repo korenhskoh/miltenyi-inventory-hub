@@ -17,6 +17,8 @@ import {
   LayoutDashboard,
   List,
   Filter,
+  Globe,
+  Home,
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import api from '../api.js';
@@ -50,8 +52,27 @@ const MAINTENANCE_PERIODS = [
   { label: 'Every 12 months', value: 12 },
 ];
 
+const IQOQ_STATUSES = ['Completed', 'Pending', 'N/A'];
+
 const today = () => new Date().toISOString().slice(0, 10);
 const in30 = () => new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10);
+
+// Days between today and a warranty/expiry date (positive = days remaining, negative = expired)
+function daysLeftFromToday(dateStr) {
+  if (!dateStr) return null;
+  const d = new Date(dateStr);
+  if (Number.isNaN(d.getTime())) return null;
+  const now = new Date();
+  const oneDay = 24 * 60 * 60 * 1000;
+  return Math.round((d - now) / oneDay);
+}
+
+function fmtMoney(v) {
+  if (v === null || v === undefined || v === '') return '—';
+  const n = Number(v);
+  if (Number.isNaN(n)) return String(v);
+  return `S$${n.toLocaleString('en-SG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -138,9 +159,10 @@ function Field({ label, children, required }) {
   );
 }
 
-// ─── Machine Modal ────────────────────────────────────────────────────────────
+// ─── Instrument Modal ────────────────────────────────────────────────────────
 
 const EMPTY_MACHINE = {
+  region: 'local',
   name: '',
   serialNumber: '',
   modality: '',
@@ -157,13 +179,28 @@ const EMPTY_MACHINE = {
   status: 'Active',
   remark: '',
   notes: '',
+  // Overseas-only fields
+  country: '',
+  deliveryDate: '',
+  installDate: '',
+  warrantyStart: '',
+  warrantyEnd: '',
+  pmSparePart: '',
+  sapCode: '',
+  proposedServiceContract: '',
+  price: '',
+  iqoq: '',
+  iqoqDate: '',
+  iqoqPrice: '',
 };
 
-function MachineModal({ machine, onSave, onClose, saving }) {
+function MachineModal({ machine, region, onSave, onClose, saving }) {
   const [form, setForm] = useState(() => ({
     ...EMPTY_MACHINE,
+    region: machine?.region || region || 'local',
     ...(machine || {}),
   }));
+  const isOverseas = form.region === 'overseas';
 
   const set = (k, v) => setForm((p) => ({ ...p, [k]: v }));
 
@@ -188,7 +225,8 @@ function MachineModal({ machine, onSave, onClose, saving }) {
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    if (!form.modality) return;
+    // Local instruments require modality; overseas instruments do not.
+    if (!isOverseas && !form.modality) return;
     onSave(form);
   };
 
@@ -196,15 +234,25 @@ function MachineModal({ machine, onSave, onClose, saving }) {
     <div className="svc-modal-overlay" onClick={onClose}>
       <div className="svc-modal" onClick={(e) => e.stopPropagation()}>
         <div className="svc-modal__header">
-          <h2>{machine ? 'Edit Machine' : 'Add Machine'}</h2>
+          <h2>{machine ? 'Edit Instrument' : 'Add Instrument'}</h2>
           <button className="svc-icon-btn" onClick={onClose}>
             <X size={20} />
           </button>
         </div>
         <form onSubmit={handleSubmit} className="svc-modal__body">
-          <div className="svc-section-title">Machine Identity</div>
+          <div className="svc-section-title">Instrument Identity</div>
           <div className="svc-grid-2">
-            <Field label="Machine Name">
+            {isOverseas && (
+              <Field label="Country">
+                <input
+                  className="svc-input"
+                  value={form.country}
+                  onChange={(e) => set('country', e.target.value)}
+                  placeholder="e.g. Malaysia"
+                />
+              </Field>
+            )}
+            <Field label="Instrument Name">
               <input
                 className="svc-input"
                 value={form.name}
@@ -220,12 +268,12 @@ function MachineModal({ machine, onSave, onClose, saving }) {
                 placeholder="e.g. SN-20250001"
               />
             </Field>
-            <Field label="Modality" required>
+            <Field label="Modality" required={!isOverseas}>
               <select
                 className="svc-select"
                 value={form.modality}
                 onChange={(e) => set('modality', e.target.value)}
-                required
+                required={!isOverseas}
               >
                 <option value="">Select modality...</option>
                 {MODALITIES.map((m) => (
@@ -282,55 +330,151 @@ function MachineModal({ machine, onSave, onClose, saving }) {
             </Field>
           </div>
 
-          <div className="svc-section-title">Maintenance Schedule</div>
-          <div className="svc-grid-2">
-            <Field label="Maintenance Period">
-              <select
-                className="svc-select"
-                value={form.maintenancePeriodMonths}
-                onChange={(e) => handlePeriodChange(e.target.value)}
-              >
-                {MAINTENANCE_PERIODS.map((p) => (
-                  <option key={p.value} value={p.value}>
-                    {p.label}
-                  </option>
-                ))}
-              </select>
-            </Field>
-            <Field label="Last Maintenance Date">
-              <input
-                className="svc-input"
-                type="date"
-                value={form.lastMaintenanceDate || ''}
-                onChange={(e) => handleLastMaintenanceChange(e.target.value)}
-              />
-            </Field>
-            <Field label="Next Maintenance Date">
-              <input
-                className="svc-input"
-                type="date"
-                value={form.nextMaintenanceDate || ''}
-                onChange={(e) => set('nextMaintenanceDate', e.target.value)}
-              />
-            </Field>
-          </div>
+          {!isOverseas && (
+            <>
+              <div className="svc-section-title">Maintenance Schedule</div>
+              <div className="svc-grid-2">
+                <Field label="Maintenance Period">
+                  <select
+                    className="svc-select"
+                    value={form.maintenancePeriodMonths}
+                    onChange={(e) => handlePeriodChange(e.target.value)}
+                  >
+                    {MAINTENANCE_PERIODS.map((p) => (
+                      <option key={p.value} value={p.value}>
+                        {p.label}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+                <Field label="Last Maintenance Date">
+                  <input
+                    className="svc-input"
+                    type="date"
+                    value={form.lastMaintenanceDate || ''}
+                    onChange={(e) => handleLastMaintenanceChange(e.target.value)}
+                  />
+                </Field>
+                <Field label="Next Maintenance Date">
+                  <input
+                    className="svc-input"
+                    type="date"
+                    value={form.nextMaintenanceDate || ''}
+                    onChange={(e) => set('nextMaintenanceDate', e.target.value)}
+                  />
+                </Field>
+              </div>
+            </>
+          )}
+
+          {isOverseas && (
+            <>
+              <div className="svc-section-title">Warranty &amp; Installation</div>
+              <div className="svc-grid-2">
+                <Field label="Delivery Date">
+                  <input
+                    className="svc-input"
+                    type="date"
+                    value={form.deliveryDate || ''}
+                    onChange={(e) => set('deliveryDate', e.target.value)}
+                  />
+                </Field>
+                <Field label="Installation Date">
+                  <input
+                    className="svc-input"
+                    type="date"
+                    value={form.installDate || ''}
+                    onChange={(e) => set('installDate', e.target.value)}
+                  />
+                </Field>
+                <Field label="Warranty Start">
+                  <input
+                    className="svc-input"
+                    type="date"
+                    value={form.warrantyStart || ''}
+                    onChange={(e) => set('warrantyStart', e.target.value)}
+                  />
+                </Field>
+                <Field label="Warranty End">
+                  <input
+                    className="svc-input"
+                    type="date"
+                    value={form.warrantyEnd || ''}
+                    onChange={(e) => set('warrantyEnd', e.target.value)}
+                  />
+                </Field>
+                <Field label="Days Left (computed)">
+                  <input
+                    className="svc-input"
+                    value={
+                      form.warrantyEnd
+                        ? `${daysLeftFromToday(form.warrantyEnd)} day(s)`
+                        : 'Set a warranty end date'
+                    }
+                    readOnly
+                    style={{ background: 'var(--svc-surface)', cursor: 'default' }}
+                  />
+                </Field>
+                <Field label="SAP Code">
+                  <input
+                    className="svc-input"
+                    value={form.sapCode}
+                    onChange={(e) => set('sapCode', e.target.value)}
+                    placeholder="e.g. 130-092-355"
+                  />
+                </Field>
+              </div>
+              <Field label="PM Spare part">
+                <textarea
+                  className="svc-textarea"
+                  rows={2}
+                  value={form.pmSparePart}
+                  onChange={(e) => set('pmSparePart', e.target.value)}
+                  placeholder="Parts used / recommended"
+                />
+              </Field>
+            </>
+          )}
 
           <div className="svc-section-title">Contract Details</div>
           <div className="svc-grid-2">
-            <Field label="Contract Type">
-              <select
-                className="svc-select"
-                value={form.contractType}
-                onChange={(e) => set('contractType', e.target.value)}
-              >
-                <option value="">Select type...</option>
-                {CONTRACT_TYPES.map((t) => (
-                  <option key={t} value={t}>
-                    {t}
-                  </option>
-                ))}
-              </select>
-            </Field>
+            {isOverseas ? (
+              <Field label="Proposed Service Contract">
+                <input
+                  className="svc-input"
+                  value={form.proposedServiceContract}
+                  onChange={(e) => set('proposedServiceContract', e.target.value)}
+                  placeholder="e.g. 3-year full service"
+                />
+              </Field>
+            ) : (
+              <Field label="Contract Type">
+                <select
+                  className="svc-select"
+                  value={form.contractType}
+                  onChange={(e) => set('contractType', e.target.value)}
+                >
+                  <option value="">Select type...</option>
+                  {CONTRACT_TYPES.map((t) => (
+                    <option key={t} value={t}>
+                      {t}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+            )}
+            {isOverseas && (
+              <Field label="Price (SGD)">
+                <input
+                  className="svc-input"
+                  type="number"
+                  step="0.01"
+                  value={form.price}
+                  onChange={(e) => set('price', e.target.value)}
+                  placeholder="0.00"
+                />
+              </Field>
+            )}
             <Field label="Contract Start">
               <input
                 className="svc-input"
@@ -348,6 +492,42 @@ function MachineModal({ machine, onSave, onClose, saving }) {
               />
             </Field>
           </div>
+
+          {isOverseas && (
+            <>
+              <div className="svc-section-title">IQOQ</div>
+              <div className="svc-grid-2">
+                <Field label="IQOQ Status">
+                  <select className="svc-select" value={form.iqoq} onChange={(e) => set('iqoq', e.target.value)}>
+                    <option value="">— Select —</option>
+                    {IQOQ_STATUSES.map((s) => (
+                      <option key={s} value={s}>
+                        {s}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+                <Field label="IQOQ Date">
+                  <input
+                    className="svc-input"
+                    type="date"
+                    value={form.iqoqDate || ''}
+                    onChange={(e) => set('iqoqDate', e.target.value)}
+                  />
+                </Field>
+                <Field label="IQOQ Price (SGD)">
+                  <input
+                    className="svc-input"
+                    type="number"
+                    step="0.01"
+                    value={form.iqoqPrice}
+                    onChange={(e) => set('iqoqPrice', e.target.value)}
+                    placeholder="0.00"
+                  />
+                </Field>
+              </div>
+            </>
+          )}
 
           <div className="svc-section-title">Additional Info</div>
           <Field label="Remark">
@@ -374,7 +554,7 @@ function MachineModal({ machine, onSave, onClose, saving }) {
               Cancel
             </button>
             <button type="submit" className="svc-btn svc-btn--primary" disabled={saving}>
-              {saving ? 'Saving...' : machine ? 'Save Changes' : 'Add Machine'}
+              {saving ? 'Saving...' : machine ? 'Save Changes' : 'Add Instrument'}
             </button>
           </div>
         </form>
@@ -390,7 +570,7 @@ function DeleteConfirm({ machine, onConfirm, onClose }) {
     <div className="svc-modal-overlay" onClick={onClose}>
       <div className="svc-modal svc-modal--sm" onClick={(e) => e.stopPropagation()}>
         <div className="svc-modal__header">
-          <h2>Delete Machine</h2>
+          <h2>Delete Instrument</h2>
           <button className="svc-icon-btn" onClick={onClose}>
             <X size={20} />
           </button>
@@ -416,25 +596,146 @@ function DeleteConfirm({ machine, onConfirm, onClose }) {
 
 // ─── Import Modal ─────────────────────────────────────────────────────────────
 
-const IMPORT_COLUMNS = [
-  { key: 'name', label: 'Machine Name' },
-  { key: 'serialNumber', label: 'Serial Number' },
-  { key: 'modality', label: 'Modality' },
-  { key: 'location', label: 'Location' },
-  { key: 'customerName', label: 'Customer Name' },
-  { key: 'customerContact', label: 'Contact Person' },
-  { key: 'customerEmail', label: 'Contact Email' },
-  { key: 'maintenancePeriodMonths', label: 'Maintenance Period (months)' },
-  { key: 'lastMaintenanceDate', label: 'Last Maintenance Date' },
-  { key: 'nextMaintenanceDate', label: 'Next Maintenance Date' },
-  { key: 'contractType', label: 'Contract Type' },
-  { key: 'contractStart', label: 'Contract Start Date' },
-  { key: 'contractEnd', label: 'Contract End Date' },
-  { key: 'status', label: 'Status' },
-  { key: 'remark', label: 'Remark' },
+const IMPORT_COLUMNS_LOCAL = [
+  {
+    key: 'name',
+    label: 'Instrument Name',
+    aliases: ['machine name', 'equipment name', 'device name', 'instrument', 'instrumentname', 'name'],
+  },
+  {
+    key: 'serialNumber',
+    label: 'Serial Number',
+    aliases: ['serial no', 'serial', 'sn', 'serialno', 'serialnumber'],
+  },
+  { key: 'modality', label: 'Modality', aliases: ['type', 'category', 'device type', 'instrument type'] },
+  { key: 'location', label: 'Location', aliases: ['site', 'lab', 'room', 'building'] },
+  {
+    key: 'customerName',
+    label: 'Customer Name',
+    aliases: ['customer', 'organization', 'org', 'company', 'client', 'account'],
+  },
+  {
+    key: 'customerContact',
+    label: 'Contact Person',
+    aliases: ['contact', 'contact name', 'poc', 'person in charge'],
+  },
+  {
+    key: 'customerEmail',
+    label: 'Contact Email',
+    aliases: ['email', 'customer email', 'contact e-mail', 'e-mail'],
+  },
+  {
+    key: 'maintenancePeriodMonths',
+    label: 'Maintenance Period (months)',
+    aliases: ['period', 'maintenance period', 'maint period', 'service period', 'pm period'],
+  },
+  {
+    key: 'lastMaintenanceDate',
+    label: 'Last Maintenance Date',
+    aliases: ['last service', 'last pm', 'last maint', 'last maintenance', 'previous maintenance'],
+  },
+  {
+    key: 'nextMaintenanceDate',
+    label: 'Next Maintenance Date',
+    aliases: ['next service', 'next pm', 'next maint', 'next maintenance', 'upcoming maintenance'],
+  },
+  { key: 'contractType', label: 'Contract Type', aliases: ['contract'] },
+  {
+    key: 'contractStart',
+    label: 'Contract Start Date',
+    aliases: ['contract start', 'start date', 'contract from'],
+  },
+  {
+    key: 'contractEnd',
+    label: 'Contract End Date',
+    aliases: ['contract end', 'end date', 'contract to', 'expiry', 'expiry date'],
+  },
+  { key: 'status', label: 'Status', aliases: ['state'] },
+  { key: 'remark', label: 'Remark', aliases: ['note', 'notes', 'comment', 'comments', 'remarks'] },
 ];
 
-function ImportModal({ onImport, onClose }) {
+const IMPORT_COLUMNS_OVERSEAS = [
+  { key: 'country', label: 'Country', aliases: ['region', 'nation'] },
+  {
+    key: 'name',
+    label: 'Inst',
+    aliases: ['instrument', 'instrument name', 'machine', 'machine name', 'equipment', 'device', 'name'],
+  },
+  {
+    key: 'serialNumber',
+    label: 'SN',
+    aliases: ['serial', 'serial no', 'serial number', 'serialno', 'serialnumber'],
+  },
+  { key: 'location', label: 'Location', aliases: ['site', 'lab', 'room', 'building'] },
+  { key: 'deliveryDate', label: 'Delivery Date', aliases: ['delivery', 'delivered', 'ship date', 'shipped'] },
+  {
+    key: 'installDate',
+    label: 'Installation Date',
+    aliases: ['installation', 'installed', 'install date', 'commissioning'],
+  },
+  { key: 'warrantyStart', label: 'Warranty Start', aliases: ['warranty from', 'warranty begin'] },
+  {
+    key: 'warrantyEnd',
+    label: 'Warranty End',
+    aliases: ['warranty to', 'warranty expiry', 'warranty expires'],
+  },
+  {
+    key: 'pmSparePart',
+    label: 'PM Spare part',
+    aliases: ['pm spare', 'pmsparepart', 'spare part', 'spare parts', 'pm parts', 'preventive parts'],
+  },
+  { key: 'sapCode', label: 'SAP Code', aliases: ['sap', 'sap no', 'material code', 'material no'] },
+  {
+    key: 'proposedServiceContract',
+    label: 'Proposed Service Contract',
+    aliases: ['service contract', 'proposed contract', 'contract proposal'],
+  },
+  { key: 'price', label: 'Price', aliases: ['contract price', 'amount', 'cost'] },
+  { key: 'contractStart', label: 'Contract Start', aliases: ['contract from', 'start date'] },
+  { key: 'contractEnd', label: 'Contract End', aliases: ['contract to', 'end date'] },
+  { key: 'iqoq', label: 'IQOQ', aliases: ['iqoq status', 'iq oq', 'iqoqresult'] },
+  { key: 'iqoqDate', label: 'IQOQ Date', aliases: ['iqoq completed', 'iqoq on'] },
+  { key: 'iqoqPrice', label: 'IQOQ Price', aliases: ['iqoq cost', 'iqoq amount'] },
+];
+
+function getImportColumns(region) {
+  return region === 'overseas' ? IMPORT_COLUMNS_OVERSEAS : IMPORT_COLUMNS_LOCAL;
+}
+
+const DATE_IMPORT_KEYS = new Set([
+  'lastMaintenanceDate',
+  'nextMaintenanceDate',
+  'contractStart',
+  'contractEnd',
+  'deliveryDate',
+  'installDate',
+  'warrantyStart',
+  'warrantyEnd',
+  'iqoqDate',
+]);
+const NUMBER_IMPORT_KEYS = new Set(['price', 'iqoqPrice']);
+
+// Normalize a header for fuzzy matching: lowercase, strip punctuation/whitespace
+function normalizeHeader(s) {
+  return String(s ?? '')
+    .toLowerCase()
+    .replace(/[\s_/()\-.,:;]/g, '');
+}
+
+// Auto-map spreadsheet headers to our canonical column keys via label/key/alias match
+function autoMapColumns(headers, columns) {
+  const normHeaders = headers.map((h) => ({ raw: h, norm: normalizeHeader(h) }));
+  const map = {};
+  for (const { key, label, aliases = [] } of columns) {
+    const candidates = [label, key, ...aliases].map(normalizeHeader);
+    const hit = normHeaders.find((h) => candidates.includes(h.norm));
+    if (hit) map[key] = hit.raw;
+  }
+  return map;
+}
+
+function ImportModal({ isAdmin, region = 'local', onImport, onClose }) {
+  const importColumns = region === 'overseas' ? IMPORT_COLUMNS_OVERSEAS : IMPORT_COLUMNS_LOCAL;
   const [step, setStep] = useState('upload'); // upload | map | preview | done
   const [headers, setHeaders] = useState([]);
   const [rows, setRows] = useState([]);
@@ -457,17 +758,7 @@ function ImportModal({ onImport, onClose }) {
       const hdrs = data[0].map(String);
       setHeaders(hdrs);
       setRows(data.slice(1).filter((r) => r.some((c) => c !== '' && c !== null && c !== undefined)));
-      // Auto-map: fuzzy match headers
-      const autoMap = {};
-      IMPORT_COLUMNS.forEach(({ key, label }) => {
-        const match = hdrs.find(
-          (h) =>
-            h.toLowerCase().replace(/[\s_/()-]/g, '') === label.toLowerCase().replace(/[\s_/()-]/g, '') ||
-            h.toLowerCase().replace(/[\s_/()-]/g, '') === key.toLowerCase(),
-        );
-        if (match) autoMap[key] = match;
-      });
-      setColMap(autoMap);
+      setColMap(autoMapColumns(hdrs, importColumns));
       setStep('map');
     };
     reader.readAsArrayBuffer(f);
@@ -476,18 +767,22 @@ function ImportModal({ onImport, onClose }) {
   const handleImport = async () => {
     setImporting(true);
     const machines = rows.map((row) => {
-      const obj = {};
-      IMPORT_COLUMNS.forEach(({ key }) => {
+      const obj = { region };
+      importColumns.forEach(({ key }) => {
         const hdr = colMap[key];
         if (!hdr) return;
         const idx = headers.indexOf(hdr);
         if (idx === -1) return;
         let val = row[idx];
         if (val === '' || val === undefined || val === null) return;
-        if (key === 'maintenancePeriodMonths') val = parseInt(val) || 12;
-        // Normalize date strings
-        if (['lastMaintenanceDate', 'nextMaintenanceDate', 'contractStart', 'contractEnd'].includes(key)) {
-          if (val && !String(val).match(/^\d{4}-\d{2}-\d{2}$/)) {
+        if (key === 'maintenancePeriodMonths') {
+          val = parseInt(val) || 12;
+        } else if (NUMBER_IMPORT_KEYS.has(key)) {
+          const cleaned = String(val).replace(/[^0-9.-]/g, '');
+          const n = parseFloat(cleaned);
+          val = Number.isFinite(n) ? n : null;
+        } else if (DATE_IMPORT_KEYS.has(key)) {
+          if (!String(val).match(/^\d{4}-\d{2}-\d{2}$/)) {
             try {
               val = new Date(val).toISOString().slice(0, 10);
             } catch {
@@ -512,7 +807,9 @@ function ImportModal({ onImport, onClose }) {
     <div className="svc-modal-overlay" onClick={onClose}>
       <div className="svc-modal svc-modal--lg" onClick={(e) => e.stopPropagation()}>
         <div className="svc-modal__header">
-          <h2>Import Machines from Excel / CSV</h2>
+          <h2>
+            Import {region === 'overseas' ? 'Overseas' : 'Local'} Instruments from Excel / CSV
+          </h2>
           <button className="svc-icon-btn" onClick={onClose}>
             <X size={20} />
           </button>
@@ -534,16 +831,22 @@ function ImportModal({ onImport, onClose }) {
 
           {step === 'map' && (
             <>
-              <p style={{ marginBottom: 16, color: 'var(--svc-text-muted)' }}>
-                <strong>{fileName}</strong> — {rows.length} data rows detected. Map your columns:
+              <p style={{ marginBottom: 4, color: 'var(--svc-text-muted)' }}>
+                <strong>{fileName}</strong> — {rows.length} data rows detected.
+              </p>
+              <p style={{ marginBottom: 16, fontSize: 12, color: 'var(--svc-text-subtle)' }}>
+                {isAdmin
+                  ? 'Columns were auto-mapped from your headers. Adjust any mapping below before importing.'
+                  : 'Columns were auto-mapped from your headers. Ask an admin to adjust the mapping if anything is off.'}
               </p>
               <div className="svc-grid-2" style={{ maxHeight: 400, overflowY: 'auto' }}>
-                {IMPORT_COLUMNS.map(({ key, label }) => (
+                {importColumns.map(({ key, label }) => (
                   <div key={key} className="svc-field">
                     <label className="svc-field__label">{label}</label>
                     <select
                       className="svc-select"
                       value={colMap[key] || ''}
+                      disabled={!isAdmin}
                       onChange={(e) => setColMap((p) => ({ ...p, [key]: e.target.value || undefined }))}
                     >
                       <option value="">— Skip —</option>
@@ -572,7 +875,7 @@ function ImportModal({ onImport, onClose }) {
               <CheckCircle size={48} style={{ color: '#22c55e', marginBottom: 12 }} />
               <h3 style={{ marginBottom: 8 }}>Import Complete</h3>
               <p style={{ color: 'var(--svc-text-muted)' }}>
-                ✅ {result.inserted} machine(s) imported successfully
+                ✅ {result.inserted} instrument(s) imported successfully
                 {result.errors?.length > 0 && (
                   <span style={{ color: '#ef4444' }}>, ⚠️ {result.errors.length} row(s) failed</span>
                 )}
@@ -590,12 +893,13 @@ function ImportModal({ onImport, onClose }) {
 
 // ─── Dashboard Sub-view ──────────────────────────────────────────────────────
 
-function Dashboard({ summary, machines }) {
+function Dashboard({ summary, machines, region = 'local' }) {
+  const isOverseas = region === 'overseas';
   return (
     <div className="svc-dashboard">
       <div className="svc-dash-grid">
         <SummaryCard
-          label="Total Machines"
+          label="Total Instruments"
           value={summary?.total ?? machines.length}
           icon={<Wrench size={22} />}
           color="blue"
@@ -641,56 +945,85 @@ function Dashboard({ summary, machines }) {
       {/* Recent Alerts */}
       <div className="svc-alerts-section">
         <h3 className="svc-section-heading">Attention Required</h3>
-        {machines.filter(
-          (m) =>
+        {machines.filter((m) => {
+          if (isOverseas) {
+            const dl = daysLeftFromToday(m.warrantyEnd);
+            const warrantyAlert = dl !== null && dl <= 30;
+            return contractStatus(m) === 'Expired' || contractStatus(m) === 'Expiring' || warrantyAlert;
+          }
+          return (
             contractStatus(m) === 'Expired' ||
             contractStatus(m) === 'Expiring' ||
             maintenanceStatus(m) === 'Overdue' ||
-            maintenanceStatus(m) === 'Due',
-        ).length === 0 ? (
+            maintenanceStatus(m) === 'Due'
+          );
+        }).length === 0 ? (
           <div className="svc-empty-alert">
             <CheckCircle size={32} style={{ color: '#22c55e' }} />
-            <p>All machines are up to date. No action required!</p>
+            <p>All instruments are up to date. No action required!</p>
           </div>
         ) : (
           <div className="svc-alert-table-wrapper">
             <table className="svc-table">
               <thead>
                 <tr>
-                  <th>Machine</th>
+                  <th>Instrument</th>
                   <th>Serial No</th>
-                  <th>Customer</th>
-                  <th>Modality</th>
-                  <th>Maintenance</th>
+                  <th>{isOverseas ? 'Country' : 'Customer'}</th>
+                  <th>{isOverseas ? 'Warranty End' : 'Modality'}</th>
+                  <th>{isOverseas ? 'Warranty' : 'Maintenance'}</th>
                   <th>Contract</th>
                 </tr>
               </thead>
               <tbody>
                 {machines
-                  .filter(
-                    (m) =>
+                  .filter((m) => {
+                    if (isOverseas) {
+                      const dl = daysLeftFromToday(m.warrantyEnd);
+                      const warrantyAlert = dl !== null && dl <= 30;
+                      return (
+                        contractStatus(m) === 'Expired' ||
+                        contractStatus(m) === 'Expiring' ||
+                        warrantyAlert
+                      );
+                    }
+                    return (
                       contractStatus(m) === 'Expired' ||
                       contractStatus(m) === 'Expiring' ||
                       maintenanceStatus(m) === 'Overdue' ||
-                      maintenanceStatus(m) === 'Due',
-                  )
+                      maintenanceStatus(m) === 'Due'
+                    );
+                  })
                   .slice(0, 10)
-                  .map((m) => (
-                    <tr key={m.id}>
-                      <td>{m.name || '\u2014'}</td>
-                      <td>
-                        <span className="svc-mono">{m.serialNumber || '\u2014'}</span>
-                      </td>
-                      <td>{m.customerName || '\u2014'}</td>
-                      <td>{m.modality}</td>
-                      <td>
-                        <MaintBadge status={maintenanceStatus(m)} />
-                      </td>
-                      <td>
-                        <ContractBadge status={contractStatus(m)} />
-                      </td>
-                    </tr>
-                  ))}
+                  .map((m) => {
+                    const dl = isOverseas ? daysLeftFromToday(m.warrantyEnd) : null;
+                    const dlCls =
+                      dl === null ? 'badge-gray' : dl < 0 ? 'badge-red' : dl <= 30 ? 'badge-amber' : 'badge-green';
+                    return (
+                      <tr key={m.id}>
+                        <td>{m.name || '\u2014'}</td>
+                        <td>
+                          <span className="svc-mono">{m.serialNumber || '\u2014'}</span>
+                        </td>
+                        <td>{(isOverseas ? m.country : m.customerName) || '\u2014'}</td>
+                        <td>{isOverseas ? fmtDate(m.warrantyEnd) : m.modality}</td>
+                        <td>
+                          {isOverseas ? (
+                            dl === null ? (
+                              '\u2014'
+                            ) : (
+                              <span className={`svc-badge ${dlCls}`}>{dl} day(s)</span>
+                            )
+                          ) : (
+                            <MaintBadge status={maintenanceStatus(m)} />
+                          )}
+                        </td>
+                        <td>
+                          <ContractBadge status={contractStatus(m)} />
+                        </td>
+                      </tr>
+                    );
+                  })}
               </tbody>
             </table>
           </div>
@@ -703,6 +1036,7 @@ function Dashboard({ summary, machines }) {
 // ─── Registry Sub-view ───────────────────────────────────────────────────────
 
 function Registry({
+  region,
   search,
   setSearch,
   filtered,
@@ -713,13 +1047,17 @@ function Registry({
   setFilterContract,
   filterMaint,
   setFilterMaint,
+  filterCountry,
+  setFilterCountry,
   uniqueModalities,
+  uniqueCountries,
   handleExport,
   setShowImport,
   setEditMachine,
   setShowModal,
   setDeleteMachine,
 }) {
+  const isOverseas = region === 'overseas';
   return (
     <div className="svc-registry">
       {/* Toolbar */}
@@ -728,27 +1066,45 @@ function Registry({
           <Search size={15} className="svc-search-icon" />
           <input
             className="svc-search"
-            placeholder="Search serial, customer, machine, modality\u2026"
+            placeholder={isOverseas ? "Search serial, country, instrument\u2026" : "Search serial, customer, instrument, modality\u2026"}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
         </div>
         <div className="svc-filters">
-          <div className="svc-filter-group">
-            <Filter size={13} />
-            <select
-              className="svc-select svc-select--sm"
-              value={filterModality}
-              onChange={(e) => setFilterModality(e.target.value)}
-            >
-              <option value="All">All Modalities</option>
-              {uniqueModalities.map((m) => (
-                <option key={m} value={m}>
-                  {m}
-                </option>
-              ))}
-            </select>
-          </div>
+          {isOverseas ? (
+            <div className="svc-filter-group">
+              <Filter size={13} />
+              <select
+                className="svc-select svc-select--sm"
+                value={filterCountry}
+                onChange={(e) => setFilterCountry(e.target.value)}
+              >
+                <option value="All">All Countries</option>
+                {uniqueCountries.map((c) => (
+                  <option key={c} value={c}>
+                    {c}
+                  </option>
+                ))}
+              </select>
+            </div>
+          ) : (
+            <div className="svc-filter-group">
+              <Filter size={13} />
+              <select
+                className="svc-select svc-select--sm"
+                value={filterModality}
+                onChange={(e) => setFilterModality(e.target.value)}
+              >
+                <option value="All">All Modalities</option>
+                {uniqueModalities.map((m) => (
+                  <option key={m} value={m}>
+                    {m}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
           <select
             className="svc-select svc-select--sm"
             value={filterContract}
@@ -760,16 +1116,18 @@ function Registry({
             <option value="Expired">Expired</option>
             <option value="None">No Contract</option>
           </select>
-          <select
-            className="svc-select svc-select--sm"
-            value={filterMaint}
-            onChange={(e) => setFilterMaint(e.target.value)}
-          >
-            <option value="All">All Maintenance</option>
-            <option value="Overdue">Overdue</option>
-            <option value="Due">Due Soon</option>
-            <option value="OK">OK</option>
-          </select>
+          {!isOverseas && (
+            <select
+              className="svc-select svc-select--sm"
+              value={filterMaint}
+              onChange={(e) => setFilterMaint(e.target.value)}
+            >
+              <option value="All">All Maintenance</option>
+              <option value="Overdue">Overdue</option>
+              <option value="Due">Due Soon</option>
+              <option value="OK">OK</option>
+            </select>
+          )}
         </div>
         <div className="svc-actions">
           <button className="svc-btn svc-btn--ghost svc-btn--sm" onClick={handleExport} title="Export to Excel">
@@ -789,128 +1147,237 @@ function Registry({
               setShowModal(true);
             }}
           >
-            <Plus size={14} /> Add Machine
+            <Plus size={14} /> Add Instrument
           </button>
         </div>
       </div>
 
       {/* Result count */}
       <div className="svc-result-count">
-        {loading ? 'Loading\u2026' : `${filtered.length} machine${filtered.length !== 1 ? 's' : ''} found`}
+        {loading ? 'Loading\u2026' : `${filtered.length} instrument${filtered.length !== 1 ? 's' : ''} found`}
       </div>
 
       {/* Desktop Table */}
       <div className="svc-table-wrapper svc-desktop-only">
-        <table className="svc-table">
-          <thead>
-            <tr>
-              <th>#</th>
-              <th>Serial No</th>
-              <th>Machine Name</th>
-              <th>Modality</th>
-              <th>Customer</th>
-              <th>Maint. Period</th>
-              <th>Last Maintenance</th>
-              <th>Next Maintenance</th>
-              <th>Maint. Status</th>
-              <th>Contract Type</th>
-              <th>Contract Start</th>
-              <th>Contract End</th>
-              <th>Contract Status</th>
-              <th>Remark</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {filtered.length === 0 ? (
+        {isOverseas ? (
+          <table className="svc-table">
+            <thead>
               <tr>
-                <td colSpan={15} style={{ textAlign: 'center', padding: '40px 0', color: 'var(--svc-text-muted)' }}>
-                  {loading ? 'Loading machines\u2026' : 'No machines found. Add one to get started.'}
-                </td>
+                <th>#</th>
+                <th>Country</th>
+                <th>Inst</th>
+                <th>SN</th>
+                <th>Location</th>
+                <th>Delivery Date</th>
+                <th>Installation Date</th>
+                <th>Warranty Start</th>
+                <th>Warranty End</th>
+                <th>Days Left</th>
+                <th>PM Spare part</th>
+                <th>SAP Code</th>
+                <th>Proposed Service Contract</th>
+                <th>Price</th>
+                <th>Contract Start</th>
+                <th>Contract End</th>
+                <th>Contract Status</th>
+                <th>IQOQ</th>
+                <th>IQOQ Date</th>
+                <th>IQOQ Price</th>
+                <th>Actions</th>
               </tr>
-            ) : (
-              filtered.map((m, i) => {
-                const cs = contractStatus(m);
-                const ms = maintenanceStatus(m);
-                return (
-                  <tr key={m.id} className={cs === 'Expired' || ms === 'Overdue' ? 'svc-row--alert' : ''}>
-                    <td className="svc-td-num">{i + 1}</td>
-                    <td>
-                      <span className="svc-mono">{m.serialNumber || '\u2014'}</span>
-                    </td>
-                    <td>
-                      <div>{m.name || '\u2014'}</div>
-                      {m.location && <div className="svc-sub-text">{m.location}</div>}
-                    </td>
-                    <td>{m.modality}</td>
-                    <td>
-                      <div>{m.customerName || '\u2014'}</div>
-                      {m.customerContact && <div className="svc-sub-text">{m.customerContact}</div>}
-                      {m.customerEmail && <div className="svc-sub-text">{m.customerEmail}</div>}
-                    </td>
-                    <td>
-                      {m.maintenancePeriodMonths
-                        ? MAINTENANCE_PERIODS.find((p) => p.value === Number(m.maintenancePeriodMonths))?.label ||
-                          `${m.maintenancePeriodMonths} months`
-                        : '\u2014'}
-                    </td>
-                    <td>{fmtDate(m.lastMaintenanceDate)}</td>
-                    <td>{fmtDate(m.nextMaintenanceDate)}</td>
-                    <td>
-                      <MaintBadge status={ms} />
-                    </td>
-                    <td>{m.contractType || '\u2014'}</td>
-                    <td>{fmtDate(m.contractStart)}</td>
-                    <td>{fmtDate(m.contractEnd)}</td>
-                    <td>
-                      <ContractBadge status={cs} />
-                    </td>
-                    <td className="svc-remark">{m.remark || '\u2014'}</td>
-                    <td>
-                      <div className="svc-row-actions">
-                        <button
-                          className="svc-icon-btn svc-icon-btn--edit"
-                          title="Edit"
-                          onClick={() => {
-                            setEditMachine(m);
-                            setShowModal(true);
-                          }}
-                        >
-                          <Edit3 size={14} />
-                        </button>
-                        <button
-                          className="svc-icon-btn svc-icon-btn--delete"
-                          title="Delete"
-                          onClick={() => setDeleteMachine(m)}
-                        >
-                          <Trash2 size={14} />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })
-            )}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {filtered.length === 0 ? (
+                <tr>
+                  <td colSpan={21} style={{ textAlign: 'center', padding: '40px 0', color: 'var(--svc-text-muted)' }}>
+                    {loading ? 'Loading instruments\u2026' : 'No instruments found. Add one to get started.'}
+                  </td>
+                </tr>
+              ) : (
+                filtered.map((m, i) => {
+                  const cs = contractStatus(m);
+                  const dl = daysLeftFromToday(m.warrantyEnd);
+                  const dlClass = dl === null ? '' : dl < 0 ? 'badge-red' : dl <= 30 ? 'badge-amber' : 'badge-green';
+                  return (
+                    <tr key={m.id} className={cs === 'Expired' ? 'svc-row--alert' : ''}>
+                      <td className="svc-td-num">{i + 1}</td>
+                      <td>{m.country || '\u2014'}</td>
+                      <td>
+                        <div>{m.name || '\u2014'}</div>
+                        {m.location && <div className="svc-sub-text">{m.location}</div>}
+                      </td>
+                      <td>
+                        <span className="svc-mono">{m.serialNumber || '\u2014'}</span>
+                      </td>
+                      <td>{m.location || '\u2014'}</td>
+                      <td>{fmtDate(m.deliveryDate)}</td>
+                      <td>{fmtDate(m.installDate)}</td>
+                      <td>{fmtDate(m.warrantyStart)}</td>
+                      <td>{fmtDate(m.warrantyEnd)}</td>
+                      <td>
+                        {dl === null ? (
+                          '\u2014'
+                        ) : (
+                          <span className={`svc-badge ${dlClass}`}>{dl} day(s)</span>
+                        )}
+                      </td>
+                      <td className="svc-remark" title={m.pmSparePart || ''}>
+                        {m.pmSparePart || '\u2014'}
+                      </td>
+                      <td>
+                        <span className="svc-mono">{m.sapCode || '\u2014'}</span>
+                      </td>
+                      <td className="svc-remark" title={m.proposedServiceContract || ''}>
+                        {m.proposedServiceContract || '\u2014'}
+                      </td>
+                      <td>{fmtMoney(m.price)}</td>
+                      <td>{fmtDate(m.contractStart)}</td>
+                      <td>{fmtDate(m.contractEnd)}</td>
+                      <td>
+                        <ContractBadge status={cs} />
+                      </td>
+                      <td>{m.iqoq || '\u2014'}</td>
+                      <td>{fmtDate(m.iqoqDate)}</td>
+                      <td>{fmtMoney(m.iqoqPrice)}</td>
+                      <td>
+                        <div className="svc-row-actions">
+                          <button
+                            className="svc-icon-btn svc-icon-btn--edit"
+                            title="Edit"
+                            onClick={() => {
+                              setEditMachine(m);
+                              setShowModal(true);
+                            }}
+                          >
+                            <Edit3 size={14} />
+                          </button>
+                          <button
+                            className="svc-icon-btn svc-icon-btn--delete"
+                            title="Delete"
+                            onClick={() => setDeleteMachine(m)}
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        ) : (
+          <table className="svc-table">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Serial No</th>
+                <th>Instrument Name</th>
+                <th>Modality</th>
+                <th>Customer</th>
+                <th>Maint. Period</th>
+                <th>Last Maintenance</th>
+                <th>Next Maintenance</th>
+                <th>Maint. Status</th>
+                <th>Contract Type</th>
+                <th>Contract Start</th>
+                <th>Contract End</th>
+                <th>Contract Status</th>
+                <th>Remark</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.length === 0 ? (
+                <tr>
+                  <td colSpan={15} style={{ textAlign: 'center', padding: '40px 0', color: 'var(--svc-text-muted)' }}>
+                    {loading ? 'Loading instruments\u2026' : 'No instruments found. Add one to get started.'}
+                  </td>
+                </tr>
+              ) : (
+                filtered.map((m, i) => {
+                  const cs = contractStatus(m);
+                  const ms = maintenanceStatus(m);
+                  return (
+                    <tr key={m.id} className={cs === 'Expired' || ms === 'Overdue' ? 'svc-row--alert' : ''}>
+                      <td className="svc-td-num">{i + 1}</td>
+                      <td>
+                        <span className="svc-mono">{m.serialNumber || '\u2014'}</span>
+                      </td>
+                      <td>
+                        <div>{m.name || '\u2014'}</div>
+                        {m.location && <div className="svc-sub-text">{m.location}</div>}
+                      </td>
+                      <td>{m.modality}</td>
+                      <td>
+                        <div>{m.customerName || '\u2014'}</div>
+                        {m.customerContact && <div className="svc-sub-text">{m.customerContact}</div>}
+                        {m.customerEmail && <div className="svc-sub-text">{m.customerEmail}</div>}
+                      </td>
+                      <td>
+                        {m.maintenancePeriodMonths
+                          ? MAINTENANCE_PERIODS.find((p) => p.value === Number(m.maintenancePeriodMonths))?.label ||
+                            `${m.maintenancePeriodMonths} months`
+                          : '\u2014'}
+                      </td>
+                      <td>{fmtDate(m.lastMaintenanceDate)}</td>
+                      <td>{fmtDate(m.nextMaintenanceDate)}</td>
+                      <td>
+                        <MaintBadge status={ms} />
+                      </td>
+                      <td>{m.contractType || '\u2014'}</td>
+                      <td>{fmtDate(m.contractStart)}</td>
+                      <td>{fmtDate(m.contractEnd)}</td>
+                      <td>
+                        <ContractBadge status={cs} />
+                      </td>
+                      <td className="svc-remark">{m.remark || '\u2014'}</td>
+                      <td>
+                        <div className="svc-row-actions">
+                          <button
+                            className="svc-icon-btn svc-icon-btn--edit"
+                            title="Edit"
+                            onClick={() => {
+                              setEditMachine(m);
+                              setShowModal(true);
+                            }}
+                          >
+                            <Edit3 size={14} />
+                          </button>
+                          <button
+                            className="svc-icon-btn svc-icon-btn--delete"
+                            title="Delete"
+                            onClick={() => setDeleteMachine(m)}
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        )}
       </div>
 
       {/* Mobile Card List */}
       <div className="svc-mobile-only">
         {filtered.length === 0 ? (
           <div className="svc-mobile-empty">
-            {loading ? 'Loading machines\u2026' : 'No machines found. Add one to get started.'}
+            {loading ? 'Loading instruments\u2026' : 'No instruments found. Add one to get started.'}
           </div>
         ) : (
           filtered.map((m, i) => {
             const cs = contractStatus(m);
             const ms = maintenanceStatus(m);
             return (
-              <div key={m.id} className={`svc-mcard ${cs === 'Expired' || ms === 'Overdue' ? 'svc-mcard--alert' : ''}`}>
+              <div key={m.id} className={`svc-mcard ${cs === 'Expired' || (!isOverseas && ms === 'Overdue') ? 'svc-mcard--alert' : ''}`}>
                 <div className="svc-mcard__head">
                   <div className="svc-mcard__title">
                     <span className="svc-mcard__num">#{i + 1}</span>
-                    <span className="svc-mcard__name">{m.name || m.modality || 'Machine'}</span>
+                    <span className="svc-mcard__name">{m.name || (isOverseas ? m.country : m.modality) || 'Instrument'}</span>
                   </div>
                   <div className="svc-mcard__actions">
                     <button
@@ -933,36 +1400,74 @@ function Registry({
                   </div>
                 )}
                 <div className="svc-mcard__badges">
-                  <MaintBadge status={ms} />
+                  {!isOverseas && <MaintBadge status={ms} />}
                   <ContractBadge status={cs} />
+                  {isOverseas && m.warrantyEnd && (() => {
+                    const dl = daysLeftFromToday(m.warrantyEnd);
+                    const cls = dl === null ? '' : dl < 0 ? 'badge-red' : dl <= 30 ? 'badge-amber' : 'badge-green';
+                    return <span className={`svc-badge ${cls}`}>{dl} day(s)</span>;
+                  })()}
                 </div>
                 <div className="svc-mcard__grid">
-                  <div className="svc-mcard__field">
-                    <span className="svc-mcard__label">Modality</span>
-                    <span className="svc-mcard__val">{m.modality || '\u2014'}</span>
-                  </div>
-                  <div className="svc-mcard__field">
-                    <span className="svc-mcard__label">Customer</span>
-                    <span className="svc-mcard__val">{m.customerName || '\u2014'}</span>
-                  </div>
-                  {m.location && (
-                    <div className="svc-mcard__field">
-                      <span className="svc-mcard__label">Location</span>
-                      <span className="svc-mcard__val">{m.location}</span>
-                    </div>
+                  {isOverseas ? (
+                    <>
+                      <div className="svc-mcard__field">
+                        <span className="svc-mcard__label">Country</span>
+                        <span className="svc-mcard__val">{m.country || '\u2014'}</span>
+                      </div>
+                      <div className="svc-mcard__field">
+                        <span className="svc-mcard__label">SAP Code</span>
+                        <span className="svc-mcard__val">{m.sapCode || '\u2014'}</span>
+                      </div>
+                      {m.location && (
+                        <div className="svc-mcard__field">
+                          <span className="svc-mcard__label">Location</span>
+                          <span className="svc-mcard__val">{m.location}</span>
+                        </div>
+                      )}
+                      <div className="svc-mcard__field">
+                        <span className="svc-mcard__label">Warranty End</span>
+                        <span className="svc-mcard__val">{fmtDate(m.warrantyEnd)}</span>
+                      </div>
+                      <div className="svc-mcard__field">
+                        <span className="svc-mcard__label">Contract End</span>
+                        <span className="svc-mcard__val">{fmtDate(m.contractEnd)}</span>
+                      </div>
+                      <div className="svc-mcard__field">
+                        <span className="svc-mcard__label">IQOQ</span>
+                        <span className="svc-mcard__val">{m.iqoq || '\u2014'}</span>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="svc-mcard__field">
+                        <span className="svc-mcard__label">Modality</span>
+                        <span className="svc-mcard__val">{m.modality || '\u2014'}</span>
+                      </div>
+                      <div className="svc-mcard__field">
+                        <span className="svc-mcard__label">Customer</span>
+                        <span className="svc-mcard__val">{m.customerName || '\u2014'}</span>
+                      </div>
+                      {m.location && (
+                        <div className="svc-mcard__field">
+                          <span className="svc-mcard__label">Location</span>
+                          <span className="svc-mcard__val">{m.location}</span>
+                        </div>
+                      )}
+                      <div className="svc-mcard__field">
+                        <span className="svc-mcard__label">Next Maint.</span>
+                        <span className="svc-mcard__val">{fmtDate(m.nextMaintenanceDate)}</span>
+                      </div>
+                      <div className="svc-mcard__field">
+                        <span className="svc-mcard__label">Contract</span>
+                        <span className="svc-mcard__val">{m.contractType || '\u2014'}</span>
+                      </div>
+                      <div className="svc-mcard__field">
+                        <span className="svc-mcard__label">Contract End</span>
+                        <span className="svc-mcard__val">{fmtDate(m.contractEnd)}</span>
+                      </div>
+                    </>
                   )}
-                  <div className="svc-mcard__field">
-                    <span className="svc-mcard__label">Next Maint.</span>
-                    <span className="svc-mcard__val">{fmtDate(m.nextMaintenanceDate)}</span>
-                  </div>
-                  <div className="svc-mcard__field">
-                    <span className="svc-mcard__label">Contract</span>
-                    <span className="svc-mcard__val">{m.contractType || '\u2014'}</span>
-                  </div>
-                  <div className="svc-mcard__field">
-                    <span className="svc-mcard__label">Contract End</span>
-                    <span className="svc-mcard__val">{fmtDate(m.contractEnd)}</span>
-                  </div>
                 </div>
                 {m.remark && <div className="svc-mcard__remark">{m.remark}</div>}
               </div>
@@ -976,7 +1481,7 @@ function Registry({
 
 // ─── Main ServicePage ─────────────────────────────────────────────────────────
 
-export default function ServicePage({ notify, machines, setMachines }) {
+export default function ServicePage({ isAdmin = false, notify, machines, setMachines }) {
   const [subPage, setSubPage] = useState('dashboard'); // 'dashboard' | 'machines'
   const [summary, setSummary] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -984,28 +1489,37 @@ export default function ServicePage({ notify, machines, setMachines }) {
   const [filterModality, setFilterModality] = useState('All');
   const [filterContract, setFilterContract] = useState('All');
   const [filterMaint, setFilterMaint] = useState('All');
+  const [filterCountry, setFilterCountry] = useState('All');
+  const [region, setRegion] = useState('local'); // 'local' | 'overseas'
   const [showModal, setShowModal] = useState(false);
   const [editMachine, setEditMachine] = useState(null);
   const [deleteMachine, setDeleteMachine] = useState(null);
   const [showImport, setShowImport] = useState(false);
   const [saving, setSaving] = useState(false);
 
-  // Load data
+  // Load data (region-scoped). Summary is recomputed when region changes.
   const loadData = useCallback(async () => {
     setLoading(true);
-    const [mRes, sRes] = await Promise.all([api.getMachines(), api.getMachineSummary()]);
+    const [mRes, sRes] = await Promise.all([api.getMachines(), api.getMachineSummary({ region })]);
     if (mRes) setMachines(mRes);
     if (sRes) setSummary(sRes);
     setLoading(false);
-  }, [setMachines]);
+  }, [setMachines, region]);
 
   useEffect(() => {
     void loadData(); // eslint-disable-line react-hooks/set-state-in-effect
   }, [loadData]);
 
-  // Filter machines client-side for instant feedback
+  // Reset non-applicable filters when region changes to avoid a stuck filter
+  useEffect(() => {
+    setFilterModality('All');
+    setFilterCountry('All');
+    setFilterMaint('All');
+  }, [region]);
+
+  // Filter machines client-side: first by region, then by search/filters
   const filtered = useMemo(() => {
-    let list = [...machines];
+    let list = machines.filter((m) => (m.region || 'local') === region);
     if (search) {
       const q = search.toLowerCase();
       list = list.filter(
@@ -1013,48 +1527,79 @@ export default function ServicePage({ notify, machines, setMachines }) {
           (m.serialNumber || '').toLowerCase().includes(q) ||
           (m.customerName || '').toLowerCase().includes(q) ||
           (m.name || '').toLowerCase().includes(q) ||
-          (m.modality || '').toLowerCase().includes(q),
+          (m.modality || '').toLowerCase().includes(q) ||
+          (m.country || '').toLowerCase().includes(q),
       );
     }
     if (filterModality !== 'All') list = list.filter((m) => m.modality === filterModality);
+    if (filterCountry !== 'All') list = list.filter((m) => m.country === filterCountry);
     if (filterContract !== 'All') list = list.filter((m) => contractStatus(m) === filterContract);
     if (filterMaint !== 'All') list = list.filter((m) => maintenanceStatus(m) === filterMaint);
     return list;
-  }, [machines, search, filterModality, filterContract, filterMaint]);
+  }, [machines, region, search, filterModality, filterCountry, filterContract, filterMaint]);
 
   const uniqueModalities = useMemo(
-    () => [...new Set(machines.map((m) => m.modality).filter(Boolean))].sort(),
-    [machines],
+    () =>
+      [
+        ...new Set(
+          machines.filter((m) => (m.region || 'local') === region).map((m) => m.modality).filter(Boolean),
+        ),
+      ].sort(),
+    [machines, region],
+  );
+
+  const uniqueCountries = useMemo(
+    () =>
+      [
+        ...new Set(
+          machines.filter((m) => (m.region || 'local') === region).map((m) => m.country).filter(Boolean),
+        ),
+      ].sort(),
+    [machines, region],
   );
 
   // CRUD handlers
   const handleSave = async (form) => {
     setSaving(true);
-    const payload = { ...form };
-    // Clean empty optional dates
-    ['lastMaintenanceDate', 'nextMaintenanceDate', 'contractStart', 'contractEnd'].forEach((k) => {
+    const payload = { ...form, region: form.region || region };
+    // Clean empty optional dates (local + overseas)
+    [
+      'lastMaintenanceDate',
+      'nextMaintenanceDate',
+      'contractStart',
+      'contractEnd',
+      'deliveryDate',
+      'installDate',
+      'warrantyStart',
+      'warrantyEnd',
+      'iqoqDate',
+    ].forEach((k) => {
       if (!payload[k]) payload[k] = null;
+    });
+    // Coerce numeric fields (blank → null so NULL is stored)
+    ['price', 'iqoqPrice'].forEach((k) => {
+      if (payload[k] === '' || payload[k] === undefined) payload[k] = null;
+      else if (payload[k] !== null) payload[k] = Number(payload[k]);
     });
     let result;
     if (editMachine?.id) {
       result = await api.updateMachine(editMachine.id, payload);
       if (result) {
         setMachines((prev) => prev.map((m) => (m.id === result.id ? result : m)));
-        notify?.('Machine Updated', `${result.name || result.serialNumber} updated`, 'success');
+        notify?.('Instrument Updated', `${result.name || result.serialNumber} updated`, 'success');
       }
     } else {
       result = await api.createMachine(payload);
       if (result) {
         setMachines((prev) => [result, ...prev]);
-        notify?.('Machine Added', `${result.name || result.serialNumber} added`, 'success');
+        notify?.('Instrument Added', `${result.name || result.serialNumber} added`, 'success');
       }
     }
-    if (!result) notify?.('Save Failed', 'Could not save machine. Please retry.', 'error');
+    if (!result) notify?.('Save Failed', 'Could not save instrument. Please retry.', 'error');
     setSaving(false);
     setShowModal(false);
     setEditMachine(null);
-    // Refresh summary
-    const sRes = await api.getMachineSummary();
+    const sRes = await api.getMachineSummary({ region });
     if (sRes) setSummary(sRes);
   };
 
@@ -1064,47 +1609,74 @@ export default function ServicePage({ notify, machines, setMachines }) {
       setMachines((prev) => prev.filter((m) => m.id !== machine.id));
       notify?.('Deleted', `${machine.name || machine.serialNumber} removed`, 'success');
     } else {
-      notify?.('Delete Failed', 'Could not delete machine.', 'error');
+      notify?.('Delete Failed', 'Could not delete instrument.', 'error');
     }
     setDeleteMachine(null);
-    const sRes = await api.getMachineSummary();
+    const sRes = await api.getMachineSummary({ region });
     if (sRes) setSummary(sRes);
   };
 
   const handleImportDone = (newMachines) => {
     setMachines((prev) => [...newMachines, ...prev]);
     setShowImport(false);
-    notify?.('Import Complete', `${newMachines.length} machine(s) imported`, 'success');
-    api.getMachineSummary().then((sRes) => {
+    notify?.('Import Complete', `${newMachines.length} instrument(s) imported`, 'success');
+    api.getMachineSummary({ region }).then((sRes) => {
       if (sRes) setSummary(sRes);
     });
   };
 
-  // Export to Excel
+  // Export to Excel (region-specific columns)
   const handleExport = () => {
-    const rows = filtered.map((m) => ({
-      'Machine Name': m.name || '',
-      'Serial Number': m.serialNumber || '',
-      Modality: m.modality || '',
-      Location: m.location || '',
-      Status: m.status || '',
-      Customer: m.customerName || '',
-      'Contact Person': m.customerContact || '',
-      'Contact Email': m.customerEmail || '',
-      'Maintenance Period (m)': m.maintenancePeriodMonths || '',
-      'Last Maintenance': m.lastMaintenanceDate || '',
-      'Next Maintenance': m.nextMaintenanceDate || '',
-      'Maint. Status': maintenanceStatus(m),
-      'Contract Type': m.contractType || '',
-      'Contract Start': m.contractStart || '',
-      'Contract End': m.contractEnd || '',
-      'Contract Status': contractStatus(m),
-      Remark: m.remark || '',
-    }));
+    const isOverseas = region === 'overseas';
+    const rows = filtered.map((m) =>
+      isOverseas
+        ? {
+            Country: m.country || '',
+            Inst: m.name || '',
+            SN: m.serialNumber || '',
+            Location: m.location || '',
+            'Delivery Date': m.deliveryDate || '',
+            'Installation Date': m.installDate || '',
+            'Warranty Start': m.warrantyStart || '',
+            'Warranty End': m.warrantyEnd || '',
+            'Days Left': daysLeftFromToday(m.warrantyEnd) ?? '',
+            'PM Spare part': m.pmSparePart || '',
+            'SAP Code': m.sapCode || '',
+            'Proposed Service Contract': m.proposedServiceContract || '',
+            Price: m.price ?? '',
+            'Contract Start': m.contractStart || '',
+            'Contract End': m.contractEnd || '',
+            'Contract Status': contractStatus(m),
+            IQOQ: m.iqoq || '',
+            'IQOQ Date': m.iqoqDate || '',
+            'IQOQ Price': m.iqoqPrice ?? '',
+          }
+        : {
+            'Instrument Name': m.name || '',
+            'Serial Number': m.serialNumber || '',
+            Modality: m.modality || '',
+            Location: m.location || '',
+            Status: m.status || '',
+            Customer: m.customerName || '',
+            'Contact Person': m.customerContact || '',
+            'Contact Email': m.customerEmail || '',
+            'Maintenance Period (m)': m.maintenancePeriodMonths || '',
+            'Last Maintenance': m.lastMaintenanceDate || '',
+            'Next Maintenance': m.nextMaintenanceDate || '',
+            'Maint. Status': maintenanceStatus(m),
+            'Contract Type': m.contractType || '',
+            'Contract Start': m.contractStart || '',
+            'Contract End': m.contractEnd || '',
+            'Contract Status': contractStatus(m),
+            Remark: m.remark || '',
+          },
+    );
     const ws = XLSX.utils.json_to_sheet(rows);
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Service Machines');
-    XLSX.writeFile(wb, `service-machines-${today()}.xlsx`);
+    const sheetName = isOverseas ? 'Overseas Instruments' : 'Service Instruments';
+    const filePrefix = isOverseas ? 'overseas-instruments' : 'service-instruments';
+    XLSX.utils.book_append_sheet(wb, ws, sheetName);
+    XLSX.writeFile(wb, `${filePrefix}-${today()}.xlsx`);
   };
 
   // ── Render ────────────────────────────────────────────────────────────────
@@ -1125,8 +1697,24 @@ export default function ServicePage({ notify, machines, setMachines }) {
             className={`svc-subnav-btn ${subPage === 'machines' ? 'active' : ''}`}
             onClick={() => setSubPage('machines')}
           >
-            <List size={15} /> Machine Registry
+            <List size={15} /> Instrument Registry
           </button>
+          <div className="svc-region-toggle" role="group" aria-label="Instrument region">
+            <button
+              type="button"
+              className={`svc-region-btn ${region === 'local' ? 'active' : ''}`}
+              onClick={() => setRegion('local')}
+            >
+              <Home size={13} /> Local
+            </button>
+            <button
+              type="button"
+              className={`svc-region-btn ${region === 'overseas' ? 'active' : ''}`}
+              onClick={() => setRegion('overseas')}
+            >
+              <Globe size={13} /> Overseas
+            </button>
+          </div>
           <div style={{ marginLeft: 'auto' }}>
             <button className="svc-icon-btn" onClick={loadData} title="Refresh" disabled={loading}>
               <RefreshCw size={15} className={loading ? 'svc-spin' : ''} />
@@ -1136,9 +1724,14 @@ export default function ServicePage({ notify, machines, setMachines }) {
 
         {/* Content */}
         {subPage === 'dashboard' ? (
-          <Dashboard summary={summary} machines={machines} />
+          <Dashboard
+            summary={summary}
+            machines={machines.filter((m) => (m.region || 'local') === region)}
+            region={region}
+          />
         ) : (
           <Registry
+            region={region}
             search={search}
             setSearch={setSearch}
             filtered={filtered}
@@ -1149,7 +1742,10 @@ export default function ServicePage({ notify, machines, setMachines }) {
             setFilterContract={setFilterContract}
             filterMaint={filterMaint}
             setFilterMaint={setFilterMaint}
+            filterCountry={filterCountry}
+            setFilterCountry={setFilterCountry}
             uniqueModalities={uniqueModalities}
+            uniqueCountries={uniqueCountries}
             handleExport={handleExport}
             setShowImport={setShowImport}
             setEditMachine={setEditMachine}
@@ -1162,6 +1758,7 @@ export default function ServicePage({ notify, machines, setMachines }) {
         {showModal && (
           <MachineModal
             machine={editMachine}
+            region={region}
             onSave={handleSave}
             onClose={() => {
               setShowModal(false);
@@ -1173,7 +1770,14 @@ export default function ServicePage({ notify, machines, setMachines }) {
         {deleteMachine && (
           <DeleteConfirm machine={deleteMachine} onConfirm={handleDelete} onClose={() => setDeleteMachine(null)} />
         )}
-        {showImport && <ImportModal onImport={handleImportDone} onClose={() => setShowImport(false)} />}
+        {showImport && (
+          <ImportModal
+            isAdmin={isAdmin}
+            region={region}
+            onImport={handleImportDone}
+            onClose={() => setShowImport(false)}
+          />
+        )}
       </div>
     </>
   );
@@ -1228,6 +1832,33 @@ const SERVICE_CSS = `
 }
 .svc-subnav-btn:hover { background: var(--svc-surface-2); color: var(--svc-text); }
 .svc-subnav-btn.active { background: var(--svc-primary); color: #fff; }
+
+/* Region toggle (Local vs Overseas) */
+.svc-region-toggle {
+  display: inline-flex;
+  margin-left: 16px;
+  padding: 3px;
+  gap: 2px;
+  border-radius: 8px;
+  background: var(--svc-surface-2);
+  border: 1px solid var(--svc-border);
+}
+.svc-region-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 12px;
+  border: none;
+  background: transparent;
+  color: var(--svc-text-muted);
+  font-size: 12.5px;
+  font-weight: 500;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.svc-region-btn:hover { color: var(--svc-text); }
+.svc-region-btn.active { background: var(--svc-primary); color: #fff; }
 
 /* Dashboard */
 .svc-dashboard { padding: 24px 20px; }

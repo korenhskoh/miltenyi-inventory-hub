@@ -41,6 +41,10 @@ const PORT = process.env.PORT || 3001;
 
 // Security Middleware
 app.use(helmet({ contentSecurityPolicy: false })); // CSP off for SPA inline styles
+if (process.env.NODE_ENV === 'production' && !process.env.FRONTEND_URL) {
+  logger.error('FATAL: FRONTEND_URL must be set in production (CORS allowlist)');
+  process.exit(1);
+}
 app.use(
   cors({
     origin: process.env.FRONTEND_URL || true,
@@ -621,6 +625,16 @@ app.post('/api/send-email', verifyToken, async (req, res) => {
     if (!to || !subject || !html || !smtp?.host) {
       return res.status(400).json({ error: 'Missing required fields: to, subject, html, smtp.host' });
     }
+    // Reject SMTP header injection: CR/LF in recipient or subject can smuggle headers (BCC, etc.)
+    const hasCrlf = (v) =>
+      typeof v === 'string'
+        ? /[\r\n]/.test(v)
+        : Array.isArray(v)
+          ? v.some((x) => typeof x === 'string' && /[\r\n]/.test(x))
+          : false;
+    if (hasCrlf(to) || hasCrlf(subject) || hasCrlf(smtp.from)) {
+      return res.status(400).json({ error: 'Invalid characters in email headers' });
+    }
     const port = Number(smtp.port) || 587;
     const transporter = nodemailer.createTransport({
       host: smtp.host,
@@ -628,7 +642,7 @@ app.post('/api/send-email', verifyToken, async (req, res) => {
       secure: port === 465,
       requireTLS: port === 587,
       auth: smtp.user ? { user: smtp.user, pass: smtp.pass } : undefined,
-      tls: { rejectUnauthorized: false, minVersion: 'TLSv1.2' },
+      tls: { rejectUnauthorized: smtp.allowSelfSigned !== true, minVersion: 'TLSv1.2' },
     });
     const mailOpts = {
       from: smtp.from || `"Miltenyi Inventory Hub" <${smtp.user || 'noreply@miltenyibiotec.com'}>`,
