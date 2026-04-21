@@ -204,6 +204,21 @@ CREATE INDEX IF NOT EXISTS idx_machines_customer ON machines(customer_name);
 CREATE INDEX IF NOT EXISTS idx_machines_next_maint ON machines(next_maintenance_date);
 CREATE INDEX IF NOT EXISTS idx_machines_contract_end ON machines(contract_end);
 
+-- Migration: Split instruments into local vs overseas with region-specific fields
+ALTER TABLE machines ADD COLUMN IF NOT EXISTS region VARCHAR(20) DEFAULT 'local';
+ALTER TABLE machines ADD COLUMN IF NOT EXISTS country VARCHAR(100);
+ALTER TABLE machines ADD COLUMN IF NOT EXISTS delivery_date DATE;
+ALTER TABLE machines ADD COLUMN IF NOT EXISTS warranty_start DATE;
+ALTER TABLE machines ADD COLUMN IF NOT EXISTS warranty_end DATE;
+ALTER TABLE machines ADD COLUMN IF NOT EXISTS pm_spare_part TEXT;
+ALTER TABLE machines ADD COLUMN IF NOT EXISTS sap_code VARCHAR(100);
+ALTER TABLE machines ADD COLUMN IF NOT EXISTS proposed_service_contract TEXT;
+ALTER TABLE machines ADD COLUMN IF NOT EXISTS price NUMERIC(12,2);
+ALTER TABLE machines ADD COLUMN IF NOT EXISTS iqoq VARCHAR(20);
+ALTER TABLE machines ADD COLUMN IF NOT EXISTS iqoq_date DATE;
+ALTER TABLE machines ADD COLUMN IF NOT EXISTS iqoq_price NUMERIC(12,2);
+CREATE INDEX IF NOT EXISTS idx_machines_region ON machines(region);
+
 -- Local Inventory table for service spare parts tracking
 CREATE TABLE IF NOT EXISTS local_inventory (
   id SERIAL PRIMARY KEY,

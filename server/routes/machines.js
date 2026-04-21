@@ -25,14 +25,38 @@ const MACHINE_FIELDS = [
   'contract_end',
   'contract_type',
   'remark',
+  // Region split + overseas-specific
+  'region',
+  'country',
+  'delivery_date',
+  'warranty_start',
+  'warranty_end',
+  'pm_spare_part',
+  'sap_code',
+  'proposed_service_contract',
+  'price',
+  'iqoq',
+  'iqoq_date',
+  'iqoq_price',
 ];
 
-// GET /summary — dashboard counts
+const VALID_REGIONS = new Set(['local', 'overseas']);
+function normalizeRegion(r) {
+  return VALID_REGIONS.has(r) ? r : 'local';
+}
+
+// GET /summary — dashboard counts (optionally scoped by region)
 router.get(
   '/summary',
-  asyncHandler(async (_req, res) => {
+  asyncHandler(async (req, res) => {
     const today = new Date().toISOString().slice(0, 10);
     const in30 = new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10);
+    const params = [today, in30];
+    let regionClause = '';
+    if (req.query.region && VALID_REGIONS.has(req.query.region)) {
+      params.push(req.query.region);
+      regionClause = ` WHERE region = $${params.length}`;
+    }
 
     const r = await query(
       `
@@ -43,9 +67,9 @@ router.get(
         COUNT(*) FILTER (WHERE contract_end IS NOT NULL AND contract_end >= $1) AS active_contracts,
         COUNT(*) FILTER (WHERE contract_end IS NOT NULL AND contract_end BETWEEN $1 AND $2) AS expiring_contracts,
         COUNT(*) FILTER (WHERE contract_end IS NOT NULL AND contract_end < $1) AS expired_contracts
-      FROM machines
+      FROM machines${regionClause}
     `,
-      [today, in30],
+      params,
     );
 
     res.json({
@@ -63,7 +87,7 @@ router.get(
 router.get(
   '/',
   asyncHandler(async (req, res) => {
-    const { modality, customer, contractStatus, maintenanceDue, search } = req.query;
+    const { modality, customer, contractStatus, maintenanceDue, search, region } = req.query;
     const { page, pageSize, offset } = paginate(req.query);
     const conditions = [];
     const params = [];
@@ -71,6 +95,10 @@ router.get(
     const today = new Date().toISOString().slice(0, 10);
     const in30 = new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10);
 
+    if (region && VALID_REGIONS.has(region)) {
+      conditions.push(`region = $${pi++}`);
+      params.push(region);
+    }
     if (modality) {
       conditions.push(`modality = $${pi++}`);
       params.push(modality);
@@ -141,6 +169,7 @@ router.post(
         }
         if (!b.name) b.name = b.serial_number;
         if (!b.modality) b.modality = 'Unknown';
+        b.region = normalizeRegion(b.region);
         const keys = Object.keys(b);
         const vals = Object.values(b);
         const ph = keys.map((_, i) => `$${i + 1}`);
@@ -161,8 +190,13 @@ router.post(
   '/',
   asyncHandler(async (req, res) => {
     const b = pickAllowed(camelToSnake(req.body), MACHINE_FIELDS);
+    b.region = normalizeRegion(b.region);
     if (!b.name) b.name = b.serial_number || 'Unnamed';
-    if (!b.modality) return res.status(400).json({ error: 'modality required' });
+    // modality is required for local instruments; overseas instruments may omit it
+    if (!b.modality) {
+      if (b.region === 'local') return res.status(400).json({ error: 'modality required' });
+      b.modality = 'Unknown';
+    }
     const keys = Object.keys(b);
     const vals = Object.values(b);
     const ph = keys.map((_, i) => `$${i + 1}`);

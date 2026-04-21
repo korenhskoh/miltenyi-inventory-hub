@@ -653,9 +653,16 @@ async function getMachines(filters = {}) {
   }
 }
 
-async function getMachineSummary() {
+async function getMachineSummary(filters = {}) {
   try {
-    const res = handleResponse(await fetch(`${BASE}/api/machines/summary`, { headers: authHeadersGet() }));
+    const params = new URLSearchParams();
+    for (const [k, v] of Object.entries(filters)) {
+      if (v !== '' && v !== null && v !== undefined && v !== 'All') params.append(k, v);
+    }
+    const qs = params.toString();
+    const res = handleResponse(
+      await fetch(`${BASE}/api/machines/summary${qs ? `?${qs}` : ''}`, { headers: authHeadersGet() }),
+    );
     if (!res.ok) return null;
     return await res.json();
   } catch {
