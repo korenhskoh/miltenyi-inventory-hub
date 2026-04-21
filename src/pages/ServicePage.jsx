@@ -138,7 +138,7 @@ function Field({ label, children, required }) {
   );
 }
 
-// ─── Machine Modal ────────────────────────────────────────────────────────────
+// ─── Instrument Modal ────────────────────────────────────────────────────────
 
 const EMPTY_MACHINE = {
   name: '',
@@ -196,15 +196,15 @@ function MachineModal({ machine, onSave, onClose, saving }) {
     <div className="svc-modal-overlay" onClick={onClose}>
       <div className="svc-modal" onClick={(e) => e.stopPropagation()}>
         <div className="svc-modal__header">
-          <h2>{machine ? 'Edit Machine' : 'Add Machine'}</h2>
+          <h2>{machine ? 'Edit Instrument' : 'Add Instrument'}</h2>
           <button className="svc-icon-btn" onClick={onClose}>
             <X size={20} />
           </button>
         </div>
         <form onSubmit={handleSubmit} className="svc-modal__body">
-          <div className="svc-section-title">Machine Identity</div>
+          <div className="svc-section-title">Instrument Identity</div>
           <div className="svc-grid-2">
-            <Field label="Machine Name">
+            <Field label="Instrument Name">
               <input
                 className="svc-input"
                 value={form.name}
@@ -374,7 +374,7 @@ function MachineModal({ machine, onSave, onClose, saving }) {
               Cancel
             </button>
             <button type="submit" className="svc-btn svc-btn--primary" disabled={saving}>
-              {saving ? 'Saving...' : machine ? 'Save Changes' : 'Add Machine'}
+              {saving ? 'Saving...' : machine ? 'Save Changes' : 'Add Instrument'}
             </button>
           </div>
         </form>
@@ -390,7 +390,7 @@ function DeleteConfirm({ machine, onConfirm, onClose }) {
     <div className="svc-modal-overlay" onClick={onClose}>
       <div className="svc-modal svc-modal--sm" onClick={(e) => e.stopPropagation()}>
         <div className="svc-modal__header">
-          <h2>Delete Machine</h2>
+          <h2>Delete Instrument</h2>
           <button className="svc-icon-btn" onClick={onClose}>
             <X size={20} />
           </button>
@@ -417,24 +417,83 @@ function DeleteConfirm({ machine, onConfirm, onClose }) {
 // ─── Import Modal ─────────────────────────────────────────────────────────────
 
 const IMPORT_COLUMNS = [
-  { key: 'name', label: 'Machine Name' },
-  { key: 'serialNumber', label: 'Serial Number' },
-  { key: 'modality', label: 'Modality' },
-  { key: 'location', label: 'Location' },
-  { key: 'customerName', label: 'Customer Name' },
-  { key: 'customerContact', label: 'Contact Person' },
-  { key: 'customerEmail', label: 'Contact Email' },
-  { key: 'maintenancePeriodMonths', label: 'Maintenance Period (months)' },
-  { key: 'lastMaintenanceDate', label: 'Last Maintenance Date' },
-  { key: 'nextMaintenanceDate', label: 'Next Maintenance Date' },
-  { key: 'contractType', label: 'Contract Type' },
-  { key: 'contractStart', label: 'Contract Start Date' },
-  { key: 'contractEnd', label: 'Contract End Date' },
-  { key: 'status', label: 'Status' },
-  { key: 'remark', label: 'Remark' },
+  {
+    key: 'name',
+    label: 'Instrument Name',
+    aliases: ['machine name', 'equipment name', 'device name', 'instrument', 'instrumentname', 'name'],
+  },
+  {
+    key: 'serialNumber',
+    label: 'Serial Number',
+    aliases: ['serial no', 'serial', 'sn', 'serialno', 'serialnumber'],
+  },
+  { key: 'modality', label: 'Modality', aliases: ['type', 'category', 'device type', 'instrument type'] },
+  { key: 'location', label: 'Location', aliases: ['site', 'lab', 'room', 'building'] },
+  {
+    key: 'customerName',
+    label: 'Customer Name',
+    aliases: ['customer', 'organization', 'org', 'company', 'client', 'account'],
+  },
+  {
+    key: 'customerContact',
+    label: 'Contact Person',
+    aliases: ['contact', 'contact name', 'poc', 'person in charge'],
+  },
+  {
+    key: 'customerEmail',
+    label: 'Contact Email',
+    aliases: ['email', 'customer email', 'contact e-mail', 'e-mail'],
+  },
+  {
+    key: 'maintenancePeriodMonths',
+    label: 'Maintenance Period (months)',
+    aliases: ['period', 'maintenance period', 'maint period', 'service period', 'pm period'],
+  },
+  {
+    key: 'lastMaintenanceDate',
+    label: 'Last Maintenance Date',
+    aliases: ['last service', 'last pm', 'last maint', 'last maintenance', 'previous maintenance'],
+  },
+  {
+    key: 'nextMaintenanceDate',
+    label: 'Next Maintenance Date',
+    aliases: ['next service', 'next pm', 'next maint', 'next maintenance', 'upcoming maintenance'],
+  },
+  { key: 'contractType', label: 'Contract Type', aliases: ['contract'] },
+  {
+    key: 'contractStart',
+    label: 'Contract Start Date',
+    aliases: ['contract start', 'start date', 'contract from'],
+  },
+  {
+    key: 'contractEnd',
+    label: 'Contract End Date',
+    aliases: ['contract end', 'end date', 'contract to', 'expiry', 'expiry date'],
+  },
+  { key: 'status', label: 'Status', aliases: ['state'] },
+  { key: 'remark', label: 'Remark', aliases: ['note', 'notes', 'comment', 'comments', 'remarks'] },
 ];
 
-function ImportModal({ onImport, onClose }) {
+// Normalize a header for fuzzy matching: lowercase, strip punctuation/whitespace
+function normalizeHeader(s) {
+  return String(s ?? '')
+    .toLowerCase()
+    .replace(/[\s_/()\-.,:;]/g, '');
+}
+
+// Auto-map spreadsheet headers to our canonical column keys via label/key/alias match
+function autoMapColumns(headers) {
+  const normHeaders = headers.map((h) => ({ raw: h, norm: normalizeHeader(h) }));
+  const map = {};
+  for (const { key, label, aliases = [] } of IMPORT_COLUMNS) {
+    const candidates = [label, key, ...aliases].map(normalizeHeader);
+    const hit = normHeaders.find((h) => candidates.includes(h.norm));
+    if (hit) map[key] = hit.raw;
+  }
+  return map;
+}
+
+function ImportModal({ isAdmin, onImport, onClose }) {
   const [step, setStep] = useState('upload'); // upload | map | preview | done
   const [headers, setHeaders] = useState([]);
   const [rows, setRows] = useState([]);
@@ -457,17 +516,7 @@ function ImportModal({ onImport, onClose }) {
       const hdrs = data[0].map(String);
       setHeaders(hdrs);
       setRows(data.slice(1).filter((r) => r.some((c) => c !== '' && c !== null && c !== undefined)));
-      // Auto-map: fuzzy match headers
-      const autoMap = {};
-      IMPORT_COLUMNS.forEach(({ key, label }) => {
-        const match = hdrs.find(
-          (h) =>
-            h.toLowerCase().replace(/[\s_/()-]/g, '') === label.toLowerCase().replace(/[\s_/()-]/g, '') ||
-            h.toLowerCase().replace(/[\s_/()-]/g, '') === key.toLowerCase(),
-        );
-        if (match) autoMap[key] = match;
-      });
-      setColMap(autoMap);
+      setColMap(autoMapColumns(hdrs));
       setStep('map');
     };
     reader.readAsArrayBuffer(f);
@@ -512,7 +561,7 @@ function ImportModal({ onImport, onClose }) {
     <div className="svc-modal-overlay" onClick={onClose}>
       <div className="svc-modal svc-modal--lg" onClick={(e) => e.stopPropagation()}>
         <div className="svc-modal__header">
-          <h2>Import Machines from Excel / CSV</h2>
+          <h2>Import Instruments from Excel / CSV</h2>
           <button className="svc-icon-btn" onClick={onClose}>
             <X size={20} />
           </button>
@@ -534,8 +583,13 @@ function ImportModal({ onImport, onClose }) {
 
           {step === 'map' && (
             <>
-              <p style={{ marginBottom: 16, color: 'var(--svc-text-muted)' }}>
-                <strong>{fileName}</strong> — {rows.length} data rows detected. Map your columns:
+              <p style={{ marginBottom: 4, color: 'var(--svc-text-muted)' }}>
+                <strong>{fileName}</strong> — {rows.length} data rows detected.
+              </p>
+              <p style={{ marginBottom: 16, fontSize: 12, color: 'var(--svc-text-subtle)' }}>
+                {isAdmin
+                  ? 'Columns were auto-mapped from your headers. Adjust any mapping below before importing.'
+                  : 'Columns were auto-mapped from your headers. Ask an admin to adjust the mapping if anything is off.'}
               </p>
               <div className="svc-grid-2" style={{ maxHeight: 400, overflowY: 'auto' }}>
                 {IMPORT_COLUMNS.map(({ key, label }) => (
@@ -544,6 +598,7 @@ function ImportModal({ onImport, onClose }) {
                     <select
                       className="svc-select"
                       value={colMap[key] || ''}
+                      disabled={!isAdmin}
                       onChange={(e) => setColMap((p) => ({ ...p, [key]: e.target.value || undefined }))}
                     >
                       <option value="">— Skip —</option>
@@ -572,7 +627,7 @@ function ImportModal({ onImport, onClose }) {
               <CheckCircle size={48} style={{ color: '#22c55e', marginBottom: 12 }} />
               <h3 style={{ marginBottom: 8 }}>Import Complete</h3>
               <p style={{ color: 'var(--svc-text-muted)' }}>
-                ✅ {result.inserted} machine(s) imported successfully
+                ✅ {result.inserted} instrument(s) imported successfully
                 {result.errors?.length > 0 && (
                   <span style={{ color: '#ef4444' }}>, ⚠️ {result.errors.length} row(s) failed</span>
                 )}
@@ -595,7 +650,7 @@ function Dashboard({ summary, machines }) {
     <div className="svc-dashboard">
       <div className="svc-dash-grid">
         <SummaryCard
-          label="Total Machines"
+          label="Total Instruments"
           value={summary?.total ?? machines.length}
           icon={<Wrench size={22} />}
           color="blue"
@@ -650,14 +705,14 @@ function Dashboard({ summary, machines }) {
         ).length === 0 ? (
           <div className="svc-empty-alert">
             <CheckCircle size={32} style={{ color: '#22c55e' }} />
-            <p>All machines are up to date. No action required!</p>
+            <p>All instruments are up to date. No action required!</p>
           </div>
         ) : (
           <div className="svc-alert-table-wrapper">
             <table className="svc-table">
               <thead>
                 <tr>
-                  <th>Machine</th>
+                  <th>Instrument</th>
                   <th>Serial No</th>
                   <th>Customer</th>
                   <th>Modality</th>
@@ -728,7 +783,7 @@ function Registry({
           <Search size={15} className="svc-search-icon" />
           <input
             className="svc-search"
-            placeholder="Search serial, customer, machine, modality\u2026"
+            placeholder="Search serial, customer, instrument, modality\u2026"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
@@ -789,14 +844,14 @@ function Registry({
               setShowModal(true);
             }}
           >
-            <Plus size={14} /> Add Machine
+            <Plus size={14} /> Add Instrument
           </button>
         </div>
       </div>
 
       {/* Result count */}
       <div className="svc-result-count">
-        {loading ? 'Loading\u2026' : `${filtered.length} machine${filtered.length !== 1 ? 's' : ''} found`}
+        {loading ? 'Loading\u2026' : `${filtered.length} instrument${filtered.length !== 1 ? 's' : ''} found`}
       </div>
 
       {/* Desktop Table */}
@@ -806,7 +861,7 @@ function Registry({
             <tr>
               <th>#</th>
               <th>Serial No</th>
-              <th>Machine Name</th>
+              <th>Instrument Name</th>
               <th>Modality</th>
               <th>Customer</th>
               <th>Maint. Period</th>
@@ -825,7 +880,7 @@ function Registry({
             {filtered.length === 0 ? (
               <tr>
                 <td colSpan={15} style={{ textAlign: 'center', padding: '40px 0', color: 'var(--svc-text-muted)' }}>
-                  {loading ? 'Loading machines\u2026' : 'No machines found. Add one to get started.'}
+                  {loading ? 'Loading instruments\u2026' : 'No instruments found. Add one to get started.'}
                 </td>
               </tr>
             ) : (
@@ -899,7 +954,7 @@ function Registry({
       <div className="svc-mobile-only">
         {filtered.length === 0 ? (
           <div className="svc-mobile-empty">
-            {loading ? 'Loading machines\u2026' : 'No machines found. Add one to get started.'}
+            {loading ? 'Loading instruments\u2026' : 'No instruments found. Add one to get started.'}
           </div>
         ) : (
           filtered.map((m, i) => {
@@ -910,7 +965,7 @@ function Registry({
                 <div className="svc-mcard__head">
                   <div className="svc-mcard__title">
                     <span className="svc-mcard__num">#{i + 1}</span>
-                    <span className="svc-mcard__name">{m.name || m.modality || 'Machine'}</span>
+                    <span className="svc-mcard__name">{m.name || m.modality || 'Instrument'}</span>
                   </div>
                   <div className="svc-mcard__actions">
                     <button
@@ -976,7 +1031,7 @@ function Registry({
 
 // ─── Main ServicePage ─────────────────────────────────────────────────────────
 
-export default function ServicePage({ notify, machines, setMachines }) {
+export default function ServicePage({ isAdmin = false, notify, machines, setMachines }) {
   const [subPage, setSubPage] = useState('dashboard'); // 'dashboard' | 'machines'
   const [summary, setSummary] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -1040,16 +1095,16 @@ export default function ServicePage({ notify, machines, setMachines }) {
       result = await api.updateMachine(editMachine.id, payload);
       if (result) {
         setMachines((prev) => prev.map((m) => (m.id === result.id ? result : m)));
-        notify?.('Machine Updated', `${result.name || result.serialNumber} updated`, 'success');
+        notify?.('Instrument Updated', `${result.name || result.serialNumber} updated`, 'success');
       }
     } else {
       result = await api.createMachine(payload);
       if (result) {
         setMachines((prev) => [result, ...prev]);
-        notify?.('Machine Added', `${result.name || result.serialNumber} added`, 'success');
+        notify?.('Instrument Added', `${result.name || result.serialNumber} added`, 'success');
       }
     }
-    if (!result) notify?.('Save Failed', 'Could not save machine. Please retry.', 'error');
+    if (!result) notify?.('Save Failed', 'Could not save instrument. Please retry.', 'error');
     setSaving(false);
     setShowModal(false);
     setEditMachine(null);
@@ -1064,7 +1119,7 @@ export default function ServicePage({ notify, machines, setMachines }) {
       setMachines((prev) => prev.filter((m) => m.id !== machine.id));
       notify?.('Deleted', `${machine.name || machine.serialNumber} removed`, 'success');
     } else {
-      notify?.('Delete Failed', 'Could not delete machine.', 'error');
+      notify?.('Delete Failed', 'Could not delete instrument.', 'error');
     }
     setDeleteMachine(null);
     const sRes = await api.getMachineSummary();
@@ -1074,7 +1129,7 @@ export default function ServicePage({ notify, machines, setMachines }) {
   const handleImportDone = (newMachines) => {
     setMachines((prev) => [...newMachines, ...prev]);
     setShowImport(false);
-    notify?.('Import Complete', `${newMachines.length} machine(s) imported`, 'success');
+    notify?.('Import Complete', `${newMachines.length} instrument(s) imported`, 'success');
     api.getMachineSummary().then((sRes) => {
       if (sRes) setSummary(sRes);
     });
@@ -1083,7 +1138,7 @@ export default function ServicePage({ notify, machines, setMachines }) {
   // Export to Excel
   const handleExport = () => {
     const rows = filtered.map((m) => ({
-      'Machine Name': m.name || '',
+      'Instrument Name': m.name || '',
       'Serial Number': m.serialNumber || '',
       Modality: m.modality || '',
       Location: m.location || '',
@@ -1103,8 +1158,8 @@ export default function ServicePage({ notify, machines, setMachines }) {
     }));
     const ws = XLSX.utils.json_to_sheet(rows);
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Service Machines');
-    XLSX.writeFile(wb, `service-machines-${today()}.xlsx`);
+    XLSX.utils.book_append_sheet(wb, ws, 'Service Instruments');
+    XLSX.writeFile(wb, `service-instruments-${today()}.xlsx`);
   };
 
   // ── Render ────────────────────────────────────────────────────────────────
@@ -1125,7 +1180,7 @@ export default function ServicePage({ notify, machines, setMachines }) {
             className={`svc-subnav-btn ${subPage === 'machines' ? 'active' : ''}`}
             onClick={() => setSubPage('machines')}
           >
-            <List size={15} /> Machine Registry
+            <List size={15} /> Instrument Registry
           </button>
           <div style={{ marginLeft: 'auto' }}>
             <button className="svc-icon-btn" onClick={loadData} title="Refresh" disabled={loading}>
@@ -1173,7 +1228,9 @@ export default function ServicePage({ notify, machines, setMachines }) {
         {deleteMachine && (
           <DeleteConfirm machine={deleteMachine} onConfirm={handleDelete} onClose={() => setDeleteMachine(null)} />
         )}
-        {showImport && <ImportModal onImport={handleImportDone} onClose={() => setShowImport(false)} />}
+        {showImport && (
+          <ImportModal isAdmin={isAdmin} onImport={handleImportDone} onClose={() => setShowImport(false)} />
+        )}
       </div>
     </>
   );
