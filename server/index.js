@@ -615,20 +615,50 @@ app.use('/api/config', verifyToken, configRouter);
 app.use('/api/migrate', verifyToken, requireAdmin, migrateRouter);
 
 // Send HTML email via SMTP
+const SMTP_MAX_ATTACHMENTS = 10;
+const SMTP_MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024; // 20 MB decoded
+
 app.post('/api/send-email', verifyToken, async (req, res) => {
   try {
     const { to, subject, html, smtp, attachments } = req.body;
     if (!to || !subject || !html || !smtp?.host) {
       return res.status(400).json({ error: 'Missing required fields: to, subject, html, smtp.host' });
     }
+
+    // Validate attachments before opening an SMTP connection
+    let mailAttachments;
+    if (Array.isArray(attachments) && attachments.length) {
+      if (attachments.length > SMTP_MAX_ATTACHMENTS) {
+        return res.status(400).json({ error: `Too many attachments (max ${SMTP_MAX_ATTACHMENTS})` });
+      }
+      let totalBytes = 0;
+      mailAttachments = attachments.map((a) => {
+        const buf = Buffer.from(a.content || '', 'base64');
+        totalBytes += buf.length;
+        return {
+          filename: a.filename,
+          content: buf,
+          contentType: a.contentType || 'application/octet-stream',
+        };
+      });
+      if (totalBytes > SMTP_MAX_ATTACHMENT_BYTES) {
+        return res.status(413).json({
+          error: `Attachments exceed max total size (${Math.round(SMTP_MAX_ATTACHMENT_BYTES / (1024 * 1024))} MB)`,
+        });
+      }
+    }
+
     const port = Number(smtp.port) || 587;
+    // TLS cert validation defaults to strict. Set SMTP_INSECURE_TLS=1 to
+    // opt out for internal self-signed corporate SMTP chains.
+    const insecureTls = process.env.SMTP_INSECURE_TLS === '1';
     const transporter = nodemailer.createTransport({
       host: smtp.host,
       port,
       secure: port === 465,
       requireTLS: port === 587,
       auth: smtp.user ? { user: smtp.user, pass: smtp.pass } : undefined,
-      tls: { rejectUnauthorized: false, minVersion: 'TLSv1.2' },
+      tls: { rejectUnauthorized: !insecureTls, minVersion: 'TLSv1.2' },
     });
     const mailOpts = {
       from: smtp.from || `"Miltenyi Inventory Hub" <${smtp.user || 'noreply@miltenyibiotec.com'}>`,
@@ -636,13 +666,7 @@ app.post('/api/send-email', verifyToken, async (req, res) => {
       subject,
       html,
     };
-    if (Array.isArray(attachments) && attachments.length) {
-      mailOpts.attachments = attachments.map((a) => ({
-        filename: a.filename,
-        content: Buffer.from(a.content, 'base64'),
-        contentType: a.contentType || 'application/octet-stream',
-      }));
-    }
+    if (mailAttachments) mailOpts.attachments = mailAttachments;
     await transporter.sendMail(mailOpts);
     res.json({ ok: true });
   } catch (err) {

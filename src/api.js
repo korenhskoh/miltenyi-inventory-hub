@@ -9,10 +9,16 @@ function unwrapList(json) {
 
 let _token = null;
 
+// Handle 401 responses (token expired/invalid)
+let _onAuthError = null;
+let _authErrorFired = false;
+
 function setToken(token) {
   _token = token;
   if (token) {
     localStorage.setItem('mih_token', token);
+    // Re-arm the 401 callback so future session expirations are surfaced
+    _authErrorFired = false;
   } else {
     localStorage.removeItem('mih_token');
   }
@@ -38,9 +44,6 @@ function authHeadersGet() {
   return {};
 }
 
-// Handle 401 responses (token expired/invalid)
-let _onAuthError = null;
-let _authErrorFired = false;
 function onAuthError(callback) {
   _onAuthError = callback;
 }
