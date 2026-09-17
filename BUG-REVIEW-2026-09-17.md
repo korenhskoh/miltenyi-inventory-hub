@@ -71,6 +71,11 @@ On first deploy the server runs a one-off repair (`initDb.js`): settings that Se
 9. **Config fail-fast**: production boot exits with a clear message when `JWT_SECRET` is missing; `.env.example` documents `JWT_SECRET`, `FRONTEND_URL`, `TRUST_PROXY_HOPS`.
 10. **localStorage no longer caches business data or config** (orders, users, approvals, SMTP config, …). Only the token, the last-seen user for the pre-load render, and UI preferences remain. An unreachable server shows the login screen with a clear message instead of stale cached data.
 
+## Verification round
+
+- Server booted against a fresh PostgreSQL 16 and exercised with `scripts/smoke-api.mjs` (47 end-to-end checks: registration → activation → permissions, orders/approvals/JSONB, config secrets, machines date handling, inventory transactions with savepoints, stats, catalog/audit/WhatsApp guards) — **all pass**.
+- Built SPA driven in headless Chromium as admin and as a non-admin: login, module picker and all 14 pages render with **no page errors and no API 5xx**. The loader no longer requests the admin-only user list / audit log for users who lack the permission (was two harmless 403s per load).
+
 ## Still worth doing (not bugs)
 
 - `App.jsx` is still ~11k lines. The next extraction candidates are the data-loading layer (`loadAppData`/`refreshPageData`) and the approval-email builders.

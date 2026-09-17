@@ -168,6 +168,11 @@ export default function App() {
       return null;
     }
   });
+  // Ref mirror so callbacks created before a login commit still see the user
+  const currentUserRef = useRef(null);
+  useEffect(() => {
+    currentUserRef.current = currentUser;
+  }, [currentUser]);
   const [authView, setAuthView] = useState('login'); // login | register
   const [loginForm, setLoginForm] = useState({ username: '', password: '' });
   const [regForm, setRegForm] = useState({ username: '', password: '', name: '', email: '', phone: '' });
@@ -1463,7 +1468,13 @@ export default function App() {
 
   // Shared function to load all app data from DB
   // Uses !== null checks: null = API failed (skip), [] = DB empty (set empty state)
-  const loadAppData = useCallback(async () => {
+  // `forUser` lets the mount/login paths pass the freshly authenticated user
+  // before React has committed it to state, so we don't request admin-only
+  // lists (users, audit log) for people who'd just get a 403.
+  const loadAppData = useCallback(async (forUser) => {
+    const u = forUser || currentUserRef.current;
+    const canUsers = u?.role === 'admin';
+    const canAudit = u?.role === 'admin' || u?.permissions?.auditTrail === true;
     try {
       const [
         apiOrders,
@@ -1481,13 +1492,13 @@ export default function App() {
       ] = await Promise.all([
         api.getOrders(),
         api.getBulkGroups(),
-        api.getUsers(),
+        canUsers ? api.getUsers() : Promise.resolve(null),
         api.getStockChecks(),
         api.getNotifLog(),
         api.getApprovals(),
         api.getConfig(),
         api.getCatalog(),
-        api.getAuditLog(),
+        canAudit ? api.getAuditLog() : Promise.resolve(null),
         api.getMachines({ all: true }),
         api.getWishlist(),
         api.getOrderStats(),
@@ -1566,9 +1577,11 @@ export default function App() {
 
       // 2. If we have a stored token, validate session and refresh user from DB
       const hasToken = !!api.getToken();
+      let meUser = null;
       if (hasToken) {
         const meResult = await api.getMe();
         if (meResult && meResult.user) {
+          meUser = meResult.user;
           setCurrentUser(meResult.user); // Fresh data from DB (permissions, role, etc.)
         } else {
           // Either the token is invalid/expired or the server is unreachable.
@@ -1590,7 +1603,7 @@ export default function App() {
       // 3. Load all app data from DB (requires valid token for protected routes).
       //    Without a token, skip the API entirely to avoid a burst of 401s
       //    triggering a spurious "Session Expired" toast.
-      if (hasToken) await loadAppData();
+      if (hasToken) await loadAppData(meUser);
 
       // 4. Check WhatsApp connection status on load
       if (hasToken) {
@@ -3162,7 +3175,7 @@ export default function App() {
       setCurrentUser(result.user);
       setActiveModule(null); // show module picker on fresh login
       api.resetAuthError(); // allow future session-expired toasts
-      await loadAppData(); // fetch all data from DB after login
+      await loadAppData(result.user); // fetch all data from DB after login
       notify(
         `Welcome back, ${result.user.name}`,
         result.user.role === 'admin' ? 'Admin access granted' : 'User access granted',
