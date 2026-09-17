@@ -122,7 +122,8 @@ function mockRes() {
     _status: 200,
     _json: null,
     status(code) { res._status = code; return res; },
-    json(data) { res._json = data; return res; },
+    // List endpoints return a paginated envelope { data, total, page, pageSize }; unwrap it
+    json(data) { res._json = data && Array.isArray(data.data) ? data.data : data; return res; },
   };
   return res;
 }

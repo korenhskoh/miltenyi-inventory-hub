@@ -4,8 +4,39 @@ import logger from '../logger.js';
 
 const router = Router();
 
-// Keys that are shared globally (not per-user)
-const GLOBAL_KEYS = new Set(['aiBotConfig', 'waAutoReply']);
+// Keys that are shared app-wide (not per-user). Everything the scheduler, the
+// public logo endpoint, the WhatsApp bot and the email sender read from
+// user_id = '__global__' MUST be listed here, otherwise Settings writes a
+// per-user row that those server components never see.
+const GLOBAL_KEYS = new Set([
+  'aiBotConfig',
+  'waAutoReply',
+  'scheduledNotifs',
+  'emailConfig',
+  'emailTemplates',
+  'customLogo',
+  'priceConfig',
+  'waNotifyRules',
+  'waAllowedSenders',
+  'waMessageTemplates',
+]);
+export const CONFIG_GLOBAL_KEYS = GLOBAL_KEYS;
+
+// Secrets inside config values that non-admins must never receive.
+// (The server uses the stored values itself — see /api/send-email.)
+const SECRET_PATHS = {
+  emailConfig: ['smtpPass'],
+  aiBotConfig: ['apiKey'],
+};
+
+function stripSecrets(key, value, isAdmin) {
+  if (isAdmin || !SECRET_PATHS[key] || !value || typeof value !== 'object') return value;
+  const copy = { ...value };
+  for (const p of SECRET_PATHS[key]) {
+    if (p in copy) copy[p] = '';
+  }
+  return copy;
+}
 
 // Post-save hooks keyed by config key — registered by the server at startup
 const postSaveHooks = {};
@@ -17,21 +48,29 @@ function effectiveUserId(key, reqUser) {
   return GLOBAL_KEYS.has(key) ? '__global__' : reqUser.id;
 }
 
+/** Read a global config value directly (used by other server modules). */
+export async function getGlobalConfig(key) {
+  const r = await query("SELECT value FROM app_config WHERE key = $1 AND user_id = '__global__'", [key]);
+  return r.rows.length ? r.rows[0].value : null;
+}
+
 // GET / - list all config entries as { [key]: value } object
-// Returns per-user values when they exist, falling back to __global__ defaults
+// Global keys always come from '__global__'; other keys prefer the per-user row.
 router.get('/', async (req, res) => {
   try {
     const userId = req.user.id;
+    const globalKeys = [...GLOBAL_KEYS];
     const result = await query(
       `SELECT DISTINCT ON (key) key, value
        FROM app_config
-       WHERE user_id = $1 OR user_id = '__global__'
+       WHERE user_id = '__global__' OR (user_id = $1 AND NOT (key = ANY($2::text[])))
        ORDER BY key, CASE WHEN user_id = $1 THEN 0 ELSE 1 END`,
-      [userId],
+      [userId, globalKeys],
     );
+    const isAdmin = req.user.role === 'admin';
     const configObj = {};
     for (const row of result.rows) {
-      configObj[row.key] = row.value;
+      configObj[row.key] = stripSecrets(row.key, row.value, isAdmin);
     }
     res.json(configObj);
   } catch (e) {
@@ -44,6 +83,7 @@ router.get('/:key', async (req, res) => {
   try {
     const { key } = req.params;
     const userId = effectiveUserId(key, req.user);
+    const isAdmin = req.user.role === 'admin';
     const result = await query('SELECT * FROM app_config WHERE key = $1 AND user_id = $2', [key, userId]);
 
     // Fallback to global if per-user not found
@@ -52,14 +92,14 @@ router.get('/:key', async (req, res) => {
       if (fallback.rows.length === 0) {
         return res.status(404).json({ error: 'Config key not found' });
       }
-      return res.json(fallback.rows[0].value);
+      return res.json(stripSecrets(key, fallback.rows[0].value, isAdmin));
     }
 
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Config key not found' });
     }
 
-    res.json(result.rows[0].value);
+    res.json(stripSecrets(key, result.rows[0].value, isAdmin));
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -69,7 +109,7 @@ router.get('/:key', async (req, res) => {
 router.put('/:key', async (req, res) => {
   try {
     const { key } = req.params;
-    const { value } = req.body;
+    let { value } = req.body;
 
     // Only admins can modify global keys
     if (GLOBAL_KEYS.has(key) && req.user.role !== 'admin') {
@@ -77,6 +117,16 @@ router.put('/:key', async (req, res) => {
     }
 
     const userId = effectiveUserId(key, req.user);
+
+    // If a client sends back a blanked-out secret, keep the stored one.
+    if (SECRET_PATHS[key] && value && typeof value === 'object') {
+      const current = await query('SELECT value FROM app_config WHERE key = $1 AND user_id = $2', [key, userId]);
+      const stored = current.rows[0]?.value || {};
+      value = { ...value };
+      for (const p of SECRET_PATHS[key]) {
+        if ((value[p] === '' || value[p] === undefined) && stored[p]) value[p] = stored[p];
+      }
+    }
 
     const sql = `
       INSERT INTO app_config (key, user_id, value, updated_at)
@@ -95,7 +145,7 @@ router.put('/:key', async (req, res) => {
       }
     }
 
-    res.json({ key: result.rows[0].key, value: result.rows[0].value });
+    res.json({ key: result.rows[0].key, value: stripSecrets(key, result.rows[0].value, true) });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

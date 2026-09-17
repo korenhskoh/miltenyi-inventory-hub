@@ -1,13 +1,15 @@
 import { Router } from 'express';
-import { query } from '../db.js';
+import { query, withTransaction } from '../db.js';
 import { snakeToCamel, camelToSnake } from '../utils.js';
 import { pickAllowed } from '../validation.js';
-import { paginate, envelope } from '../pagination.js';
+import { paginate, envelope, limitClause } from '../pagination.js';
 import { asyncHandler } from '../middleware/errorHandler.js';
 
 const router = Router();
 
 const INVENTORY_FIELDS = ['material_no', 'description', 'lots_number', 'category', 'quantity'];
+// Metadata-only fields for PUT: quantity changes must go through /adjust so they are logged.
+const INVENTORY_META_FIELDS = ['material_no', 'description', 'lots_number', 'category'];
 
 // GET /summary — dashboard counts
 router.get(
@@ -79,7 +81,7 @@ router.get(
   '/',
   asyncHandler(async (req, res) => {
     const { search, category } = req.query;
-    const { page, pageSize, offset } = paginate(req.query);
+    const { page, pageSize } = paginate(req.query);
     const conditions = [];
     const params = [];
     let pi = 1;
@@ -97,11 +99,13 @@ router.get(
     const where = conditions.length ? ` WHERE ${conditions.join(' AND ')}` : '';
     const countResult = await query(`SELECT COUNT(*) FROM local_inventory${where}`, params);
     const total = parseInt(countResult.rows[0].count);
-    const dataResult = await query(
-      `SELECT * FROM local_inventory${where} ORDER BY updated_at DESC LIMIT $${pi++} OFFSET $${pi++}`,
-      [...params, pageSize, offset],
-    );
-    res.json(envelope(dataResult.rows.map(snakeToCamel), total, page, pageSize));
+    const lim = limitClause(req, pi);
+    const dataResult = await query(`SELECT * FROM local_inventory${where} ORDER BY updated_at DESC${lim.clause}`, [
+      ...params,
+      ...lim.params,
+    ]);
+    const rows = dataResult.rows.map(snakeToCamel);
+    res.json(envelope(rows, total, lim.clause ? page : 1, lim.clause ? pageSize : rows.length));
   }),
 );
 
@@ -139,58 +143,60 @@ router.post(
     const updated = [];
     const errors = [];
 
-    await query('BEGIN');
     try {
-      for (const [idx, item] of items.entries()) {
-        try {
-          const b = pickAllowed(camelToSnake(item), INVENTORY_FIELDS);
-          if (!b.material_no) {
-            errors.push({ row: idx + 1, error: 'material_no required' });
-            continue;
+      await withTransaction(async (tx) => {
+        for (const [idx, item] of items.entries()) {
+          // Per-row savepoint: one bad row must not abort the whole transaction
+          await tx.query('SAVEPOINT row_sp');
+          try {
+            const b = pickAllowed(camelToSnake(item), INVENTORY_FIELDS);
+            if (!b.material_no) {
+              errors.push({ row: idx + 1, error: 'material_no required' });
+              continue;
+            }
+            const lotsKey = b.lots_number || null;
+            const qty = parseInt(b.quantity) || 0;
+
+            const result = await tx.query(
+              `INSERT INTO local_inventory (material_no, description, lots_number, category, quantity)
+               VALUES ($1, $2, $3, $4, $5)
+               ON CONFLICT (material_no, COALESCE(lots_number, '__none__'))
+               DO UPDATE SET description = COALESCE(EXCLUDED.description, local_inventory.description),
+                             category = COALESCE(EXCLUDED.category, local_inventory.category),
+                             quantity = EXCLUDED.quantity,
+                             updated_at = NOW()
+               RETURNING *, (xmax = 0) AS is_insert`,
+              [b.material_no, b.description || null, lotsKey, b.category || null, qty],
+            );
+
+            const row = result.rows[0];
+            const wasInsert = row.is_insert;
+
+            // Log the import transaction
+            await tx.query(
+              `INSERT INTO inventory_transactions (inventory_id, material_no, lots_number, quantity_change, quantity_after, type, user_id, user_name, notes)
+               VALUES ($1, $2, $3, $4, $5, 'import', $6, $7, $8)`,
+              [
+                row.id,
+                b.material_no,
+                lotsKey,
+                qty,
+                qty,
+                req.user?.id || null,
+                req.user?.username || null,
+                `Bulk import row ${idx + 1}`,
+              ],
+            );
+
+            if (wasInsert) inserted.push(snakeToCamel(row));
+            else updated.push(snakeToCamel(row));
+          } catch (e) {
+            await tx.query('ROLLBACK TO SAVEPOINT row_sp');
+            errors.push({ row: idx + 1, error: e.message });
           }
-          const lotsKey = b.lots_number || null;
-          const qty = parseInt(b.quantity) || 0;
-
-          const result = await query(
-            `INSERT INTO local_inventory (material_no, description, lots_number, category, quantity)
-             VALUES ($1, $2, $3, $4, $5)
-             ON CONFLICT (material_no, COALESCE(lots_number, '__none__'))
-             DO UPDATE SET description = COALESCE(EXCLUDED.description, local_inventory.description),
-                           category = COALESCE(EXCLUDED.category, local_inventory.category),
-                           quantity = EXCLUDED.quantity,
-                           updated_at = NOW()
-             RETURNING *, (xmax = 0) AS is_insert`,
-            [b.material_no, b.description || null, lotsKey, b.category || null, qty],
-          );
-
-          const row = result.rows[0];
-          const wasInsert = row.is_insert;
-
-          // Log the import transaction
-          await query(
-            `INSERT INTO inventory_transactions (inventory_id, material_no, lots_number, quantity_change, quantity_after, type, user_id, user_name, notes)
-             VALUES ($1, $2, $3, $4, $5, 'import', $6, $7, $8)`,
-            [
-              row.id,
-              b.material_no,
-              lotsKey,
-              qty,
-              qty,
-              req.user?.id || null,
-              req.user?.username || null,
-              `Bulk import row ${idx + 1}`,
-            ],
-          );
-
-          if (wasInsert) inserted.push(snakeToCamel(row));
-          else updated.push(snakeToCamel(row));
-        } catch (e) {
-          errors.push({ row: idx + 1, error: e.message });
         }
-      }
-      await query('COMMIT');
+      });
     } catch (e) {
-      await query('ROLLBACK');
       return res.status(500).json({ error: e.message });
     }
 
@@ -210,64 +216,66 @@ router.post(
     const processed = [];
     const errors = [];
 
-    await query('BEGIN');
     try {
-      for (const [idx, item] of items.entries()) {
-        try {
-          const materialNo = item.materialNo || item.material_no;
-          const lotsNumber = item.lotsNumber || item.lots_number || null;
-          const qty = Math.abs(parseInt(item.quantity) || 1);
-          const notes = item.notes || '';
+      await withTransaction(async (tx) => {
+        for (const [idx, item] of items.entries()) {
+          // Per-row savepoint: one bad row must not abort the whole transaction
+          await tx.query('SAVEPOINT row_sp');
+          try {
+            const materialNo = item.materialNo || item.material_no;
+            const lotsNumber = item.lotsNumber || item.lots_number || null;
+            const qty = Math.abs(parseInt(item.quantity) || 1);
+            const notes = item.notes || '';
 
-          if (!materialNo) {
-            errors.push({ row: idx + 1, error: 'materialNo required' });
-            continue;
+            if (!materialNo) {
+              errors.push({ row: idx + 1, error: 'materialNo required' });
+              continue;
+            }
+
+            // Atomic check-and-update
+            const lotsCondition = lotsNumber ? `lots_number = $2` : `(lots_number IS NULL OR lots_number = '')`;
+            const params = lotsNumber ? [materialNo, lotsNumber, qty] : [materialNo, qty];
+            const qtyParam = lotsNumber ? '$3' : '$2';
+
+            const result = await tx.query(
+              `UPDATE local_inventory
+               SET quantity = quantity - ${qtyParam}, updated_at = NOW()
+               WHERE material_no = $1 AND ${lotsCondition} AND quantity >= ${qtyParam}
+               RETURNING *`,
+              params,
+            );
+
+            if (result.rows.length === 0) {
+              errors.push({ row: idx + 1, materialNo, error: 'Insufficient quantity or item not found' });
+              continue;
+            }
+
+            const row = result.rows[0];
+
+            // Log charge-out transaction
+            await tx.query(
+              `INSERT INTO inventory_transactions (inventory_id, material_no, lots_number, quantity_change, quantity_after, type, user_id, user_name, notes)
+               VALUES ($1, $2, $3, $4, $5, 'charge_out', $6, $7, $8)`,
+              [
+                row.id,
+                materialNo,
+                lotsNumber,
+                -qty,
+                row.quantity,
+                req.user?.id || null,
+                req.user?.username || null,
+                notes,
+              ],
+            );
+
+            processed.push(snakeToCamel(row));
+          } catch (e) {
+            await tx.query('ROLLBACK TO SAVEPOINT row_sp');
+            errors.push({ row: idx + 1, error: e.message });
           }
-
-          // Atomic check-and-update
-          const lotsCondition = lotsNumber ? `lots_number = $2` : `(lots_number IS NULL OR lots_number = '')`;
-          const params = lotsNumber ? [materialNo, lotsNumber, qty] : [materialNo, qty];
-          const qtyParam = lotsNumber ? '$3' : '$2';
-
-          const result = await query(
-            `UPDATE local_inventory
-             SET quantity = quantity - ${qtyParam}, updated_at = NOW()
-             WHERE material_no = $1 AND ${lotsCondition} AND quantity >= ${qtyParam}
-             RETURNING *`,
-            params,
-          );
-
-          if (result.rows.length === 0) {
-            errors.push({ row: idx + 1, materialNo, error: 'Insufficient quantity or item not found' });
-            continue;
-          }
-
-          const row = result.rows[0];
-
-          // Log charge-out transaction
-          await query(
-            `INSERT INTO inventory_transactions (inventory_id, material_no, lots_number, quantity_change, quantity_after, type, user_id, user_name, notes)
-             VALUES ($1, $2, $3, $4, $5, 'charge_out', $6, $7, $8)`,
-            [
-              row.id,
-              materialNo,
-              lotsNumber,
-              -qty,
-              row.quantity,
-              req.user?.id || null,
-              req.user?.username || null,
-              notes,
-            ],
-          );
-
-          processed.push(snakeToCamel(row));
-        } catch (e) {
-          errors.push({ row: idx + 1, error: e.message });
         }
-      }
-      await query('COMMIT');
+      });
     } catch (e) {
-      await query('ROLLBACK');
       return res.status(500).json({ error: e.message });
     }
 
@@ -287,65 +295,67 @@ router.post(
     const processed = [];
     const errors = [];
 
-    await query('BEGIN');
     try {
-      for (const [idx, item] of items.entries()) {
-        try {
-          const materialNo = item.materialNo || item.material_no;
-          const lotsNumber = item.lotsNumber || item.lots_number || null;
-          const qtyDelta = parseInt(item.quantity) || 0;
+      await withTransaction(async (tx) => {
+        for (const [idx, item] of items.entries()) {
+          // Per-row savepoint: one bad row must not abort the whole transaction
+          await tx.query('SAVEPOINT row_sp');
+          try {
+            const materialNo = item.materialNo || item.material_no;
+            const lotsNumber = item.lotsNumber || item.lots_number || null;
+            const qtyDelta = parseInt(item.quantity) || 0;
 
-          if (!materialNo) {
-            errors.push({ row: idx + 1, error: 'materialNo required' });
-            continue;
+            if (!materialNo) {
+              errors.push({ row: idx + 1, error: 'materialNo required' });
+              continue;
+            }
+            if (qtyDelta === 0) {
+              errors.push({ row: idx + 1, error: 'quantity must be non-zero' });
+              continue;
+            }
+
+            const lotsCondition = lotsNumber ? `lots_number = $2` : `(lots_number IS NULL OR lots_number = '')`;
+            const params = lotsNumber ? [materialNo, lotsNumber, qtyDelta] : [materialNo, qtyDelta];
+            const deltaParam = lotsNumber ? '$3' : '$2';
+
+            const result = await tx.query(
+              `UPDATE local_inventory
+               SET quantity = GREATEST(0, quantity + ${deltaParam}), updated_at = NOW()
+               WHERE material_no = $1 AND ${lotsCondition}
+               RETURNING *`,
+              params,
+            );
+
+            if (result.rows.length === 0) {
+              errors.push({ row: idx + 1, materialNo, error: 'Item not found' });
+              continue;
+            }
+
+            const row = result.rows[0];
+
+            await tx.query(
+              `INSERT INTO inventory_transactions (inventory_id, material_no, lots_number, quantity_change, quantity_after, type, user_id, user_name, notes)
+               VALUES ($1, $2, $3, $4, $5, 'adjustment', $6, $7, $8)`,
+              [
+                row.id,
+                materialNo,
+                lotsNumber,
+                qtyDelta,
+                row.quantity,
+                req.user?.id || null,
+                req.user?.username || null,
+                `Admin adjustment`,
+              ],
+            );
+
+            processed.push(snakeToCamel(row));
+          } catch (e) {
+            await tx.query('ROLLBACK TO SAVEPOINT row_sp');
+            errors.push({ row: idx + 1, error: e.message });
           }
-          if (qtyDelta === 0) {
-            errors.push({ row: idx + 1, error: 'quantity must be non-zero' });
-            continue;
-          }
-
-          const lotsCondition = lotsNumber ? `lots_number = $2` : `(lots_number IS NULL OR lots_number = '')`;
-          const params = lotsNumber ? [materialNo, lotsNumber, qtyDelta] : [materialNo, qtyDelta];
-          const deltaParam = lotsNumber ? '$3' : '$2';
-
-          const result = await query(
-            `UPDATE local_inventory
-             SET quantity = GREATEST(0, quantity + ${deltaParam}), updated_at = NOW()
-             WHERE material_no = $1 AND ${lotsCondition}
-             RETURNING *`,
-            params,
-          );
-
-          if (result.rows.length === 0) {
-            errors.push({ row: idx + 1, materialNo, error: 'Item not found' });
-            continue;
-          }
-
-          const row = result.rows[0];
-
-          await query(
-            `INSERT INTO inventory_transactions (inventory_id, material_no, lots_number, quantity_change, quantity_after, type, user_id, user_name, notes)
-             VALUES ($1, $2, $3, $4, $5, 'adjustment', $6, $7, $8)`,
-            [
-              row.id,
-              materialNo,
-              lotsNumber,
-              qtyDelta,
-              row.quantity,
-              req.user?.id || null,
-              req.user?.username || null,
-              `Admin adjustment`,
-            ],
-          );
-
-          processed.push(snakeToCamel(row));
-        } catch (e) {
-          errors.push({ row: idx + 1, error: e.message });
         }
-      }
-      await query('COMMIT');
+      });
     } catch (e) {
-      await query('ROLLBACK');
       return res.status(500).json({ error: e.message });
     }
 
@@ -358,7 +368,8 @@ router.put(
   '/:id',
   asyncHandler(async (req, res) => {
     const { id } = req.params;
-    const b = pickAllowed(camelToSnake(req.body), INVENTORY_FIELDS);
+    const b = pickAllowed(camelToSnake(req.body), INVENTORY_META_FIELDS, { keepNull: true });
+    if (b.lots_number === '') b.lots_number = null;
     b.updated_at = new Date().toISOString();
     const keys = Object.keys(b);
     const vals = Object.values(b);
@@ -381,54 +392,53 @@ router.post(
     const processed = [];
     const skipped = [];
 
-    await query('BEGIN');
     try {
-      for (const item of items) {
-        const materialNo = item.materialNo || item.material_no;
-        const qty = Math.abs(parseInt(item.quantity) || 0);
-        if (!materialNo || qty === 0) {
-          skipped.push({ materialNo, reason: 'missing materialNo or zero quantity' });
-          continue;
+      await withTransaction(async (tx) => {
+        for (const item of items) {
+          const materialNo = item.materialNo || item.material_no;
+          const qty = Math.abs(parseInt(item.quantity) || 0);
+          if (!materialNo || qty === 0) {
+            skipped.push({ materialNo, reason: 'missing materialNo or zero quantity' });
+            continue;
+          }
+
+          const description = item.description || null;
+          const lotsNumber = item.lotsNumber || item.lots_number || null;
+
+          // Upsert: if exists add to quantity, if not create new entry
+          const result = await tx.query(
+            `INSERT INTO local_inventory (material_no, description, lots_number, quantity)
+             VALUES ($1, $2, $3, $4)
+             ON CONFLICT (material_no, COALESCE(lots_number, '__none__'))
+             DO UPDATE SET quantity = local_inventory.quantity + $4,
+                           description = COALESCE(EXCLUDED.description, local_inventory.description),
+                           updated_at = NOW()
+             RETURNING *, (xmax = 0) AS is_insert`,
+            [materialNo, description, lotsNumber, qty],
+          );
+
+          const row = result.rows[0];
+
+          // Log arrival transaction
+          await tx.query(
+            `INSERT INTO inventory_transactions (inventory_id, material_no, lots_number, quantity_change, quantity_after, type, user_id, user_name, notes)
+             VALUES ($1, $2, $3, $4, $5, 'arrival', $6, $7, $8)`,
+            [
+              row.id,
+              materialNo,
+              lotsNumber,
+              qty,
+              row.quantity,
+              req.user?.id || null,
+              req.user?.username || null,
+              `Part arrival confirmed`,
+            ],
+          );
+
+          processed.push({ materialNo, quantity: qty, newTotal: row.quantity, isNew: row.is_insert });
         }
-
-        const description = item.description || null;
-        const lotsNumber = item.lotsNumber || item.lots_number || null;
-
-        // Upsert: if exists add to quantity, if not create new entry
-        const result = await query(
-          `INSERT INTO local_inventory (material_no, description, lots_number, quantity)
-           VALUES ($1, $2, $3, $4)
-           ON CONFLICT (material_no, COALESCE(lots_number, '__none__'))
-           DO UPDATE SET quantity = local_inventory.quantity + $4,
-                         description = COALESCE(EXCLUDED.description, local_inventory.description),
-                         updated_at = NOW()
-           RETURNING *, (xmax = 0) AS is_insert`,
-          [materialNo, description, lotsNumber, qty],
-        );
-
-        const row = result.rows[0];
-
-        // Log arrival transaction
-        await query(
-          `INSERT INTO inventory_transactions (inventory_id, material_no, lots_number, quantity_change, quantity_after, type, user_id, user_name, notes)
-           VALUES ($1, $2, $3, $4, $5, 'arrival', $6, $7, $8)`,
-          [
-            row.id,
-            materialNo,
-            lotsNumber,
-            qty,
-            row.quantity,
-            req.user?.id || null,
-            req.user?.username || null,
-            `Part arrival confirmed`,
-          ],
-        );
-
-        processed.push({ materialNo, quantity: qty, newTotal: row.quantity, isNew: row.is_insert });
-      }
-      await query('COMMIT');
+      });
     } catch (e) {
-      await query('ROLLBACK');
       return res.status(500).json({ error: e.message });
     }
 

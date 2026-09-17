@@ -54,17 +54,33 @@ router.post('/register', async (req, res) => {
       return res.status(400).json({ error: 'Username and password are required' });
     }
 
+    const existing = await query('SELECT 1 FROM users WHERE username = $1', [username]);
+    if (existing.rows.length) {
+      return res.status(409).json({ error: 'Username already taken' });
+    }
+
     const passwordHash = await bcrypt.hash(password, 10);
+    // users.id is a VARCHAR primary key with no default — it must be generated here.
+    const id = `U-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
 
     const sql = `
-      INSERT INTO users (username, password_hash, name, email, phone, role, status)
-      VALUES ($1, $2, $3, $4, $5, 'user', 'pending')
+      INSERT INTO users (id, username, password_hash, name, email, phone, role, status, permissions)
+      VALUES ($1, $2, $3, $4, $5, $6, 'user', 'pending', '{}')
       RETURNING id, username, name, email, phone, role, status, created
     `;
-    const result = await query(sql, [username, passwordHash, name || null, email || null, phone || null]);
+    const result = await query(sql, [
+      id,
+      username,
+      passwordHash,
+      (name && String(name).trim()) || username, // name column is NOT NULL
+      email || null,
+      phone || null,
+    ]);
     res.status(201).json(snakeToCamel(result.rows[0]));
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    if (e.code === '23505') return res.status(409).json({ error: 'Username already taken' });
+    logger.error({ err: e }, 'Register error');
+    res.status(500).json({ error: 'Registration failed' });
   }
 });
 

@@ -25,7 +25,7 @@ import authRouter from './routes/auth.js';
 import stockChecksRouter from './routes/stockChecks.js';
 import notificationsRouter from './routes/notifications.js';
 import approvalsRouter from './routes/approvals.js';
-import configRouter, { registerConfigHook } from './routes/config.js';
+import configRouter, { registerConfigHook, getGlobalConfig } from './routes/config.js';
 import catalogRouter from './routes/catalog.js';
 import migrateRouter from './routes/migrate.js';
 import auditLogRouter from './routes/auditLog.js';
@@ -40,6 +40,11 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = process.env.PORT || 3001;
 
+// Behind Railway/other reverse proxies req.ip is the proxy's address unless we
+// trust X-Forwarded-For. Without this the login rate limiter counts the whole
+// office as ONE client (20 attempts / 15 min for everybody).
+app.set('trust proxy', Number(process.env.TRUST_PROXY_HOPS || 1));
+
 // Security Middleware
 app.use(helmet({ contentSecurityPolicy: false })); // CSP off for SPA inline styles
 if (process.env.NODE_ENV === 'production' && !process.env.FRONTEND_URL) {
@@ -53,7 +58,8 @@ app.use(
     credentials: true,
   }),
 );
-app.use(express.json({ limit: '10mb' }));
+// FCA PDFs are sent base64-encoded (+33%); 10 MB files need ~14 MB of JSON.
+app.use(express.json({ limit: '15mb' }));
 app.use(pinoHttp({ logger, autoLogging: { ignore: (req) => req.url === '/api/health' } }));
 
 // Rate limiting on auth routes (prevent brute force)
@@ -276,11 +282,15 @@ async function connectWhatsApp() {
     sock.ev.on('creds.update', saveCreds);
 
     // Handle incoming messages — WhatsApp Bot auto-reply
-    sock.ev.on('messages.upsert', async ({ messages }) => {
-      const msg = messages[0];
-      if (!msg.key.fromMe && msg.message) {
+    sock.ev.on('messages.upsert', async ({ messages, type }) => {
+      if (type && type !== 'notify') return; // ignore history sync / offline replays
+      for (const msg of messages || []) {
+        if (msg.key?.fromMe || !msg.message) continue;
+        const jid = msg.key.remoteJid || '';
+        // Only respond to direct chats — never inside groups/broadcasts/status
+        if (!jid.endsWith('@s.whatsapp.net')) continue;
         const text = msg.message.conversation || msg.message.extendedTextMessage?.text || '';
-        const jid = msg.key.remoteJid;
+        if (!text.trim()) continue;
         logger.info({ jid }, 'Incoming WhatsApp message');
 
         try {
@@ -289,7 +299,15 @@ async function connectWhatsApp() {
             "SELECT value FROM app_config WHERE key = 'waAutoReply' AND user_id = '__global__'",
           );
           const botEnabled = cfgResult.rows.length > 0 && cfgResult.rows[0].value === true;
-          if (!botEnabled) return;
+          if (!botEnabled) continue;
+
+          // The bot can create/delete orders and approve requests, so only
+          // known senders may talk to it: the Settings "Allowed Senders" list
+          // plus the phone numbers of active users.
+          if (!(await isAllowedSender(jid))) {
+            logger.warn({ jid }, 'WhatsApp message from unknown sender ignored');
+            continue;
+          }
 
           const reply = await handleBotMessage(text, jid);
           if (reply && sock) {
@@ -335,6 +353,39 @@ function formatPhoneNumber(phone) {
   return cleaned + '@s.whatsapp.net';
 }
 
+// Digits-only form of a phone number ("+65 9111 2222" → "6591112222")
+function phoneDigits(phone) {
+  if (!phone || typeof phone !== 'string') return '';
+  let d = phone.replace(/[\s\-+()]/g, '');
+  if (d.length === 8) d = '65' + d;
+  return d;
+}
+
+// Cache the allowed-sender set for 60s so the bot doesn't hit the DB per message
+let allowedSenderCache = { at: 0, set: new Set() };
+async function isAllowedSender(jid) {
+  const digits = (jid || '').split('@')[0].split(':')[0];
+  if (Date.now() - allowedSenderCache.at > 60000) {
+    const set = new Set();
+    try {
+      const cfg = await getGlobalConfig('waAllowedSenders');
+      for (const p of Array.isArray(cfg) ? cfg : []) {
+        const d = phoneDigits(typeof p === 'string' ? p : p?.phone);
+        if (d) set.add(d);
+      }
+      const users = await dbQuery("SELECT phone FROM users WHERE status = 'active' AND phone IS NOT NULL");
+      for (const u of users.rows) {
+        const d = phoneDigits(u.phone);
+        if (d) set.add(d);
+      }
+    } catch (e) {
+      logger.error({ err: e }, 'Failed to load allowed WhatsApp senders');
+    }
+    allowedSenderCache = { at: Date.now(), set };
+  }
+  return allowedSenderCache.set.has(digits);
+}
+
 // ============ API ENDPOINTS ============
 
 // Get connection status
@@ -357,7 +408,7 @@ app.get('/api/whatsapp/status', verifyToken, (req, res) => {
 });
 
 // Connect WhatsApp (generate QR or restore session)
-app.post('/api/whatsapp/connect', verifyToken, async (req, res) => {
+app.post('/api/whatsapp/connect', verifyToken, requireAdmin, async (req, res) => {
   const forceNew = req.body?.forceNew === true;
 
   if (connectionStatus === 'connected') {
@@ -428,7 +479,7 @@ app.post('/api/whatsapp/connect', verifyToken, async (req, res) => {
 });
 
 // Disconnect WhatsApp
-app.post('/api/whatsapp/disconnect', verifyToken, async (req, res) => {
+app.post('/api/whatsapp/disconnect', verifyToken, requireAdmin, async (req, res) => {
   // Cancel any pending reconnect
   if (waReconnectTimer) {
     clearTimeout(waReconnectTimer);
@@ -624,9 +675,31 @@ app.use('/api/migrate', verifyToken, requireAdmin, migrateRouter);
 // Send HTML email via SMTP
 app.post('/api/send-email', verifyToken, async (req, res) => {
   try {
-    const { to, subject, html, smtp, attachments } = req.body;
-    if (!to || !subject || !html || !smtp?.host) {
-      return res.status(400).json({ error: 'Missing required fields: to, subject, html, smtp.host' });
+    const { to, subject, html, attachments } = req.body;
+    // SMTP settings come from the stored (admin-managed) emailConfig. The
+    // client-supplied block is only honoured for admins, so a regular user
+    // can't turn this endpoint into an open mail relay with their own server.
+    let smtp = null;
+    const stored = await getGlobalConfig('emailConfig').catch(() => null);
+    if (stored?.smtpHost) {
+      smtp = {
+        host: stored.smtpHost,
+        port: stored.smtpPort,
+        user: stored.smtpUser || stored.senderEmail,
+        pass: stored.smtpPass || '',
+        from: stored.senderEmail
+          ? `"${stored.senderName || 'Miltenyi Inventory Hub'}" <${stored.senderEmail}>`
+          : undefined,
+        allowSelfSigned: stored.allowSelfSigned === true,
+      };
+    } else if (req.user.role === 'admin' && req.body.smtp?.host) {
+      smtp = req.body.smtp;
+    }
+    if (!to || !subject || !html) {
+      return res.status(400).json({ error: 'Missing required fields: to, subject, html' });
+    }
+    if (!smtp?.host) {
+      return res.status(400).json({ error: 'SMTP is not configured. Ask an admin to set it in Settings → Email.' });
     }
     // Reject SMTP header injection: CR/LF in recipient or subject can smuggle headers (BCC, etc.)
     const hasCrlf = (v) =>
@@ -692,6 +765,9 @@ const getWaContext = () => ({ sock, formatPhoneNumber });
 // Auto-reload scheduler & reset SMTP transporter when config changes via Settings
 registerConfigHook('scheduledNotifs', () => reloadScheduler(getWaContext));
 registerConfigHook('emailConfig', () => resetTransporter());
+registerConfigHook('waAllowedSenders', () => {
+  allowedSenderCache = { at: 0, set: new Set() };
+});
 
 // Manual trigger: run scheduled report now
 app.post('/api/scheduled-report/run', verifyToken, requireAdmin, async (req, res) => {
@@ -712,6 +788,12 @@ app.post('/api/scheduled-report/reload', verifyToken, async (req, res) => {
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
+});
+
+// Unknown API route → JSON 404 (previously fell through to the SPA fallback,
+// or hung with no response in API-only mode)
+app.all('/api/*', (req, res) => {
+  res.status(404).json({ error: `Not found: ${req.method} ${req.path}` });
 });
 
 // Global error handler (must be after all routes)

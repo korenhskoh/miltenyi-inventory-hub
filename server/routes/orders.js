@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { query } from '../db.js';
 import { snakeToCamel, camelToSnake } from '../utils.js';
 import { pickAllowed, requireFields, sanitizeDates } from '../validation.js';
-import { paginate, envelope } from '../pagination.js';
+import { paginate, envelope, limitClause } from '../pagination.js';
 import { asyncHandler } from '../middleware/errorHandler.js';
 import { requireAdmin } from '../middleware/auth.js';
 
@@ -45,7 +45,7 @@ router.get(
   '/',
   asyncHandler(async (req, res) => {
     const { status, month, orderBy } = req.query;
-    const { page, pageSize, offset } = paginate(req.query);
+    const { page, pageSize } = paginate(req.query);
     const conditions = [];
     const params = [];
     let paramIndex = 1;
@@ -72,12 +72,13 @@ router.get(
     const countResult = await query(`SELECT COUNT(*) FROM orders${whereClause}`, params);
     const total = parseInt(countResult.rows[0].count);
 
-    const dataResult = await query(
-      `SELECT * FROM orders${whereClause}${orderClause} LIMIT $${paramIndex++} OFFSET $${paramIndex++}`,
-      [...params, pageSize, offset],
-    );
+    const lim = limitClause(req, paramIndex);
+    const dataResult = await query(`SELECT * FROM orders${whereClause}${orderClause}${lim.clause}`, [
+      ...params,
+      ...lim.params,
+    ]);
     const rows = dataResult.rows.map(snakeToCamel);
-    res.json(envelope(rows, total, page, pageSize));
+    res.json(envelope(rows, total, lim.clause ? page : 1, lim.clause ? pageSize : rows.length));
   }),
 );
 

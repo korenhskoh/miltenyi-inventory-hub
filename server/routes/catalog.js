@@ -3,6 +3,7 @@ import { query } from '../db.js';
 import { snakeToCamel, camelToSnake } from '../utils.js';
 import { paginate, envelope } from '../pagination.js';
 import { asyncHandler } from '../middleware/errorHandler.js';
+import { requireAdmin } from '../middleware/auth.js';
 
 const router = Router();
 
@@ -33,7 +34,7 @@ router.get(
 );
 
 // POST / - bulk upsert parts in a single transaction
-router.post('/', async (req, res) => {
+router.post('/', requireAdmin, async (req, res) => {
   try {
     const { parts } = req.body;
 
@@ -74,15 +75,7 @@ router.post('/', async (req, res) => {
         rsp_eur = EXCLUDED.rsp_eur
     `;
 
-    // Wrap in transaction for performance
-    await query('BEGIN');
-    try {
-      await query(sql, values);
-      await query('COMMIT');
-    } catch (txErr) {
-      await query('ROLLBACK');
-      throw txErr;
-    }
+    await query(sql, values);
 
     res.json({ success: true, count: parts.length });
   } catch (e) {
@@ -91,7 +84,7 @@ router.post('/', async (req, res) => {
 });
 
 // DELETE / - truncate parts_catalog table
-router.delete('/', async (req, res) => {
+router.delete('/', requireAdmin, async (req, res) => {
   try {
     await query('TRUNCATE TABLE parts_catalog');
     res.json({ success: true });

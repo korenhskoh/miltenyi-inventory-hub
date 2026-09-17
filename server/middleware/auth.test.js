@@ -64,7 +64,9 @@ describe('JWT auth middleware', () => {
     const expiredToken = jwt.sign({ id: 'U001' }, JWT_SECRET, { expiresIn: '-1s' });
     const { req, res, next } = mockReqResNext({ authorization: `Bearer ${expiredToken}` });
     verifyToken(req, res, next);
-    expect(res._status).toBe(403);
+    // Expired (as opposed to tampered) tokens return 401 so the SPA logs the user out
+    expect(res._status).toBe(401);
+    expect(res._json.error).toMatch(/expired/i);
     expect(next).not.toHaveBeenCalled();
   });
 

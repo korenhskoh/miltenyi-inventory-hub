@@ -38,6 +38,11 @@ export function verifyToken(req, res, next) {
     req.user = decoded;
     next();
   } catch (err) {
+    // Expired token → 401 so the client clears its session and shows the login
+    // screen. Tampered/invalid tokens stay 403.
+    if (err && err.name === 'TokenExpiredError') {
+      return res.status(401).json({ error: 'Token expired. Please log in again.' });
+    }
     return res.status(403).json({ error: 'Invalid or expired token.' });
   }
 }

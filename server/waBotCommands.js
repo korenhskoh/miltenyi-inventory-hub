@@ -151,8 +151,8 @@ async function executeOrderConfirm(session) {
   const d = session.data;
   const now = new Date();
   const month = currentMonth();
-  const countR = await query('SELECT COUNT(*) as c FROM orders');
-  const orderId = `ORD-${2000 + parseInt(countR.rows[0].c)}`;
+  // Timestamp-based id — COUNT(*)-based ids collide as soon as any order is deleted.
+  const orderId = `ORD-${Date.now()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
 
   await query(
     `INSERT INTO orders (id, material_no, description, quantity, list_price, total_cost, order_date, order_by, status, approval_status, month, year, remark)
@@ -370,12 +370,36 @@ async function handleReject(params, session) {
   return `❌ *Reject ${approvalId}?*\n\nOrder: ${a.order_id}\nBy: ${a.requested_by || '—'}\n\nReply *confirm* to reject or *cancel* to abort.`;
 }
 
+// Resolve every order id covered by an approval (single, bulk or batch)
+async function approvalOrderIds(approvalId, fallbackOrderId) {
+  const r = await query('SELECT order_id, order_ids FROM pending_approvals WHERE id = $1', [approvalId]);
+  const row = r.rows[0] || {};
+  let ids = row.order_ids;
+  if (typeof ids === 'string') {
+    try {
+      ids = JSON.parse(ids);
+    } catch {
+      ids = null;
+    }
+  }
+  if (Array.isArray(ids) && ids.length) return ids;
+  const single = row.order_id || fallbackOrderId;
+  if (!single) return [];
+  return String(single)
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
 async function executeApproveConfirm(session) {
   const { approvalId, orderId } = session.data;
   const now = new Date().toISOString().slice(0, 10);
   await query("UPDATE pending_approvals SET status = 'approved', action_date = $1 WHERE id = $2", [now, approvalId]);
-  if (orderId) {
-    await query("UPDATE orders SET approval_status = 'approved' WHERE id = $1", [orderId]);
+  const ids = await approvalOrderIds(approvalId, orderId);
+  if (ids.length) {
+    await query("UPDATE orders SET approval_status = 'approved', status = 'Approved' WHERE id = ANY($1::text[])", [
+      ids,
+    ]);
   }
   await logBotAudit('approve', 'approval', approvalId, { orderId });
   session.state = 'idle';
@@ -387,8 +411,11 @@ async function executeRejectConfirm(session) {
   const { approvalId, orderId } = session.data;
   const now = new Date().toISOString().slice(0, 10);
   await query("UPDATE pending_approvals SET status = 'rejected', action_date = $1 WHERE id = $2", [now, approvalId]);
-  if (orderId) {
-    await query("UPDATE orders SET approval_status = 'rejected' WHERE id = $1", [orderId]);
+  const ids = await approvalOrderIds(approvalId, orderId);
+  if (ids.length) {
+    await query("UPDATE orders SET approval_status = 'rejected', status = 'Rejected' WHERE id = ANY($1::text[])", [
+      ids,
+    ]);
   }
   await logBotAudit('reject', 'approval', approvalId, { orderId });
   session.state = 'idle';

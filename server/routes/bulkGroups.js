@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { query } from '../db.js';
 import { snakeToCamel, camelToSnake } from '../utils.js';
 import { pickAllowed, requireFields, sanitizeDates } from '../validation.js';
-import { paginate, envelope } from '../pagination.js';
+import { paginate, envelope, limitClause } from '../pagination.js';
 import { asyncHandler } from '../middleware/errorHandler.js';
 import { requireAdmin } from '../middleware/auth.js';
 
@@ -16,12 +16,13 @@ const BULK_GROUP_REQUIRED = ['id', 'month'];
 router.get(
   '/',
   asyncHandler(async (req, res) => {
-    const { page, pageSize, offset } = paginate(req.query);
+    const { page, pageSize } = paginate(req.query);
     const countResult = await query('SELECT COUNT(*) FROM bulk_groups');
     const total = parseInt(countResult.rows[0].count);
-    const dataResult = await query('SELECT * FROM bulk_groups ORDER BY id DESC LIMIT $1 OFFSET $2', [pageSize, offset]);
+    const lim = limitClause(req, 1);
+    const dataResult = await query(`SELECT * FROM bulk_groups ORDER BY id DESC${lim.clause}`, lim.params);
     const rows = dataResult.rows.map(snakeToCamel);
-    res.json(envelope(rows, total, page, pageSize));
+    res.json(envelope(rows, total, lim.clause ? page : 1, lim.clause ? pageSize : rows.length));
   }),
 );
 
