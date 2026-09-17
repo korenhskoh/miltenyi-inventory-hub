@@ -109,6 +109,16 @@ async function getMe() {
   }
 }
 
+// Public: is the API server reachable at all? (distinguishes "offline" from "token expired")
+async function checkServer() {
+  try {
+    await fetch(`${BASE}/api/public/logo`);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // Public: fetch logo (no auth required)
 async function getPublicLogo() {
   try {
@@ -148,6 +158,17 @@ async function createOrder(order) {
         body: JSON.stringify(order),
       }),
     );
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
+// Server-side aggregates for the dashboard: { totals, byMonth, topMaterials } — null on failure
+async function getOrderStats() {
+  try {
+    const res = handleResponse(await fetch(`${BASE}/api/orders/stats`, { headers: authHeadersGet() }));
     if (!res.ok) return null;
     return await res.json();
   } catch {
@@ -1123,10 +1144,12 @@ const api = {
   getToken,
   logout,
   getMe,
+  checkServer,
   getPublicLogo,
   onAuthError,
   resetAuthError,
   getOrders,
+  getOrderStats,
   createOrder,
   updateOrder,
   deleteOrder,

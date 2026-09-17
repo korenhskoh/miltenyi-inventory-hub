@@ -68,7 +68,6 @@ export default function SettingsPage({
   setPage,
   waNotifyRules,
   scheduledNotifs,
-  LS_KEYS,
   api,
   blurPrices,
   setBlurPrices,
@@ -1444,7 +1443,6 @@ export default function SettingsPage({
                         api.clearNotifLog(),
                         api.clearApprovals(),
                       ]);
-                      Object.values(LS_KEYS).forEach((k) => localStorage.removeItem(k));
                       const failed = results.filter((r) => !r).length;
                       if (failed === 0) {
                         notify('All Data Cleared', 'System reset complete', 'info');

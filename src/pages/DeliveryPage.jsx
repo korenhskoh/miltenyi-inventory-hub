@@ -13,6 +13,7 @@ import {
 import { fmt, fmtDate, applySortData, toggleSort, fillTemplate, escapeHtml } from '../utils.js';
 import { Pill, ArrivalBadge, ExportDropdown, SortTh } from '../components/ui.jsx';
 import api from '../api.js';
+import { todayLocal } from '../lib/dates.js';
 
 const PAGE_SIZE_OPTIONS = [20, 50, 100, 500];
 
@@ -24,13 +25,40 @@ const PAGE_SIZE_OPTIONS = [20, 50, 100, 500];
 const sendArrivalReportEmail = async (apiClient, { subject, title, summary, verifiedBy }) => {
   const cfg = await apiClient.getConfigKey('emailConfig');
   const to = cfg?.approverEmail || cfg?.senderEmail || '';
-  if (!to) return { ok: false, to, error: 'No recipient configured (Settings → Email)' };
+  if (!to)
+    return { ok: false, to, error: 'No recipient configured — set an approver or sender email in Settings → Email' };
   const html =
     `<h3>${escapeHtml(title)}</h3>` +
     `<p>Date: ${escapeHtml(new Date().toLocaleDateString('en-SG'))}<br/>Verified by: ${escapeHtml(verifiedBy || 'Admin')}</p>` +
     `<pre style="font-family:monospace;font-size:12px">${escapeHtml(summary)}</pre>`;
   const r = await apiClient.sendEmail({ to, subject, html });
   return { ok: !!r?.ok, to, error: r?.error };
+};
+
+/**
+ * Send a WhatsApp message to every active non-admin user with a phone number via the
+ * WhatsApp bridge. Returns { sent, failed, to } so callers can report real results.
+ */
+const sendArrivalWhatsApp = async (apiClient, waApiUrl, users, message) => {
+  const recipients = (users || []).filter((u) => u.role !== 'admin' && u.status === 'active' && u.phone);
+  const results = await Promise.all(
+    recipients.map(async (user) => {
+      try {
+        const res = await fetch(`${waApiUrl}/send`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiClient.getToken()}` },
+          body: JSON.stringify({ phone: user.phone, template: 'custom', data: { message } }),
+        });
+        if (!res.ok) return false;
+        const body = await res.json().catch(() => ({}));
+        return body?.success !== false && body?.ok !== false;
+      } catch {
+        return false;
+      }
+    }),
+  );
+  const sent = results.filter(Boolean).length;
+  return { sent, failed: results.length - sent, to: recipients.length };
 };
 
 const DeliveryPage = ({
@@ -775,7 +803,7 @@ const DeliveryPage = ({
                                         type: 'email',
                                         to: r.to || '\u2014',
                                         subject,
-                                        date: new Date().toISOString().slice(0, 10),
+                                        date: todayLocal(),
                                         status: r.ok ? 'Sent' : 'Failed',
                                       });
                                     }}
@@ -806,41 +834,40 @@ const DeliveryPage = ({
                                             received,
                                             backOrders: backorder,
                                             verifiedBy: currentUser?.name || 'Admin',
-                                            date: new Date().toISOString().slice(0, 10),
+                                            date: todayLocal(),
                                             itemsList,
                                           },
                                         );
-                                        try {
-                                          if (waNotifyRules.partArrivalDone) {
-                                            for (const user of users.filter(
-                                              (u) => u.role !== 'admin' && u.status === 'active' && u.phone,
-                                            )) {
-                                              await fetch(`${WA_API_URL}/send`, {
-                                                method: 'POST',
-                                                headers: {
-                                                  'Content-Type': 'application/json',
-                                                  Authorization: `Bearer ${api.getToken()}`,
-                                                },
-                                                body: JSON.stringify({
-                                                  phone: user.phone,
-                                                  template: 'custom',
-                                                  data: { message: arrMsg },
-                                                }),
-                                              });
-                                            }
-                                          }
-                                          notify('WhatsApp Sent', `Arrival report for ${bg.month} sent`, 'success');
-                                          addNotifEntry({
-                                            id: `N-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-                                            type: 'whatsapp',
-                                            to: 'SG Service Team',
-                                            subject: `Arrival: ${bg.month} - ${received} full, ${backorder} B/O`,
-                                            date: new Date().toISOString().slice(0, 10),
-                                            status: 'Delivered',
-                                          });
-                                        } catch (e) {
-                                          notify('Error', 'Failed to send WhatsApp', 'error');
+                                        if (!waNotifyRules.partArrivalDone) {
+                                          notify(
+                                            'Rule Disabled',
+                                            'Enable "Part Arrival" in WhatsApp notification rules first',
+                                            'warning',
+                                          );
+                                          return;
                                         }
+                                        const r = await sendArrivalWhatsApp(api, WA_API_URL, users, arrMsg);
+                                        if (r.to === 0) {
+                                          notify('No Recipients', 'No active users with a phone number', 'warning');
+                                          return;
+                                        }
+                                        if (r.failed === 0)
+                                          notify(
+                                            'WhatsApp Sent',
+                                            `Arrival report for ${bg.month} sent to ${r.sent} user(s)`,
+                                            'success',
+                                          );
+                                        else if (r.sent > 0)
+                                          notify('Partial Send', `${r.sent}/${r.to} WhatsApp messages sent`, 'warning');
+                                        else notify('WhatsApp Failed', 'Failed to send WhatsApp', 'error');
+                                        addNotifEntry({
+                                          id: `N-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+                                          type: 'whatsapp',
+                                          to: 'SG Service Team',
+                                          subject: `Arrival: ${bg.month} - ${received} full, ${backorder} B/O`,
+                                          date: todayLocal(),
+                                          status: r.failed === 0 ? 'Delivered' : r.sent > 0 ? 'Partial' : 'Failed',
+                                        });
                                       }}
                                     >
                                       <MessageSquare size={14} /> WhatsApp Report
@@ -890,7 +917,7 @@ const DeliveryPage = ({
                                                 received: bgOrders.length,
                                                 backOrders: 0,
                                                 verifiedBy: currentUser?.name || 'Admin',
-                                                date: new Date().toISOString().slice(0, 10),
+                                                date: todayLocal(),
                                                 itemsList: completeItemsList,
                                               },
                                             );
@@ -1320,7 +1347,7 @@ const DeliveryPage = ({
                     type: 'email',
                     to: r.to || '\u2014',
                     subject,
-                    date: new Date().toISOString().slice(0, 10),
+                    date: todayLocal(),
                     status: r.ok ? 'Sent' : 'Failed',
                   });
                 }}
@@ -1347,34 +1374,31 @@ const DeliveryPage = ({
                         received,
                         backOrders: backorder,
                         verifiedBy: currentUser?.name || 'Admin',
-                        date: new Date().toISOString().slice(0, 10),
+                        date: todayLocal(),
                         itemsList,
                       },
                     );
-                    try {
-                      if (waNotifyRules.partArrivalDone) {
-                        for (const user of users.filter(
-                          (u) => u.role !== 'admin' && u.status === 'active' && u.phone,
-                        )) {
-                          await fetch(`${WA_API_URL}/send`, {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${api.getToken()}` },
-                            body: JSON.stringify({ phone: user.phone, template: 'custom', data: { message: arrMsg } }),
-                          });
-                        }
-                      }
-                      notify('WhatsApp Sent', 'Single orders arrival report sent', 'success');
-                      addNotifEntry({
-                        id: `N-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-                        type: 'whatsapp',
-                        to: 'SG Service Team',
-                        subject: `Arrival: Single Orders - ${received} full, ${backorder} B/O`,
-                        date: new Date().toISOString().slice(0, 10),
-                        status: 'Delivered',
-                      });
-                    } catch (e) {
-                      notify('Error', 'Failed to send WhatsApp', 'error');
+                    if (!waNotifyRules.partArrivalDone) {
+                      notify('Rule Disabled', 'Enable "Part Arrival" in WhatsApp notification rules first', 'warning');
+                      return;
                     }
+                    const r = await sendArrivalWhatsApp(api, WA_API_URL, users, arrMsg);
+                    if (r.to === 0) {
+                      notify('No Recipients', 'No active users with a phone number', 'warning');
+                      return;
+                    }
+                    if (r.failed === 0)
+                      notify('WhatsApp Sent', `Single orders arrival report sent to ${r.sent} user(s)`, 'success');
+                    else if (r.sent > 0) notify('Partial Send', `${r.sent}/${r.to} WhatsApp messages sent`, 'warning');
+                    else notify('WhatsApp Failed', 'Failed to send WhatsApp', 'error');
+                    addNotifEntry({
+                      id: `N-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+                      type: 'whatsapp',
+                      to: 'SG Service Team',
+                      subject: `Arrival: Single Orders - ${received} full, ${backorder} B/O`,
+                      date: todayLocal(),
+                      status: r.failed === 0 ? 'Delivered' : r.sent > 0 ? 'Partial' : 'Failed',
+                    });
                   }}
                 >
                   <MessageSquare size={14} /> WhatsApp Report
@@ -1416,7 +1440,7 @@ const DeliveryPage = ({
                             received: indivOrders.length,
                             backOrders: 0,
                             verifiedBy: currentUser?.name || 'Admin',
-                            date: new Date().toISOString().slice(0, 10),
+                            date: todayLocal(),
                             itemsList: complItemsList,
                           },
                         );

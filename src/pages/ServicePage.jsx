@@ -25,6 +25,7 @@ import {
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import api from '../api.js';
+import { toLocalYmd, todayLocal, daysFromNowLocal, normalizeDate } from '../lib/dates.js';
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -57,17 +58,8 @@ const MAINTENANCE_PERIODS = [
 
 const IQOQ_STATUSES = ['Completed', 'Pending', 'N/A'];
 
-// Format a Date as YYYY-MM-DD using LOCAL getters. toISOString() would convert to
-// UTC and shift the calendar day for SG (UTC+8) users in the evening.
-const toLocalYmd = (d) => {
-  if (!(d instanceof Date) || Number.isNaN(d.getTime())) return '';
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;
-};
-const today = () => toLocalYmd(new Date());
-const in30 = () => toLocalYmd(new Date(Date.now() + 30 * 86400000));
+const today = () => todayLocal();
+const in30 = () => daysFromNowLocal(30);
 
 // Date fields on a machine record. The API now returns plain 'YYYY-MM-DD' strings, but
 // older rows / cached data may still carry ISO timestamps, so normalise defensively.
@@ -82,12 +74,11 @@ const DATE_FIELDS = [
   'warrantyEnd',
   'iqoqDate',
 ];
-const normDate = (v) => (v == null || v === '' ? '' : String(v).slice(0, 10));
 const normMachineDates = (m) => {
   if (!m) return m;
   const out = { ...m };
   DATE_FIELDS.forEach((k) => {
-    if (k in out) out[k] = normDate(out[k]);
+    if (k in out) out[k] = normalizeDate(out[k]);
   });
   return out;
 };
@@ -885,17 +876,8 @@ function ImportModal({ isAdmin, region = 'local', onImport, onClose }) {
             const n = parseFloat(cleaned);
             val = Number.isFinite(n) ? n : null;
           } else if (DATE_IMPORT_KEYS.has(key)) {
-            if (!String(val).match(/^\d{4}-\d{2}-\d{2}$/)) {
-              // Excel serials arrive as numbers (days since 1899-12-30, UTC-based);
-              // other strings parse via Date and are formatted with local getters.
-              const ymd =
-                typeof val === 'number' && Number.isFinite(val)
-                  ? new Date(Math.round((val - 25569) * 86400000)).toISOString().slice(0, 10)
-                  : toLocalYmd(new Date(val));
-              val = ymd || null;
-            } else {
-              val = String(val).slice(0, 10);
-            }
+            // Handles 'YYYY-MM-DD', ISO timestamps, Excel serials and free-form strings.
+            val = normalizeDate(val) || null;
           }
           obj[key] = val;
         });
@@ -2667,20 +2649,20 @@ export default function ServicePage({ isAdmin = false, notify, machines, setMach
             Inst: m.name || '',
             SN: m.serialNumber || '',
             Location: m.location || '',
-            'Delivery Date': normDate(m.deliveryDate),
-            'Installation Date': normDate(m.installDate),
-            'Warranty Start': normDate(m.warrantyStart),
-            'Warranty End': normDate(m.warrantyEnd),
+            'Delivery Date': normalizeDate(m.deliveryDate),
+            'Installation Date': normalizeDate(m.installDate),
+            'Warranty Start': normalizeDate(m.warrantyStart),
+            'Warranty End': normalizeDate(m.warrantyEnd),
             'Days Left': daysLeftFromToday(m.warrantyEnd) ?? '',
             'PM Spare part': m.pmSparePart || '',
             'SAP Code': m.sapCode || '',
             'Proposed Service Contract': m.proposedServiceContract || '',
             Price: m.price ?? '',
-            'Contract Start': normDate(m.contractStart),
-            'Contract End': normDate(m.contractEnd),
+            'Contract Start': normalizeDate(m.contractStart),
+            'Contract End': normalizeDate(m.contractEnd),
             'Contract Status': contractStatus(m),
             IQOQ: m.iqoq || '',
-            'IQOQ Date': normDate(m.iqoqDate),
+            'IQOQ Date': normalizeDate(m.iqoqDate),
             'IQOQ Price': m.iqoqPrice ?? '',
           }
         : {
@@ -2693,12 +2675,12 @@ export default function ServicePage({ isAdmin = false, notify, machines, setMach
             'Contact Person': m.customerContact || '',
             'Contact Email': m.customerEmail || '',
             'Maintenance Period (m)': m.maintenancePeriodMonths || '',
-            'Last Maintenance': normDate(m.lastMaintenanceDate),
-            'Next Maintenance': normDate(m.nextMaintenanceDate),
+            'Last Maintenance': normalizeDate(m.lastMaintenanceDate),
+            'Next Maintenance': normalizeDate(m.nextMaintenanceDate),
             'Maint. Status': maintenanceStatus(m),
             'Contract Type': m.contractType || '',
-            'Contract Start': normDate(m.contractStart),
-            'Contract End': normDate(m.contractEnd),
+            'Contract Start': normalizeDate(m.contractStart),
+            'Contract End': normalizeDate(m.contractEnd),
             'Contract Status': contractStatus(m),
             Remark: m.remark || '',
           },

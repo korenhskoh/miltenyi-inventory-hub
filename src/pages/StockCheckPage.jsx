@@ -2,6 +2,7 @@ import { useState } from 'react';
 import * as XLSX from 'xlsx';
 import { Upload, Check, X, Download, Search, Trash2 } from 'lucide-react';
 import { fmtDate, exportToFile } from '../utils.js';
+import { todayLocal } from '../lib/dates.js';
 import { Pill, BatchBar, BatchBtn, SelBox } from '../components/ui.jsx';
 
 /** Split one CSV line into cells, respecting double-quoted fields (with "" escapes). */
@@ -31,9 +32,14 @@ const splitCsvLine = (line) => {
 /** Turn an uploaded file into an array of rows (array of cell strings). */
 const readRowsFromFile = (file) =>
   new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onerror = () => reject(reader.error);
     const isCsv = /\.csv$/i.test(file.name);
+    const isExcel = /\.xlsx?$/i.test(file.name);
+    if (!isCsv && !isExcel) {
+      reject(new Error('Unsupported file type. Please upload a .csv, .xlsx or .xls file.'));
+      return;
+    }
+    const reader = new FileReader();
+    reader.onerror = () => reject(reader.error || new Error('Could not read the uploaded file'));
     if (isCsv) {
       reader.onload = (evt) => {
         const text = String(evt.target.result || '');
@@ -225,7 +231,7 @@ const StockCheckPage = ({
                         setStockCheckMode(true);
                         addStockCheck({
                           id: newId,
-                          date: new Date().toISOString().slice(0, 10),
+                          date: todayLocal(),
                           checkedBy: currentUser.name,
                           items: invList.length,
                           disc: 0,
@@ -238,7 +244,9 @@ const StockCheckPage = ({
                         notify('Invalid File', 'Could not parse items from file', 'warning');
                       }
                     })
-                    .catch(() => notify('Invalid File', 'Could not read the uploaded file', 'error'));
+                    .catch((err) =>
+                      notify('Invalid File', err?.message || 'Could not read the uploaded file', 'error'),
+                    );
                   e.target.value = '';
                 }}
                 style={{ display: 'none' }}
