@@ -5,6 +5,7 @@ import { pickAllowed } from '../validation.js';
 import { paginate, envelope, limitClause } from '../pagination.js';
 import { asyncHandler } from '../middleware/errorHandler.js';
 import { requireAdmin } from '../middleware/auth.js';
+import { requirePermission } from '../middleware/permissions.js';
 
 const router = Router();
 
@@ -61,7 +62,7 @@ router.post('/', async (req, res) => {
 });
 
 // DELETE /:id - delete notification log entry
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', requirePermission('deleteNotifications'), async (req, res) => {
   try {
     const { id } = req.params;
     const result = await query('DELETE FROM notif_log WHERE id = $1 RETURNING *', [id]);

@@ -4,12 +4,14 @@ import { snakeToCamel, camelToSnake } from '../utils.js';
 import { paginate, envelope, limitClause } from '../pagination.js';
 import { asyncHandler } from '../middleware/errorHandler.js';
 import { requireAdmin } from '../middleware/auth.js';
+import { requirePermission } from '../middleware/permissions.js';
 
 const router = Router();
 
 // GET / - list audit log entries with optional filters
 router.get(
   '/',
+  requirePermission('auditTrail'),
   asyncHandler(async (req, res) => {
     const { user, action, entityType, from, to } = req.query;
     const { page, pageSize } = paginate(req.query);

@@ -7,13 +7,7 @@ import { requireAdmin } from '../middleware/auth.js';
 
 const router = Router();
 
-const FCA_FIELDS = [
-  'fca_number',
-  'instrument_model',
-  'title',
-  'description',
-  'released_date',
-];
+const FCA_FIELDS = ['fca_number', 'instrument_model', 'title', 'description', 'released_date'];
 
 const FCA_STATUS_VALUES = new Set(['Not Applicable', 'Pending', 'In Progress', 'Completed']);
 const MAX_PDF_BYTES = 10 * 1024 * 1024; // 10 MB
@@ -91,10 +85,7 @@ router.get(
 router.get(
   '/:id/pdf',
   asyncHandler(async (req, res) => {
-    const result = await query(
-      `SELECT pdf_blob, pdf_filename FROM fca_definitions WHERE id = $1`,
-      [req.params.id],
-    );
+    const result = await query(`SELECT pdf_blob, pdf_filename FROM fca_definitions WHERE id = $1`, [req.params.id]);
     if (result.rows.length === 0 || !result.rows[0].pdf_blob) {
       return res.status(404).json({ error: 'PDF not found for this FCA' });
     }

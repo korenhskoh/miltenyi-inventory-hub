@@ -18,8 +18,14 @@ function mockReqResNext(headers = {}) {
   const res = {
     _status: null,
     _json: null,
-    status(code) { this._status = code; return this; },
-    json(data) { this._json = data; return this; },
+    status(code) {
+      this._status = code;
+      return this;
+    },
+    json(data) {
+      this._json = data;
+      return this;
+    },
   };
   const next = vi.fn();
   return { req, res, next };
@@ -113,7 +119,22 @@ describe('RBAC - Full auth chain (verifyToken → requireAdmin)', () => {
 
     // Step 2: requireAdmin
     const next2 = vi.fn();
-    requireAdmin(req, { ...res, _status: null, _json: null, status(c) { this._status = c; return this; }, json(d) { this._json = d; } }, next2);
+    requireAdmin(
+      req,
+      {
+        ...res,
+        _status: null,
+        _json: null,
+        status(c) {
+          this._status = c;
+          return this;
+        },
+        json(d) {
+          this._json = d;
+        },
+      },
+      next2,
+    );
     expect(next2).toHaveBeenCalled();
   });
 
@@ -127,7 +148,17 @@ describe('RBAC - Full auth chain (verifyToken → requireAdmin)', () => {
     expect(req.user.role).toBe('user');
 
     // Step 2: requireAdmin — fails
-    const res2 = { _status: null, _json: null, status(c) { this._status = c; return this; }, json(d) { this._json = d; } };
+    const res2 = {
+      _status: null,
+      _json: null,
+      status(c) {
+        this._status = c;
+        return this;
+      },
+      json(d) {
+        this._json = d;
+      },
+    };
     const next2 = vi.fn();
     requireAdmin(req, res2, next2);
     expect(res2._status).toBe(403);
@@ -149,11 +180,25 @@ describe('RBAC - Full auth chain (verifyToken → requireAdmin)', () => {
 describe('RBAC - Frontend hasPermission logic', () => {
   // Replicate the frontend hasPermission function for unit testing
   const DEFAULT_USER_PERMS = {
-    dashboard: true, catalog: true, orders: true, bulkOrders: true,
-    analytics: true, stockCheck: true, delivery: true, whatsapp: true,
-    notifications: true, editAllOrders: false, deleteOrders: false,
-    editAllBulkOrders: false, deleteBulkOrders: false, deleteStockChecks: false,
-    deleteNotifications: false, approvals: false, users: false, settings: false, aiBot: false,
+    dashboard: true,
+    catalog: true,
+    orders: true,
+    bulkOrders: true,
+    analytics: true,
+    stockCheck: true,
+    delivery: true,
+    whatsapp: true,
+    notifications: true,
+    editAllOrders: false,
+    deleteOrders: false,
+    editAllBulkOrders: false,
+    deleteBulkOrders: false,
+    deleteStockChecks: false,
+    deleteNotifications: false,
+    approvals: false,
+    users: false,
+    settings: false,
+    aiBot: false,
   };
 
   function hasPermission(currentUser, isAdmin, key) {
@@ -253,11 +298,25 @@ describe('RBAC - Frontend hasPermission logic', () => {
 // ═══════════════════════════════════════════════════════════════════
 describe('RBAC - Navigation item filtering', () => {
   const DEFAULT_USER_PERMS = {
-    dashboard: true, catalog: true, orders: true, bulkOrders: true,
-    analytics: true, stockCheck: true, delivery: true, whatsapp: true,
-    notifications: true, editAllOrders: false, deleteOrders: false,
-    editAllBulkOrders: false, deleteBulkOrders: false, deleteStockChecks: false,
-    deleteNotifications: false, approvals: false, users: false, settings: false, aiBot: false,
+    dashboard: true,
+    catalog: true,
+    orders: true,
+    bulkOrders: true,
+    analytics: true,
+    stockCheck: true,
+    delivery: true,
+    whatsapp: true,
+    notifications: true,
+    editAllOrders: false,
+    deleteOrders: false,
+    editAllBulkOrders: false,
+    deleteBulkOrders: false,
+    deleteStockChecks: false,
+    deleteNotifications: false,
+    approvals: false,
+    users: false,
+    settings: false,
+    aiBot: false,
   };
 
   function hasPermission(currentUser, isAdmin, key) {
@@ -282,14 +341,14 @@ describe('RBAC - Navigation item filtering', () => {
 
   it('admin sees all navigation items', () => {
     const admin = { id: 'U001', role: 'admin' };
-    const visible = allNavItems.filter(n => hasPermission(admin, true, n.perm));
+    const visible = allNavItems.filter((n) => hasPermission(admin, true, n.perm));
     expect(visible.length).toBe(allNavItems.length);
   });
 
   it('default user sees base nav items but not admin ones', () => {
     const user = { id: 'U002', role: 'user' }; // no permissions → defaults
-    const visible = allNavItems.filter(n => hasPermission(user, false, n.perm));
-    const visibleIds = visible.map(n => n.id);
+    const visible = allNavItems.filter((n) => hasPermission(user, false, n.perm));
+    const visibleIds = visible.map((n) => n.id);
 
     // Should see base items
     expect(visibleIds).toContain('dashboard');
@@ -308,12 +367,21 @@ describe('RBAC - Navigation item filtering', () => {
       id: 'U003',
       role: 'user',
       permissions: {
-        dashboard: false, catalog: false, orders: true, bulkOrders: false,
-        analytics: false, stockCheck: false, delivery: false, whatsapp: false,
-        notifications: false, approvals: false, users: false, settings: false,
+        dashboard: false,
+        catalog: false,
+        orders: true,
+        bulkOrders: false,
+        analytics: false,
+        stockCheck: false,
+        delivery: false,
+        whatsapp: false,
+        notifications: false,
+        approvals: false,
+        users: false,
+        settings: false,
       },
     };
-    const visible = allNavItems.filter(n => hasPermission(user, false, n.perm));
+    const visible = allNavItems.filter((n) => hasPermission(user, false, n.perm));
     expect(visible.length).toBe(1);
     expect(visible[0].id).toBe('orders');
   });

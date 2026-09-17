@@ -5,6 +5,7 @@ import { pickAllowed, sanitizeDates } from '../validation.js';
 import { paginate, envelope, limitClause } from '../pagination.js';
 import { asyncHandler } from '../middleware/errorHandler.js';
 import { requireAdmin } from '../middleware/auth.js';
+import { requirePermission } from '../middleware/permissions.js';
 
 const router = Router();
 
@@ -68,7 +69,7 @@ router.put('/:id', async (req, res) => {
 });
 
 // DELETE /:id - delete stock check
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', requirePermission('deleteStockChecks'), async (req, res) => {
   try {
     const { id } = req.params;
     const result = await query('DELETE FROM stock_checks WHERE id = $1 RETURNING *', [id]);

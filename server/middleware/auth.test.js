@@ -17,8 +17,14 @@ describe('JWT auth middleware', () => {
     const res = {
       _status: null,
       _json: null,
-      status(code) { this._status = code; return this; },
-      json(data) { this._json = data; return this; },
+      status(code) {
+        this._status = code;
+        return this;
+      },
+      json(data) {
+        this._json = data;
+        return this;
+      },
     };
     const next = vi.fn();
     return { req, res, next };

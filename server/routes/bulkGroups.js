@@ -5,6 +5,7 @@ import { pickAllowed, requireFields, sanitizeDates } from '../validation.js';
 import { paginate, envelope, limitClause } from '../pagination.js';
 import { asyncHandler } from '../middleware/errorHandler.js';
 import { requireAdmin } from '../middleware/auth.js';
+import { requirePermission, userHasPermission } from '../middleware/permissions.js';
 
 const router = Router();
 
@@ -50,6 +51,9 @@ router.put('/:id', async (req, res) => {
   try {
     const { id } = req.params;
     const snakeBody = sanitizeDates(pickAllowed(camelToSnake(req.body), BULK_GROUP_FIELDS), BG_DATE_FIELDS);
+    if (['Approved', 'Rejected'].includes(snakeBody.status) && !(await userHasPermission(req.user, 'approvals'))) {
+      return res.status(403).json({ error: 'Permission required: approvals' });
+    }
     const keys = Object.keys(snakeBody);
     const values = Object.values(snakeBody);
 
@@ -82,7 +86,7 @@ router.delete('/all', requireAdmin, async (req, res) => {
 });
 
 // DELETE /:id - delete bulk group
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', requirePermission('deleteBulkOrders'), async (req, res) => {
   try {
     const { id } = req.params;
     const result = await query('DELETE FROM bulk_groups WHERE id = $1 RETURNING *', [id]);

@@ -5,6 +5,7 @@ import { pickAllowed, sanitizeDates } from '../validation.js';
 import { paginate, envelope, limitClause } from '../pagination.js';
 import { asyncHandler } from '../middleware/errorHandler.js';
 import { requireAdmin } from '../middleware/auth.js';
+import { requirePermission } from '../middleware/permissions.js';
 
 const router = Router();
 
@@ -79,7 +80,7 @@ router.post('/', async (req, res) => {
 });
 
 // PUT /:id - update approval (status, action_date)
-router.put('/:id', async (req, res) => {
+router.put('/:id', requirePermission('approvals'), async (req, res) => {
   try {
     const { id } = req.params;
     const snakeBody = sanitizeDates(pickAllowed(camelToSnake(req.body), APPROVAL_FIELDS), APPROVAL_DATE_FIELDS);

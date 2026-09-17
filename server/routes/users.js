@@ -5,6 +5,7 @@ import { snakeToCamel, camelToSnake } from '../utils.js';
 import { pickAllowed, requireFields } from '../validation.js';
 import { paginate, envelope, limitClause } from '../pagination.js';
 import { asyncHandler } from '../middleware/errorHandler.js';
+import { invalidatePermissionCache } from '../middleware/permissions.js';
 
 const router = Router();
 
@@ -106,6 +107,7 @@ router.put('/:id', async (req, res) => {
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'User not found' });
     }
+    invalidatePermissionCache(id);
 
     res.json(snakeToCamel(result.rows[0]));
   } catch (e) {
@@ -123,6 +125,7 @@ router.delete('/:id', async (req, res) => {
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'User not found' });
     }
+    invalidatePermissionCache(id);
 
     res.json({ success: true });
   } catch (e) {

@@ -26,15 +26,7 @@ async function insertRows(table, rows) {
 // POST / - one-time migration from localStorage
 router.post('/', async (req, res) => {
   try {
-    const {
-      orders,
-      bulkGroups,
-      users,
-      stockChecks,
-      notifLog,
-      pendingApprovals,
-      config
-    } = req.body;
+    const { orders, bulkGroups, users, stockChecks, notifLog, pendingApprovals, config } = req.body;
 
     const counts = {};
 

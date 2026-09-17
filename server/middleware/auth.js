@@ -4,9 +4,10 @@ import logger from '../logger.js';
 
 if (!process.env.JWT_SECRET) {
   if (process.env.NODE_ENV === 'production') {
-    logger.warn(
-      'SECURITY: JWT_SECRET is not set in production — a random secret is being generated. All issued tokens will be invalidated on every restart. Set JWT_SECRET to a stable value.',
-    );
+    // Refuse to boot: a random per-process secret logs everyone out on each
+    // restart and, with multiple instances, makes tokens unverifiable.
+    logger.fatal('JWT_SECRET is not set. Set a stable JWT_SECRET (e.g. `openssl rand -hex 32`) and restart.');
+    process.exit(1);
   } else {
     logger.warn('JWT_SECRET not set — generating random secret (tokens will not survive restarts)');
   }

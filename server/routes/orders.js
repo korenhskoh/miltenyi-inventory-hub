@@ -5,6 +5,7 @@ import { pickAllowed, requireFields, sanitizeDates } from '../validation.js';
 import { paginate, envelope, limitClause } from '../pagination.js';
 import { asyncHandler } from '../middleware/errorHandler.js';
 import { requireAdmin } from '../middleware/auth.js';
+import { requirePermission, userHasPermission } from '../middleware/permissions.js';
 
 const router = Router();
 
@@ -39,6 +40,60 @@ const ORDER_DATE_FIELDS = ['order_date', 'arrival_date', 'approval_sent_date'];
 
 // Allowed columns for ORDER BY (prevents SQL injection)
 const ALLOWED_ORDER_COLUMNS = new Set([...ORDER_FIELDS, 'created_at']);
+
+const APPROVAL_STATUSES = new Set(['approved', 'rejected']);
+const APPROVAL_ORDER_STATUSES = new Set(['Approved', 'Rejected']);
+// Does this update change the approval decision? (Only users with the
+// 'approvals' permission — or admins — may do that.)
+function isApprovalDecision(body) {
+  return (
+    (body.approval_status && APPROVAL_STATUSES.has(String(body.approval_status).toLowerCase())) ||
+    (body.status && APPROVAL_ORDER_STATUSES.has(body.status))
+  );
+}
+
+// GET /stats - server-side aggregates for the dashboard (never subject to paging)
+router.get(
+  '/stats',
+  asyncHandler(async (req, res) => {
+    const totals = await query(`
+      SELECT
+        COUNT(*)::int AS total,
+        COUNT(*) FILTER (WHERE status = 'Pending Approval')::int AS pending_approval,
+        COUNT(*) FILTER (WHERE status = 'Approved')::int AS approved,
+        COUNT(*) FILTER (WHERE status = 'Received')::int AS received,
+        COUNT(*) FILTER (WHERE status = 'Rejected')::int AS rejected,
+        COUNT(*) FILTER (WHERE back_order < 0)::int AS back_orders,
+        COALESCE(SUM(total_cost), 0)::float AS total_value,
+        COALESCE(SUM(total_cost) FILTER (WHERE status = 'Received'), 0)::float AS received_value
+      FROM orders
+    `);
+    const byMonth = await query(`
+      SELECT
+        to_char(date_trunc('month', order_date), 'YYYY-MM') AS ym,
+        COUNT(*)::int AS orders,
+        COALESCE(SUM(quantity), 0)::int AS items,
+        COALESCE(SUM(total_cost), 0)::float AS value
+      FROM orders
+      WHERE order_date IS NOT NULL
+      GROUP BY 1
+      ORDER BY 1
+    `);
+    const topMaterials = await query(`
+      SELECT material_no, MAX(description) AS description, SUM(quantity)::int AS quantity, COUNT(*)::int AS orders
+      FROM orders
+      WHERE material_no IS NOT NULL AND material_no <> ''
+      GROUP BY material_no
+      ORDER BY quantity DESC
+      LIMIT 10
+    `);
+    res.json({
+      totals: snakeToCamel(totals.rows[0]),
+      byMonth: byMonth.rows,
+      topMaterials: topMaterials.rows.map(snakeToCamel),
+    });
+  }),
+);
 
 // GET / - list all orders, optional query params: status, month, orderBy, page, limit
 router.get(
@@ -111,6 +166,12 @@ router.put('/bulk-status', async (req, res) => {
     if (!status) {
       return res.status(400).json({ error: 'status is required' });
     }
+    if (
+      isApprovalDecision({ status, approval_status: approvalStatus }) &&
+      !(await userHasPermission(req.user, 'approvals'))
+    ) {
+      return res.status(403).json({ error: 'Permission required: approvals' });
+    }
 
     const placeholders = ids.map((_, i) => `$${i + (approvalStatus ? 3 : 2)}`).join(', ');
     const sql = approvalStatus
@@ -130,6 +191,10 @@ router.put('/:id', async (req, res) => {
   try {
     const { id } = req.params;
     const snakeBody = sanitizeDates(pickAllowed(camelToSnake(req.body), ORDER_FIELDS), ORDER_DATE_FIELDS);
+
+    if (isApprovalDecision(snakeBody) && !(await userHasPermission(req.user, 'approvals'))) {
+      return res.status(403).json({ error: 'Permission required: approvals' });
+    }
 
     // Enforce approval before allowing part arrival updates
     // Skip check if this request is also setting approval_status to 'approved'
@@ -172,7 +237,7 @@ router.delete('/all', requireAdmin, async (req, res) => {
 });
 
 // DELETE /:id - delete order by id
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', requirePermission('deleteOrders'), async (req, res) => {
   try {
     const { id } = req.params;
     const result = await query('DELETE FROM orders WHERE id = $1 RETURNING *', [id]);

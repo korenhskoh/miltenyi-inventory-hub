@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { query } from '../db.js';
 import logger from '../logger.js';
+import { userHasPermission } from '../middleware/permissions.js';
 
 const router = Router();
 
@@ -111,9 +112,12 @@ router.put('/:key', async (req, res) => {
     const { key } = req.params;
     let { value } = req.body;
 
-    // Only admins can modify global keys
-    if (GLOBAL_KEYS.has(key) && req.user.role !== 'admin') {
-      return res.status(403).json({ error: 'Admin access required for global settings' });
+    // Global keys: admins, or users granted the Settings (or AI Bot) permission
+    if (GLOBAL_KEYS.has(key)) {
+      const ok =
+        (await userHasPermission(req.user, 'settings')) ||
+        (key === 'aiBotConfig' && (await userHasPermission(req.user, 'aiBot')));
+      if (!ok) return res.status(403).json({ error: 'Settings permission required for global settings' });
     }
 
     const userId = effectiveUserId(key, req.user);
