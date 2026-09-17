@@ -1,7 +1,7 @@
 # Miltenyi Inventory Hub — Full Bug Review (17 Sep 2026)
 
-Repo: `korenhskoh/miltenyi-inventory-hub` @ `56e5b05` (main). Fix branch: `fix/bug-review-2026-09` (2 commits, 37 files).
-Baseline before fixes: build OK, **5 lint errors**, **8 failing tests**. After fixes: build OK, **0 lint errors**, **100/100 tests pass**.
+Repo: `korenhskoh/miltenyi-inventory-hub` @ `56e5b05` (main). Fix branch: `fix/bug-review-2026-09` (5 commits, 52 files).
+Baseline before fixes: build OK, **5 lint errors**, **8 failing tests**. After fixes: build OK, **0 lint errors**, **128/128 tests pass** (28 new unit tests).
 
 ## How to apply
 
@@ -58,15 +58,21 @@ On first deploy the server runs a one-off repair (`initDb.js`): settings that Se
 - 8 stale tests (expected arrays, server returns `{data,total,…}`) updated; 1 updated for 401-on-expiry; 4 client tests updated for `?all=true`.
 - 3 `react-hooks/set-state-in-effect` errors restructured (ServicePage), `btoa` global, empty block. 0 errors remain (≈90 pre-existing unused-var / exhaustive-deps warnings left as-is).
 
-## NOT fixed — decide before adding features
+## Follow-up round — all previously open items now fixed
 
-1. **Approval authority isn't enforced server-side.** Any logged-in user can `PUT /api/orders/:id {approvalStatus:'approved'}` or `PUT /api/pending-approvals/:id`. If approvals must be admin/approver-only, add a role/permission check in `orders.js` and `approvals.js` (I left it because the intended approver model — email keywords vs. in-app role — isn't clear from the code).
-2. **Per-order delete / bulk-group delete / stock-check delete** are open to every user (only the "delete all" variants are admin-only). Same question as above.
-3. **Per-keystroke PUTs in Edit Bulk Order** (`updateOrderField`) — every keystroke sends a request; responses can land out of order. Should edit a local draft and save once (also lets you block edits to already-approved groups).
-4. **Unreachable Order Detail modal** (`setSelectedOrder` is never called with an order) contains an inverted back-order sign and a call that always 403s. Delete it or fix and re-enable.
-5. **Quick Compose "Send" and Order-detail Email/WhatsApp buttons** still fake success (hard-coded recipient, no send).
-6. **"Today" is computed in UTC** in ~30 places (`toISOString().slice(0,10)`) → between 00:00–08:00 SGT the order/arrival date is yesterday. Add a `todayLocal()` helper and replace.
-7. **`App.jsx` is 12.6k lines** in one file with all state at the top; most of the bugs above came from three copies of the same logic drifting apart (arrival, pricing, approvals). Before adding features, extract at least: pricing (`getEffectivePrice`), arrival/back-order maths, approval state transitions, and the data-loading layer.
-8. **Everything is loaded client-side** (`all=true`) — fine at current volumes (hundreds of orders) but the dashboard/analytics should move to server aggregates before the catalog/orders grow into the tens of thousands.
-9. **JWT_SECRET / FRONTEND_URL** must be set in production (the server only warns). Check Railway env.
-10. `client-side user cache in localStorage` (`mih_users`, orders, etc.) still persists business data on shared machines; consider dropping the localStorage fallback entirely now that registration/login go through the API.
+1. **Approval authority enforced server-side.** New `server/middleware/permissions.js` reads `users.permissions` (same keys as the UI's `DEFAULT_USER_PERMS`; admins implicit; 30 s cache, invalidated on user edits). Approving/rejecting orders, bulk-status, bulk groups and pending approvals requires `approvals`; global settings require `settings` (`aiBot` for the AI-bot config); the audit log requires `auditTrail`.
+2. **Per-record deletes** require `deleteOrders` / `deleteBulkOrders` / `deleteStockChecks` / `deleteNotifications` (the UI already hid the buttons — the API now agrees).
+3. **Edit Bulk Order** keeps a local draft and saves once per changed order on Save; approved groups are read-only unless admin / `editAllBulkOrders`; items added to an approved group start as *Pending Approval*.
+4. **Unreachable Order Detail modal deleted** (it carried an inverted back-order sign and a call that always 403'd).
+5. **Quick Compose** and the Delivery page **Email / WhatsApp report** buttons perform real sends and toast the real result; hard-coded recipients removed.
+6. **Local calendar dates** everywhere via `src/lib/dates.js` (`todayLocal`, `normalizeDate`, …) — no more UTC day shift between 00:00–08:00 SGT.
+7. **First extraction step out of `App.jsx`**: `src/lib/pricing.js`, `arrival.js`, `approvals.js`, `dates.js` replace nine duplicated price reducers, three arrival-maths copies and the mirrored approve/reject branches; each has unit tests. *Behaviour note:* dashboard/analytics/approval-email totals now use the **stored order price** (falling back to the catalog only when the stored price is 0), so they finally agree with the All Orders footer and `orders.total_cost`.
+8. **Server aggregates**: `GET /api/orders/stats` (totals, per-month series, top materials) feeds the dashboard headline tiles; charts still use the client data.
+9. **Config fail-fast**: production boot exits with a clear message when `JWT_SECRET` is missing; `.env.example` documents `JWT_SECRET`, `FRONTEND_URL`, `TRUST_PROXY_HOPS`.
+10. **localStorage no longer caches business data or config** (orders, users, approvals, SMTP config, …). Only the token, the last-seen user for the pre-load render, and UI preferences remain. An unreachable server shows the login screen with a clear message instead of stale cached data.
+
+## Still worth doing (not bugs)
+
+- `App.jsx` is still ~11k lines. The next extraction candidates are the data-loading layer (`loadAppData`/`refreshPageData`) and the approval-email builders.
+- Permissions in the JWT vs. DB: the server looks permissions up from the DB (fresh within 30 s), which is safer than baking them into the token; if you later want zero DB hits, add them to the token and re-issue on change.
+- Set `FRONTEND_URL` on Railway so CORS stops reflecting any origin.
