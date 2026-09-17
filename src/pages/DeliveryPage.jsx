@@ -10,11 +10,28 @@ import {
   ChevronLeft,
   ChevronRight,
 } from 'lucide-react';
-import { fmt, fmtDate, applySortData, toggleSort, fillTemplate } from '../utils.js';
+import { fmt, fmtDate, applySortData, toggleSort, fillTemplate, escapeHtml } from '../utils.js';
 import { Pill, ArrivalBadge, ExportDropdown, SortTh } from '../components/ui.jsx';
 import api from '../api.js';
 
 const PAGE_SIZE_OPTIONS = [20, 50, 100, 500];
+
+/**
+ * Send an arrival report via the server-side mailer (SMTP config is stored server-side).
+ * Recipient is the configured approver email (falls back to sender email).
+ * Returns { ok, to, error }.
+ */
+const sendArrivalReportEmail = async (apiClient, { subject, title, summary, verifiedBy }) => {
+  const cfg = await apiClient.getConfigKey('emailConfig');
+  const to = cfg?.approverEmail || cfg?.senderEmail || '';
+  if (!to) return { ok: false, to, error: 'No recipient configured (Settings → Email)' };
+  const html =
+    `<h3>${escapeHtml(title)}</h3>` +
+    `<p>Date: ${escapeHtml(new Date().toLocaleDateString('en-SG'))}<br/>Verified by: ${escapeHtml(verifiedBy || 'Admin')}</p>` +
+    `<pre style="font-family:monospace;font-size:12px">${escapeHtml(summary)}</pre>`;
+  const r = await apiClient.sendEmail({ to, subject, html });
+  return { ok: !!r?.ok, to, error: r?.error };
+};
 
 const DeliveryPage = ({
   orders,
@@ -66,6 +83,24 @@ const DeliveryPage = ({
   const [allPageSize, setAllPageSize] = useState(50);
   const [allPage, setAllPage] = useState(0);
   const [arrivalCheckedByFilter, setArrivalCheckedByFilter] = useState('All');
+
+  // Reset pagination to the first page whenever a filter changes so the
+  // current page index can never point past the end of the new result set.
+  // (React's "adjust state when a prop changes" pattern — no effect needed.)
+  const filterKey = [
+    arrivalMonthFilter,
+    arrivalOrderByFilter,
+    arrivalCheckedByFilter,
+    arrivalStatusFilter,
+    arrivalTypeFilter,
+  ].join('|');
+  const [prevFilterKey, setPrevFilterKey] = useState(filterKey);
+  if (filterKey !== prevFilterKey) {
+    setPrevFilterKey(filterKey);
+    setBulkPage(0);
+    setSinglePage(0);
+    setAllPage(0);
+  }
 
   // Unique list of users who have checked arrivals
   const arrivalCheckedByUsers = [
@@ -714,21 +749,34 @@ const DeliveryPage = ({
                                   })()}
                                   <button
                                     className="be"
-                                    onClick={() => {
+                                    onClick={async () => {
                                       const summary = bgOrders
                                         .map(
                                           (o) =>
                                             `\u2022 ${o.materialNo}: ${o.qtyReceived}/${o.quantity} ${o.qtyReceived >= o.quantity ? '\u2713' : '(B/O: ' + (o.quantity - o.qtyReceived) + ')'}`,
                                         )
                                         .join('\n');
-                                      notify('Email Sent', `Arrival report for ${bg.month} sent`, 'success');
+                                      const subject = `Arrival Check: ${bg.month}`;
+                                      const r = await sendArrivalReportEmail(api, {
+                                        subject,
+                                        title: `Arrival Check: ${bg.month}`,
+                                        summary,
+                                        verifiedBy: currentUser?.name,
+                                      });
+                                      if (r.ok)
+                                        notify(
+                                          'Email Sent',
+                                          `Arrival report for ${bg.month} sent to ${r.to}`,
+                                          'success',
+                                        );
+                                      else notify('Email Failed', r.error || 'Could not send arrival report', 'error');
                                       addNotifEntry({
                                         id: `N-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
                                         type: 'email',
-                                        to: 'service-sg@miltenyibiotec.com',
-                                        subject: `Arrival Check: ${bg.month}`,
+                                        to: r.to || '\u2014',
+                                        subject,
                                         date: new Date().toISOString().slice(0, 10),
-                                        status: 'Sent',
+                                        status: r.ok ? 'Sent' : 'Failed',
                                       });
                                     }}
                                   >
@@ -745,7 +793,7 @@ const DeliveryPage = ({
                                             .slice(0, 5)
                                             .map(
                                               (o) =>
-                                                `\u2022 ${o.description.slice(0, 30)}: ${o.qtyReceived}/${o.quantity}`,
+                                                `\u2022 ${(o.description || '').slice(0, 30)}: ${o.qtyReceived}/${o.quantity}`,
                                             )
                                             .join('\n') +
                                           (bgOrders.length > 5 ? `\n...and ${bgOrders.length - 5} more` : '');
@@ -829,7 +877,7 @@ const DeliveryPage = ({
                                                 .slice(0, 5)
                                                 .map(
                                                   (o) =>
-                                                    `\u2022 ${o.description.slice(0, 30)}: ${o.qtyReceived}/${o.quantity}`,
+                                                    `\u2022 ${(o.description || '').slice(0, 30)}: ${o.qtyReceived}/${o.quantity}`,
                                                 )
                                                 .join('\n') +
                                               (bgOrders.length > 5 ? `\n...and ${bgOrders.length - 5} more` : '');
@@ -846,19 +894,27 @@ const DeliveryPage = ({
                                                 itemsList: completeItemsList,
                                               },
                                             );
-                                            await fetch(`${WA_API_URL}/send`, {
-                                              method: 'POST',
-                                              headers: {
-                                                'Content-Type': 'application/json',
-                                                Authorization: `Bearer ${api.getToken()}`,
-                                              },
-                                              body: JSON.stringify({
-                                                phone:
-                                                  users.find((u) => u.name === bg.createdBy)?.phone || '+65 9111 2222',
-                                                template: 'custom',
-                                                data: { message: completeMsg },
-                                              }),
-                                            });
+                                            const creatorPhone = users.find((u) => u.name === bg.createdBy)?.phone;
+                                            if (!creatorPhone) {
+                                              notify(
+                                                'WhatsApp Skipped',
+                                                `${bg.createdBy || 'Creator'} has no phone number on file`,
+                                                'warning',
+                                              );
+                                            } else {
+                                              await fetch(`${WA_API_URL}/send`, {
+                                                method: 'POST',
+                                                headers: {
+                                                  'Content-Type': 'application/json',
+                                                  Authorization: `Bearer ${api.getToken()}`,
+                                                },
+                                                body: JSON.stringify({
+                                                  phone: creatorPhone,
+                                                  template: 'custom',
+                                                  data: { message: completeMsg },
+                                                }),
+                                              });
+                                            }
                                           } catch (e) {
                                             /* ignore */
                                           }
@@ -1243,21 +1299,29 @@ const DeliveryPage = ({
               })()}
               <button
                 className="be"
-                onClick={() => {
+                onClick={async () => {
                   const summary = indivOrders
                     .map(
                       (o) =>
                         `\u2022 ${o.materialNo}: ${o.qtyReceived || 0}/${o.quantity} ${(o.qtyReceived || 0) >= o.quantity ? '\u2713' : '(B/O: ' + (o.quantity - (o.qtyReceived || 0)) + ')'}`,
                     )
                     .join('\n');
-                  notify('Email Sent', 'Individual orders arrival report sent', 'success');
+                  const subject = 'Arrival Check: Individual Orders';
+                  const r = await sendArrivalReportEmail(api, {
+                    subject,
+                    title: subject,
+                    summary,
+                    verifiedBy: currentUser?.name,
+                  });
+                  if (r.ok) notify('Email Sent', `Individual orders arrival report sent to ${r.to}`, 'success');
+                  else notify('Email Failed', r.error || 'Could not send arrival report', 'error');
                   addNotifEntry({
                     id: `N-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
                     type: 'email',
-                    to: 'service-sg@miltenyibiotec.com',
-                    subject: 'Arrival Check: Individual Orders',
+                    to: r.to || '\u2014',
+                    subject,
                     date: new Date().toISOString().slice(0, 10),
-                    status: 'Sent',
+                    status: r.ok ? 'Sent' : 'Failed',
                   });
                 }}
               >
@@ -1272,7 +1336,7 @@ const DeliveryPage = ({
                     const itemsList =
                       indivOrders
                         .slice(0, 5)
-                        .map((o) => `\u2022 ${o.description.slice(0, 30)}: ${o.qtyReceived || 0}/${o.quantity}`)
+                        .map((o) => `\u2022 ${(o.description || '').slice(0, 30)}: ${o.qtyReceived || 0}/${o.quantity}`)
                         .join('\n') + (indivOrders.length > 5 ? `\n...and ${indivOrders.length - 5} more` : '');
                     const arrMsg = fillTemplate(
                       waMessageTemplates.partArrival?.message ||
@@ -1338,7 +1402,10 @@ const DeliveryPage = ({
                         const complItemsList =
                           indivOrders
                             .slice(0, 5)
-                            .map((o) => `\u2022 ${o.description.slice(0, 30)}: ${o.qtyReceived || 0}/${o.quantity}`)
+                            .map(
+                              (o) =>
+                                `\u2022 ${(o.description || '').slice(0, 30)}: ${o.qtyReceived || 0}/${o.quantity}`,
+                            )
                             .join('\n') + (indivOrders.length > 5 ? `\n...and ${indivOrders.length - 5} more` : '');
                         const complMsg = fillTemplate(
                           waMessageTemplates.partArrival?.message ||

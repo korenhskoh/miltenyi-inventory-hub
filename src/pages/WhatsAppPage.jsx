@@ -570,7 +570,7 @@ export default function WhatsAppPage({
                       </div>
                     </div>
                     <button
-                      onClick={() => {
+                      onClick={async () => {
                         const recipientCount = (scheduledNotifs.recipients || []).length;
                         if (recipientCount === 0) {
                           notify('No Recipients', 'Please select at least one recipient', 'warning');
@@ -585,17 +585,31 @@ export default function WhatsAppPage({
                           notify('No Channel', 'Please enable at least one delivery channel', 'warning');
                           return;
                         }
-                        sendScheduledReport();
-                        notify(
-                          'Report Sent',
-                          'Scheduled report sent to ' +
-                            recipientCount +
-                            ' recipient(s) via ' +
-                            [scheduledNotifs.emailEnabled && 'Email', scheduledNotifs.whatsappEnabled && 'WhatsApp']
-                              .filter(Boolean)
-                              .join(' & '),
-                          'success',
-                        );
+                        const channels = [
+                          scheduledNotifs.emailEnabled && 'Email',
+                          scheduledNotifs.whatsappEnabled && 'WhatsApp',
+                        ]
+                          .filter(Boolean)
+                          .join(' & ');
+                        // Run the report server-side (admin-only) and only report success when it resolves.
+                        let ok = false;
+                        let errMsg = '';
+                        try {
+                          const r = await api.runScheduledReport();
+                          ok = !!(r && r.success);
+                          errMsg = r?.error || '';
+                        } catch (err) {
+                          errMsg = err?.message || 'Network error';
+                        }
+                        if (ok) {
+                          notify(
+                            'Report Sent',
+                            'Scheduled report sent to ' + recipientCount + ' recipient(s) via ' + channels,
+                            'success',
+                          );
+                        } else {
+                          notify('Report Failed', errMsg || 'Scheduled report could not be sent', 'error');
+                        }
                       }}
                       style={{
                         padding: '8px 16px',
@@ -778,7 +792,12 @@ export default function WhatsAppPage({
                 </label>
                 <textarea
                   value={waMessageText}
-                  onChange={(e) => setWaMessageText(e.target.value)}
+                  onChange={(e) => {
+                    setWaMessageText(e.target.value);
+                    // Once the user edits the text, send it as-is (custom) so template
+                    // regeneration in the send path doesn't discard their edits.
+                    if (waTemplate !== 'custom') setWaTemplate('custom');
+                  }}
                   rows={5}
                   style={{ width: '100%', resize: 'vertical', fontFamily: 'monospace', fontSize: 12 }}
                 />

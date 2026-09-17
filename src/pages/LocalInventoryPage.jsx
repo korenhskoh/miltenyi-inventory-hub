@@ -135,7 +135,7 @@ export default function LocalInventoryPage({ isAdmin, currentUser: _currentUser,
   // ── Data loading ──
   const loadData = useCallback(async () => {
     setLoading(true);
-    const [inv, sum] = await Promise.all([api.getLocalInventory(), api.getLocalInventorySummary()]);
+    const [inv, sum] = await Promise.all([api.getLocalInventory({ all: true }), api.getLocalInventorySummary()]);
     if (inv) setInventory(inv);
     if (sum) setSummary(sum);
     setLoading(false);
@@ -145,7 +145,7 @@ export default function LocalInventoryPage({ isAdmin, currentUser: _currentUser,
     let cancelled = false;
     (async () => {
       setLoading(true);
-      const [inv, sum] = await Promise.all([api.getLocalInventory(), api.getLocalInventorySummary()]);
+      const [inv, sum] = await Promise.all([api.getLocalInventory({ all: true }), api.getLocalInventorySummary()]);
       if (cancelled) return;
       if (inv) setInventory(inv);
       if (sum) setSummary(sum);
@@ -192,8 +192,9 @@ export default function LocalInventoryPage({ isAdmin, currentUser: _currentUser,
       description: formData.description.trim(),
       lotsNumber: formData.lotsNumber.trim() || null,
       category: formData.category.trim() || null,
-      quantity: parseInt(formData.quantity) || 0,
     };
+    // Quantity is only set on create; edits must go through Adjust Qty (admin-only /adjust endpoint)
+    if (!editingItem) payload.quantity = parseInt(formData.quantity) || 0;
     if (!payload.materialNo) {
       notify('Error', 'Material No is required', 'error');
       return;
@@ -674,32 +675,36 @@ export default function LocalInventoryPage({ isAdmin, currentUser: _currentUser,
                       </td>
                       <td className="li-td" onClick={(e) => e.stopPropagation()}>
                         <div style={{ display: 'flex', gap: 4 }}>
-                          <button
-                            onClick={() => openEdit(item)}
-                            style={{
-                              padding: 4,
-                              background: 'none',
-                              border: 'none',
-                              cursor: 'pointer',
-                              color: '#64748B',
-                            }}
-                            title="Edit"
-                          >
-                            <Edit3 size={14} />
-                          </button>
-                          <button
-                            onClick={() => handleDelete(item)}
-                            style={{
-                              padding: 4,
-                              background: 'none',
-                              border: 'none',
-                              cursor: 'pointer',
-                              color: '#DC2626',
-                            }}
-                            title="Delete"
-                          >
-                            <Trash2 size={14} />
-                          </button>
+                          {isAdmin && (
+                            <button
+                              onClick={() => openEdit(item)}
+                              style={{
+                                padding: 4,
+                                background: 'none',
+                                border: 'none',
+                                cursor: 'pointer',
+                                color: '#64748B',
+                              }}
+                              title="Edit"
+                            >
+                              <Edit3 size={14} />
+                            </button>
+                          )}
+                          {isAdmin && (
+                            <button
+                              onClick={() => handleDelete(item)}
+                              style={{
+                                padding: 4,
+                                background: 'none',
+                                border: 'none',
+                                cursor: 'pointer',
+                                color: '#DC2626',
+                              }}
+                              title="Delete"
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -884,8 +889,15 @@ export default function LocalInventoryPage({ isAdmin, currentUser: _currentUser,
                   type="number"
                   min={0}
                   value={formData.quantity}
+                  readOnly={!!editingItem}
+                  disabled={!!editingItem}
                   onChange={(e) => setFormData((p) => ({ ...p, quantity: e.target.value }))}
                 />
+                {editingItem && (
+                  <div style={{ fontSize: 11, color: '#94A3B8', marginTop: 4 }}>
+                    Quantity cannot be edited here &mdash; use Adjust Qty.
+                  </div>
+                )}
               </div>
             </div>
 

@@ -57,8 +57,40 @@ const MAINTENANCE_PERIODS = [
 
 const IQOQ_STATUSES = ['Completed', 'Pending', 'N/A'];
 
-const today = () => new Date().toISOString().slice(0, 10);
-const in30 = () => new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10);
+// Format a Date as YYYY-MM-DD using LOCAL getters. toISOString() would convert to
+// UTC and shift the calendar day for SG (UTC+8) users in the evening.
+const toLocalYmd = (d) => {
+  if (!(d instanceof Date) || Number.isNaN(d.getTime())) return '';
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+};
+const today = () => toLocalYmd(new Date());
+const in30 = () => toLocalYmd(new Date(Date.now() + 30 * 86400000));
+
+// Date fields on a machine record. The API now returns plain 'YYYY-MM-DD' strings, but
+// older rows / cached data may still carry ISO timestamps, so normalise defensively.
+const DATE_FIELDS = [
+  'lastMaintenanceDate',
+  'nextMaintenanceDate',
+  'contractStart',
+  'contractEnd',
+  'deliveryDate',
+  'installDate',
+  'warrantyStart',
+  'warrantyEnd',
+  'iqoqDate',
+];
+const normDate = (v) => (v == null || v === '' ? '' : String(v).slice(0, 10));
+const normMachineDates = (m) => {
+  if (!m) return m;
+  const out = { ...m };
+  DATE_FIELDS.forEach((k) => {
+    if (k in out) out[k] = normDate(out[k]);
+  });
+  return out;
+};
 
 // Days between today and a warranty/expiry date (positive = days remaining, negative = expired)
 function daysLeftFromToday(dateStr) {
@@ -202,7 +234,7 @@ function MachineModal({ machine, region, onSave, onClose, saving }) {
   const [form, setForm] = useState(() => ({
     ...EMPTY_MACHINE,
     region: machine?.region || region || 'local',
-    ...(machine || {}),
+    ...normMachineDates(machine || {}),
   }));
   const isOverseas = form.region === 'overseas';
 
@@ -214,7 +246,7 @@ function MachineModal({ machine, region, onSave, onClose, saving }) {
     if (val && form.maintenancePeriodMonths) {
       const d = new Date(val);
       d.setMonth(d.getMonth() + Number(form.maintenancePeriodMonths));
-      set('nextMaintenanceDate', d.toISOString().slice(0, 10));
+      set('nextMaintenanceDate', toLocalYmd(d));
     }
   };
 
@@ -223,7 +255,7 @@ function MachineModal({ machine, region, onSave, onClose, saving }) {
     if (form.lastMaintenanceDate) {
       const d = new Date(form.lastMaintenanceDate);
       d.setMonth(d.getMonth() + Number(val));
-      set('nextMaintenanceDate', d.toISOString().slice(0, 10));
+      set('nextMaintenanceDate', toLocalYmd(d));
     }
   };
 
@@ -420,9 +452,7 @@ function MachineModal({ machine, region, onSave, onClose, saving }) {
                   <input
                     className="svc-input"
                     value={
-                      form.warrantyEnd
-                        ? `${daysLeftFromToday(form.warrantyEnd)} day(s)`
-                        : 'Set a warranty end date'
+                      form.warrantyEnd ? `${daysLeftFromToday(form.warrantyEnd)} day(s)` : 'Set a warranty end date'
                     }
                     readOnly
                     style={{ background: 'var(--svc-surface)', cursor: 'default' }}
@@ -717,17 +747,7 @@ function getImportColumns(region) {
   return region === 'overseas' ? IMPORT_COLUMNS_OVERSEAS : IMPORT_COLUMNS_LOCAL;
 }
 
-const DATE_IMPORT_KEYS = new Set([
-  'lastMaintenanceDate',
-  'nextMaintenanceDate',
-  'contractStart',
-  'contractEnd',
-  'deliveryDate',
-  'installDate',
-  'warrantyStart',
-  'warrantyEnd',
-  'iqoqDate',
-]);
+const DATE_IMPORT_KEYS = new Set(DATE_FIELDS);
 const NUMBER_IMPORT_KEYS = new Set(['price', 'iqoqPrice']);
 
 // Normalize a header for fuzzy matching: lowercase, strip punctuation/whitespace
@@ -766,9 +786,7 @@ function autoMapColumns(headers, columns) {
   for (const col of columns || []) {
     if (!col || !col.key) continue;
     const aliases = Array.isArray(col.aliases) ? col.aliases : [];
-    const candidates = [col.label, col.key, ...aliases]
-      .filter((c) => c != null)
-      .map(normalizeHeader);
+    const candidates = [col.label, col.key, ...aliases].filter((c) => c != null).map(normalizeHeader);
     const hit = normHeaders.find((h) => h && candidates.includes(h.norm));
     if (hit) map[col.key] = hit.raw;
   }
@@ -868,11 +886,15 @@ function ImportModal({ isAdmin, region = 'local', onImport, onClose }) {
             val = Number.isFinite(n) ? n : null;
           } else if (DATE_IMPORT_KEYS.has(key)) {
             if (!String(val).match(/^\d{4}-\d{2}-\d{2}$/)) {
-              try {
-                val = new Date(val).toISOString().slice(0, 10);
-              } catch {
-                val = null;
-              }
+              // Excel serials arrive as numbers (days since 1899-12-30, UTC-based);
+              // other strings parse via Date and are formatted with local getters.
+              const ymd =
+                typeof val === 'number' && Number.isFinite(val)
+                  ? new Date(Math.round((val - 25569) * 86400000)).toISOString().slice(0, 10)
+                  : toLocalYmd(new Date(val));
+              val = ymd || null;
+            } else {
+              val = String(val).slice(0, 10);
             }
           }
           obj[key] = val;
@@ -900,9 +922,7 @@ function ImportModal({ isAdmin, region = 'local', onImport, onClose }) {
     <div className="svc-modal-overlay" onClick={onClose}>
       <div className="svc-modal svc-modal--lg" onClick={(e) => e.stopPropagation()}>
         <div className="svc-modal__header">
-          <h2>
-            Import {region === 'overseas' ? 'Overseas' : 'Local'} Instruments from Excel / CSV
-          </h2>
+          <h2>Import {region === 'overseas' ? 'Overseas' : 'Local'} Instruments from Excel / CSV</h2>
           <button className="svc-icon-btn" onClick={onClose}>
             <X size={20} />
           </button>
@@ -941,8 +961,8 @@ function ImportModal({ isAdmin, region = 'local', onImport, onClose }) {
           {step === 'map' && (
             <>
               <p style={{ marginBottom: 4, color: 'var(--svc-text-muted)' }}>
-                <strong>{fileName}</strong> — {rows.length} data rows detected,{' '}
-                {mappedKeyCount} column{mappedKeyCount !== 1 ? 's' : ''} auto-mapped.
+                <strong>{fileName}</strong> — {rows.length} data rows detected, {mappedKeyCount} column
+                {mappedKeyCount !== 1 ? 's' : ''} auto-mapped.
               </p>
               <p style={{ marginBottom: 16, fontSize: 12, color: 'var(--svc-text-subtle)' }}>
                 {isAdmin
@@ -988,9 +1008,7 @@ function ImportModal({ isAdmin, region = 'local', onImport, onClose }) {
                 ) : (
                   <AlertTriangle size={48} style={{ color: '#ef4444' }} />
                 )}
-                <h3 style={{ marginTop: 8 }}>
-                  {result.inserted > 0 ? 'Import Complete' : 'Import Failed'}
-                </h3>
+                <h3 style={{ marginTop: 8 }}>{result.inserted > 0 ? 'Import Complete' : 'Import Failed'}</h3>
                 <p style={{ color: 'var(--svc-text-muted)' }}>
                   ✅ {result.inserted} instrument(s) imported successfully
                   {result.errors?.length > 0 && (
@@ -1017,9 +1035,7 @@ function ImportModal({ isAdmin, region = 'local', onImport, onClose }) {
                     </div>
                   ))}
                   {result.errors.length > 50 && (
-                    <div style={{ marginTop: 4, fontStyle: 'italic' }}>
-                      …and {result.errors.length - 50} more
-                    </div>
+                    <div style={{ marginTop: 4, fontStyle: 'italic' }}>…and {result.errors.length - 50} more</div>
                   )}
                 </div>
               )}
@@ -1131,11 +1147,7 @@ function Dashboard({ summary, machines, region = 'local' }) {
                     if (isOverseas) {
                       const dl = daysLeftFromToday(m.warrantyEnd);
                       const warrantyAlert = dl !== null && dl <= 30;
-                      return (
-                        contractStatus(m) === 'Expired' ||
-                        contractStatus(m) === 'Expiring' ||
-                        warrantyAlert
-                      );
+                      return contractStatus(m) === 'Expired' || contractStatus(m) === 'Expiring' || warrantyAlert;
                     }
                     return (
                       contractStatus(m) === 'Expired' ||
@@ -1234,9 +1246,13 @@ function Registry({
     }
   }, [pageSize]);
   // Reset to first page whenever a filter / search / region change alters the list
-  useEffect(() => {
+  // (render-time adjustment instead of an effect — avoids an extra render pass)
+  const filterKey = [search, filterModality, filterContract, filterMaint, filterCountry, region, pageSize].join('|');
+  const [prevFilterKey, setPrevFilterKey] = useState(filterKey);
+  if (prevFilterKey !== filterKey) {
+    setPrevFilterKey(filterKey);
     setPage(1);
-  }, [search, filterModality, filterContract, filterMaint, filterCountry, region, pageSize]);
+  }
   const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
   const safePage = Math.min(page, totalPages);
   const pageStart = (safePage - 1) * pageSize;
@@ -1252,7 +1268,11 @@ function Registry({
           <Search size={15} className="svc-search-icon" />
           <input
             className="svc-search"
-            placeholder={isOverseas ? "Search serial, country, instrument\u2026" : "Search serial, customer, instrument, modality\u2026"}
+            placeholder={
+              isOverseas
+                ? 'Search serial, country, instrument\u2026'
+                : 'Search serial, customer, instrument, modality\u2026'
+            }
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
@@ -1431,13 +1451,7 @@ function Registry({
                       <td>{fmtDate(m.installDate)}</td>
                       <td>{fmtDate(m.warrantyStart)}</td>
                       <td>{fmtDate(m.warrantyEnd)}</td>
-                      <td>
-                        {dl === null ? (
-                          '\u2014'
-                        ) : (
-                          <span className={`svc-badge ${dlClass}`}>{dl} day(s)</span>
-                        )}
-                      </td>
+                      <td>{dl === null ? '\u2014' : <span className={`svc-badge ${dlClass}`}>{dl} day(s)</span>}</td>
                       <td className="svc-remark" title={m.pmSparePart || ''}>
                         {m.pmSparePart || '\u2014'}
                       </td>
@@ -1458,11 +1472,7 @@ function Registry({
                       <td>{fmtMoney(m.iqoqPrice)}</td>
                       <td>
                         <div className="svc-row-actions">
-                          <button
-                            className="svc-icon-btn"
-                            title="FCA Status"
-                            onClick={() => setShowInstrumentFca?.(m)}
-                          >
+                          <button className="svc-icon-btn" title="FCA Status" onClick={() => setShowInstrumentFca?.(m)}>
                             <ShieldAlert size={14} />
                           </button>
                           <button
@@ -1558,11 +1568,7 @@ function Registry({
                       <td className="svc-remark">{m.remark || '\u2014'}</td>
                       <td>
                         <div className="svc-row-actions">
-                          <button
-                            className="svc-icon-btn"
-                            title="FCA Status"
-                            onClick={() => setShowInstrumentFca?.(m)}
-                          >
+                          <button className="svc-icon-btn" title="FCA Status" onClick={() => setShowInstrumentFca?.(m)}>
                             <ShieldAlert size={14} />
                           </button>
                           <button
@@ -1604,18 +1610,19 @@ function Registry({
             const cs = contractStatus(m);
             const ms = maintenanceStatus(m);
             return (
-              <div key={m.id} className={`svc-mcard ${cs === 'Expired' || (!isOverseas && ms === 'Overdue') ? 'svc-mcard--alert' : ''}`}>
+              <div
+                key={m.id}
+                className={`svc-mcard ${cs === 'Expired' || (!isOverseas && ms === 'Overdue') ? 'svc-mcard--alert' : ''}`}
+              >
                 <div className="svc-mcard__head">
                   <div className="svc-mcard__title">
                     <span className="svc-mcard__num">#{pageStart + i + 1}</span>
-                    <span className="svc-mcard__name">{m.name || (isOverseas ? m.country : m.modality) || 'Instrument'}</span>
+                    <span className="svc-mcard__name">
+                      {m.name || (isOverseas ? m.country : m.modality) || 'Instrument'}
+                    </span>
                   </div>
                   <div className="svc-mcard__actions">
-                    <button
-                      className="svc-icon-btn"
-                      title="FCA Status"
-                      onClick={() => setShowInstrumentFca?.(m)}
-                    >
+                    <button className="svc-icon-btn" title="FCA Status" onClick={() => setShowInstrumentFca?.(m)}>
                       <ShieldAlert size={15} />
                     </button>
                     <button
@@ -1640,11 +1647,13 @@ function Registry({
                 <div className="svc-mcard__badges">
                   {!isOverseas && <MaintBadge status={ms} />}
                   <ContractBadge status={cs} />
-                  {isOverseas && m.warrantyEnd && (() => {
-                    const dl = daysLeftFromToday(m.warrantyEnd);
-                    const cls = dl === null ? '' : dl < 0 ? 'badge-red' : dl <= 30 ? 'badge-amber' : 'badge-green';
-                    return <span className={`svc-badge ${cls}`}>{dl} day(s)</span>;
-                  })()}
+                  {isOverseas &&
+                    m.warrantyEnd &&
+                    (() => {
+                      const dl = daysLeftFromToday(m.warrantyEnd);
+                      const cls = dl === null ? '' : dl < 0 ? 'badge-red' : dl <= 30 ? 'badge-amber' : 'badge-green';
+                      return <span className={`svc-badge ${cls}`}>{dl} day(s)</span>;
+                    })()}
                 </div>
                 <div className="svc-mcard__grid">
                   {isOverseas ? (
@@ -1756,8 +1765,8 @@ function Registry({
             </div>
             <div className="svc-modal__body">
               <p style={{ color: 'var(--svc-text-muted)', marginBottom: 12, lineHeight: 1.5 }}>
-                This will permanently delete <strong>every {isOverseas ? 'overseas' : 'local'} instrument
-                </strong> and all of their FCA status records. This cannot be undone.
+                This will permanently delete <strong>every {isOverseas ? 'overseas' : 'local'} instrument</strong> and
+                all of their FCA status records. This cannot be undone.
               </p>
               <p style={{ fontSize: 13, marginBottom: 8 }}>
                 Type <code>RESET</code> to confirm:
@@ -2077,7 +2086,9 @@ function InstrumentFcaStatusModal({ machine, onClose, notify }) {
                             }
                           }}
                           onChange={(e) =>
-                            setRows((prev) => prev.map((x) => (x.fcaId === r.fcaId ? { ...x, notes: e.target.value } : x)))
+                            setRows((prev) =>
+                              prev.map((x) => (x.fcaId === r.fcaId ? { ...x, notes: e.target.value } : x)),
+                            )
                           }
                         />
                       </td>
@@ -2120,17 +2131,16 @@ function FcaPage({ isAdmin, notify, fcaList, fcaLoading, reloadFcas, instrumentM
     [fcaList, instrumentModels],
   );
 
-  useEffect(() => {
-    if (!selectedModel && models.length > 0) setSelectedModel(models[0]);
-  }, [models, selectedModel]);
+  // Fall back to the first model while the user hasn't picked one (derived, no effect needed)
+  const effectiveModel = selectedModel || models[0] || '';
 
   const fcasForModel = useMemo(
     () =>
       fcaList
-        .filter((f) => f.instrumentModel === selectedModel)
+        .filter((f) => f.instrumentModel === effectiveModel)
         .slice()
         .sort((a, b) => a.fcaNumber - b.fcaNumber),
-    [fcaList, selectedModel],
+    [fcaList, effectiveModel],
   );
 
   const openFcaDetail = useCallback(async (fca) => {
@@ -2168,7 +2178,11 @@ function FcaPage({ isAdmin, notify, fcaList, fcaLoading, reloadFcas, instrumentM
   };
 
   const handleDelete = async (fca) => {
-    if (!window.confirm(`Delete FCA ${fca.fcaNumber} (${fca.instrumentModel})? This also removes all instrument status records.`)) {
+    if (
+      !window.confirm(
+        `Delete FCA ${fca.fcaNumber} (${fca.instrumentModel})? This also removes all instrument status records.`,
+      )
+    ) {
       return;
     }
     const ok = await api.deleteFca(fca.id);
@@ -2215,7 +2229,7 @@ function FcaPage({ isAdmin, notify, fcaList, fcaLoading, reloadFcas, instrumentM
           <Filter size={13} />
           <select
             className="svc-select svc-select--sm"
-            value={selectedModel}
+            value={effectiveModel}
             onChange={(e) => {
               setSelectedModel(e.target.value);
               setSelectedFca(null);
@@ -2233,7 +2247,7 @@ function FcaPage({ isAdmin, notify, fcaList, fcaLoading, reloadFcas, instrumentM
         <div style={{ color: 'var(--svc-text-muted)', fontSize: 12 }}>
           {fcaLoading
             ? 'Loading FCAs…'
-            : `${fcasForModel.length} FCA${fcasForModel.length !== 1 ? 's' : ''} for ${selectedModel || '—'}`}
+            : `${fcasForModel.length} FCA${fcasForModel.length !== 1 ? 's' : ''} for ${effectiveModel || '—'}`}
         </div>
         <div style={{ marginLeft: 'auto' }}>
           {isAdmin && (
@@ -2271,17 +2285,14 @@ function FcaPage({ isAdmin, notify, fcaList, fcaLoading, reloadFcas, instrumentM
                 ) : (
                   <span className="svc-badge badge-gray">No PDF</span>
                 )}
-                {f.releasedDate && (
-                  <span className="svc-fca-card__date">{fmtDate(f.releasedDate)}</span>
-                )}
+                {f.releasedDate && <span className="svc-fca-card__date">{fmtDate(f.releasedDate)}</span>}
               </div>
             </button>
           );
         })}
         {!fcaLoading && fcasForModel.length === 0 && (
           <div className="svc-fca__empty">
-            No FCAs for {selectedModel || 'this model'}.
-            {isAdmin && ' Click "Add FCA" to create one.'}
+            No FCAs for {effectiveModel || 'this model'}.{isAdmin && ' Click "Add FCA" to create one.'}
           </div>
         )}
       </div>
@@ -2290,7 +2301,9 @@ function FcaPage({ isAdmin, notify, fcaList, fcaLoading, reloadFcas, instrumentM
         <div className="svc-fca__detail">
           <div className="svc-fca__detail-head">
             <div>
-              <h3>FCA {selectedFca.fcaNumber} — {selectedFca.instrumentModel}</h3>
+              <h3>
+                FCA {selectedFca.fcaNumber} — {selectedFca.instrumentModel}
+              </h3>
               {selectedFca.title && <div className="svc-fca__detail-title">{selectedFca.title}</div>}
               {selectedFca.releasedDate && (
                 <div className="svc-sub-text">Released {fmtDate(selectedFca.releasedDate)}</div>
@@ -2298,7 +2311,11 @@ function FcaPage({ isAdmin, notify, fcaList, fcaLoading, reloadFcas, instrumentM
             </div>
             <div className="svc-fca__detail-actions">
               {selectedFca.hasPdf && (
-                <button type="button" className="svc-btn svc-btn--ghost svc-btn--sm" onClick={() => openPdf(selectedFca.id)}>
+                <button
+                  type="button"
+                  className="svc-btn svc-btn--ghost svc-btn--sm"
+                  onClick={() => openPdf(selectedFca.id)}
+                >
                   <ExternalLink size={13} /> Open PDF
                 </button>
               )}
@@ -2326,9 +2343,7 @@ function FcaPage({ isAdmin, notify, fcaList, fcaLoading, reloadFcas, instrumentM
             </div>
           </div>
 
-          {selectedFca.description && (
-            <p className="svc-fca__detail-desc">{selectedFca.description}</p>
-          )}
+          {selectedFca.description && <p className="svc-fca__detail-desc">{selectedFca.description}</p>}
 
           <h4 className="svc-section-heading" style={{ marginTop: 16 }}>
             Instrument Status ({statuses.length})
@@ -2349,10 +2364,9 @@ function FcaPage({ isAdmin, notify, fcaList, fcaLoading, reloadFcas, instrumentM
             >
               No instruments match model <strong>"{selectedFca.instrumentModel}"</strong>.
               <br />
-              Instruments are matched by their <strong>Instrument Model</strong> field (exact, case-insensitive)
-              or — when that field is blank — by their name containing this model text. To link existing
-              instruments, edit them and set the Instrument Model field to
-              "{selectedFca.instrumentModel}".
+              Instruments are matched by their <strong>Instrument Model</strong> field (exact, case-insensitive) or —
+              when that field is blank — by their name containing this model text. To link existing instruments, edit
+              them and set the Instrument Model field to "{selectedFca.instrumentModel}".
             </div>
           ) : (
             <div className="svc-table-wrapper">
@@ -2482,11 +2496,7 @@ export default function ServicePage({ isAdmin = false, notify, machines, setMach
       const res = await api.resetAllMachines({ region: scopeRegion });
       setResetting(false);
       if (res.ok) {
-        notify?.(
-          'Registry reset',
-          `${res.deleted} ${scopeRegion} instrument(s) removed`,
-          'success',
-        );
+        notify?.('Registry reset', `${res.deleted} ${scopeRegion} instrument(s) removed`, 'success');
         // Drop the deleted rows from local state and refresh summary
         setMachines((prev) => prev.filter((m) => (m.region || 'local') !== scopeRegion));
         const sRes = await api.getMachineSummary({ region: scopeRegion });
@@ -2501,10 +2511,7 @@ export default function ServicePage({ isAdmin = false, notify, machines, setMach
   // Load data (region-scoped). Summary is recomputed when region changes.
   const loadData = useCallback(async () => {
     setLoading(true);
-    const [mRes, sRes] = await Promise.all([
-      api.getMachines({ all: true }),
-      api.getMachineSummary({ region }),
-    ]);
+    const [mRes, sRes] = await Promise.all([api.getMachines({ all: true }), api.getMachineSummary({ region })]);
     if (mRes) setMachines(mRes);
     if (sRes) setSummary(sRes);
     setLoading(false);
@@ -2526,11 +2533,13 @@ export default function ServicePage({ isAdmin = false, notify, machines, setMach
   }, [reloadFcas]);
 
   // Reset non-applicable filters when region changes to avoid a stuck filter
-  useEffect(() => {
+  const changeRegion = (r) => {
+    if (r === region) return;
+    setRegion(r);
     setFilterModality('All');
     setFilterCountry('All');
     setFilterMaint('All');
-  }, [region]);
+  };
 
   // Filter machines client-side: first by region, then by search/filters
   const filtered = useMemo(() => {
@@ -2557,7 +2566,10 @@ export default function ServicePage({ isAdmin = false, notify, machines, setMach
     () =>
       [
         ...new Set(
-          machines.filter((m) => (m.region || 'local') === region).map((m) => m.modality).filter(Boolean),
+          machines
+            .filter((m) => (m.region || 'local') === region)
+            .map((m) => m.modality)
+            .filter(Boolean),
         ),
       ].sort(),
     [machines, region],
@@ -2567,16 +2579,16 @@ export default function ServicePage({ isAdmin = false, notify, machines, setMach
     () =>
       [
         ...new Set(
-          machines.filter((m) => (m.region || 'local') === region).map((m) => m.country).filter(Boolean),
+          machines
+            .filter((m) => (m.region || 'local') === region)
+            .map((m) => m.country)
+            .filter(Boolean),
         ),
       ].sort(),
     [machines, region],
   );
 
-  const instrumentModels = useMemo(
-    () => [...new Set(machines.map((m) => m.model).filter(Boolean))].sort(),
-    [machines],
-  );
+  const instrumentModels = useMemo(() => [...new Set(machines.map((m) => m.model).filter(Boolean))].sort(), [machines]);
 
   // CRUD handlers
   const handleSave = async (form) => {
@@ -2655,20 +2667,20 @@ export default function ServicePage({ isAdmin = false, notify, machines, setMach
             Inst: m.name || '',
             SN: m.serialNumber || '',
             Location: m.location || '',
-            'Delivery Date': m.deliveryDate || '',
-            'Installation Date': m.installDate || '',
-            'Warranty Start': m.warrantyStart || '',
-            'Warranty End': m.warrantyEnd || '',
+            'Delivery Date': normDate(m.deliveryDate),
+            'Installation Date': normDate(m.installDate),
+            'Warranty Start': normDate(m.warrantyStart),
+            'Warranty End': normDate(m.warrantyEnd),
             'Days Left': daysLeftFromToday(m.warrantyEnd) ?? '',
             'PM Spare part': m.pmSparePart || '',
             'SAP Code': m.sapCode || '',
             'Proposed Service Contract': m.proposedServiceContract || '',
             Price: m.price ?? '',
-            'Contract Start': m.contractStart || '',
-            'Contract End': m.contractEnd || '',
+            'Contract Start': normDate(m.contractStart),
+            'Contract End': normDate(m.contractEnd),
             'Contract Status': contractStatus(m),
             IQOQ: m.iqoq || '',
-            'IQOQ Date': m.iqoqDate || '',
+            'IQOQ Date': normDate(m.iqoqDate),
             'IQOQ Price': m.iqoqPrice ?? '',
           }
         : {
@@ -2681,12 +2693,12 @@ export default function ServicePage({ isAdmin = false, notify, machines, setMach
             'Contact Person': m.customerContact || '',
             'Contact Email': m.customerEmail || '',
             'Maintenance Period (m)': m.maintenancePeriodMonths || '',
-            'Last Maintenance': m.lastMaintenanceDate || '',
-            'Next Maintenance': m.nextMaintenanceDate || '',
+            'Last Maintenance': normDate(m.lastMaintenanceDate),
+            'Next Maintenance': normDate(m.nextMaintenanceDate),
             'Maint. Status': maintenanceStatus(m),
             'Contract Type': m.contractType || '',
-            'Contract Start': m.contractStart || '',
-            'Contract End': m.contractEnd || '',
+            'Contract Start': normDate(m.contractStart),
+            'Contract End': normDate(m.contractEnd),
             'Contract Status': contractStatus(m),
             Remark: m.remark || '',
           },
@@ -2719,24 +2731,21 @@ export default function ServicePage({ isAdmin = false, notify, machines, setMach
           >
             <List size={15} /> Instrument Registry
           </button>
-          <button
-            className={`svc-subnav-btn ${subPage === 'fca' ? 'active' : ''}`}
-            onClick={() => setSubPage('fca')}
-          >
+          <button className={`svc-subnav-btn ${subPage === 'fca' ? 'active' : ''}`} onClick={() => setSubPage('fca')}>
             <ShieldAlert size={15} /> FCA
           </button>
           <div className="svc-region-toggle" role="group" aria-label="Instrument region">
             <button
               type="button"
               className={`svc-region-btn ${region === 'local' ? 'active' : ''}`}
-              onClick={() => setRegion('local')}
+              onClick={() => changeRegion('local')}
             >
               <Home size={13} /> Local
             </button>
             <button
               type="button"
               className={`svc-region-btn ${region === 'overseas' ? 'active' : ''}`}
-              onClick={() => setRegion('overseas')}
+              onClick={() => changeRegion('overseas')}
             >
               <Globe size={13} /> Overseas
             </button>

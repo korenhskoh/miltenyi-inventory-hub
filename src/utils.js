@@ -41,6 +41,16 @@ export const applySortData = (arr, sortCfg) => {
 export const toggleSort = (setter, key) =>
   setter((s) => ({ key, dir: s.key === key && s.dir === 'asc' ? 'desc' : 'asc' }));
 
+// ════════════════════════════ HTML ESCAPING ═══════════════════════════
+/** Escape a value for safe interpolation into an HTML string (prevents stored XSS). */
+export const escapeHtml = (v) =>
+  String(v ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+
 // ════════════════════════════ EXPORT HELPERS ══════════════════════════
 export const exportToFile = (data, columns, filename, format) => {
   const rows = data.map((row) => {
@@ -61,17 +71,18 @@ export const exportToPDF = (data, columns, title) => {
   const hdr = columns
     .map(
       (c) =>
-        `<th style="padding:8px 12px;text-align:left;border-bottom:2px solid #0B7A3E;font-size:11px;color:#4A5568;text-transform:uppercase;letter-spacing:.5px">${c.label}</th>`,
+        `<th style="padding:8px 12px;text-align:left;border-bottom:2px solid #0B7A3E;font-size:11px;color:#4A5568;text-transform:uppercase;letter-spacing:.5px">${escapeHtml(c.label)}</th>`,
     )
     .join('');
   const body = data
     .map(
       (row, i) =>
-        `<tr style="background:${i % 2 === 0 ? '#fff' : '#F8FAFB'}">${columns.map((c) => `<td style="padding:6px 12px;border-bottom:1px solid #E2E8F0;font-size:12px">${c.fmt ? c.fmt(row[c.key], row) : (row[c.key] ?? '\u2014')}</td>`).join('')}</tr>`,
+        `<tr style="background:${i % 2 === 0 ? '#fff' : '#F8FAFB'}">${columns.map((c) => `<td style="padding:6px 12px;border-bottom:1px solid #E2E8F0;font-size:12px">${escapeHtml(c.fmt ? c.fmt(row[c.key], row) : (row[c.key] ?? '\u2014'))}</td>`).join('')}</tr>`,
     )
     .join('');
+  const safeTitle = escapeHtml(title);
   w.document.write(
-    `<!DOCTYPE html><html><head><title>${title}</title><style>body{font-family:system-ui,-apple-system,sans-serif;margin:24px;color:#1A202C}@media print{.no-print{display:none}}</style></head><body><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px"><div><h1 style="font-size:18px;font-weight:700;margin:0;color:#0B7A3E">Miltenyi Inventory Hub</h1><h2 style="font-size:14px;font-weight:500;margin:4px 0 0;color:#64748B">${title}</h2></div><div style="text-align:right;font-size:11px;color:#94A3B8">Exported: ${new Date().toLocaleString('en-SG')}<br/>${data.length} records</div></div><table style="width:100%;border-collapse:collapse"><thead><tr>${hdr}</tr></thead><tbody>${body}</tbody></table><div class="no-print" style="margin-top:20px;text-align:center"><button onclick="window.print()" style="padding:8px 24px;background:#0B7A3E;color:#fff;border:none;border-radius:8px;font-size:13px;cursor:pointer">Print / Save as PDF</button></div></body></html>`,
+    `<!DOCTYPE html><html><head><title>${safeTitle}</title><style>body{font-family:system-ui,-apple-system,sans-serif;margin:24px;color:#1A202C}@media print{.no-print{display:none}}</style></head><body><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px"><div><h1 style="font-size:18px;font-weight:700;margin:0;color:#0B7A3E">Miltenyi Inventory Hub</h1><h2 style="font-size:14px;font-weight:500;margin:4px 0 0;color:#64748B">${safeTitle}</h2></div><div style="text-align:right;font-size:11px;color:#94A3B8">Exported: ${new Date().toLocaleString('en-SG')}<br/>${data.length} records</div></div><table style="width:100%;border-collapse:collapse"><thead><tr>${hdr}</tr></thead><tbody>${body}</tbody></table><div class="no-print" style="margin-top:20px;text-align:center"><button onclick="window.print()" style="padding:8px 24px;background:#0B7A3E;color:#fff;border:none;border-radius:8px;font-size:13px;cursor:pointer">Print / Save as PDF</button></div></body></html>`,
   );
   w.document.close();
 };

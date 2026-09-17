@@ -44,6 +44,8 @@ export default [
         structuredClone: true,
         crypto: true,
         TextEncoder: true,
+        btoa: true,
+        atob: true,
       },
     },
     rules: {

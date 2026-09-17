@@ -61,31 +61,34 @@ export const SelBox = ({ checked, onChange }) => (
   <input type="checkbox" checked={checked} onChange={onChange} style={{width:16,height:16,cursor:'pointer',accentColor:'#0B7A3E'}}/>
 );
 
-// ════════════════════════════ QR CODE GENERATOR ══════════════════════
-export const QRCodeCanvas = ({ text, size = 200 }) => {
-  const canvasRef = useRef(null);
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    const modules = 25;
-    const cellSize = size / modules;
-    ctx.fillStyle = '#FFFFFF';
-    ctx.fillRect(0, 0, size, size);
-    ctx.fillStyle = '#000000';
-    let seed = 0;
-    for (let i = 0; i < text.length; i++) seed = ((seed << 5) - seed) + text.charCodeAt(i);
-    const rng = () => { seed = (seed * 16807) % 2147483647; return (seed - 1) / 2147483646; };
-    const drawFinder = (x, y) => {
-      for (let i = 0; i < 7; i++) for (let j = 0; j < 7; j++) {
-        if (i===0||i===6||j===0||j===6||(i>=2&&i<=4&&j>=2&&j<=4)) ctx.fillRect((x+j)*cellSize, (y+i)*cellSize, cellSize, cellSize);
-      }
-    };
-    drawFinder(0, 0); drawFinder(modules-7, 0); drawFinder(0, modules-7);
-    for (let i = 0; i < modules; i++) for (let j = 0; j < modules; j++) {
-      if ((i<7&&j<7)||(i<7&&j>=modules-7)||(i>=modules-7&&j<7)) continue;
-      if (rng() > 0.5) ctx.fillRect(j*cellSize, i*cellSize, cellSize, cellSize);
-    }
-  }, [text, size]);
-  return <canvas ref={canvasRef} width={size} height={size} style={{ borderRadius: 8, border: '4px solid #fff', boxShadow: '0 4px 20px rgba(0,0,0,0.1)' }} />;
+// ════════════════════════════ QR CODE DISPLAY ════════════════════════
+// The server generates a real QR image (data: URL via `qrcode`). Render it as-is;
+// anything that isn't an image data URL cannot be shown as a scannable code.
+export const QRCodeCanvas = ({ text, value, size = 200 }) => {
+  const src = value ?? text ?? '';
+  const frame = { borderRadius: 8, border: '4px solid #fff', boxShadow: '0 4px 20px rgba(0,0,0,0.1)' };
+  if (typeof src === 'string' && src.startsWith('data:')) {
+    return (
+      <img src={src} alt="QR code" width={size} height={size} style={{ ...frame, display: 'block', background: '#fff' }} />
+    );
+  }
+  return (
+    <div
+      style={{
+        ...frame,
+        width: size,
+        height: size,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        background: '#F8FAFB',
+        color: '#94A3B8',
+        fontSize: 12,
+        textAlign: 'center',
+        boxSizing: 'border-box',
+      }}
+    >
+      QR unavailable
+    </div>
+  );
 };

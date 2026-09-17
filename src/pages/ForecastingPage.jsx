@@ -79,8 +79,12 @@ const ForecastingPage = ({
   const forecastMonths = [];
   if (matMonthly.length >= 2) {
     const vals = matMonthly.map((m) => m.qty);
-    const machineGrowth = machines.length > 0 ? 1 + machines.filter((m) => m.status === 'Active').length * 0.02 : 1;
-    const futureMonths = ['Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec', 'Jan', 'Feb'];
+    // Demand uplift of +2% per active machine, capped at 1.5x so a large fleet
+    // cannot inflate the forecast to an unrealistic multiple of history.
+    const machineGrowth =
+      machines.length > 0 ? Math.min(1.5, 1 + machines.filter((m) => m.status === 'Active').length * 0.02) : 1;
+    const monthLabels = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const now = new Date();
     for (let i = 0; i < 6; i++) {
       const n = vals.length + i;
       const recent = [...vals, ...forecastMonths.map((f) => f.qty)];
@@ -88,8 +92,9 @@ const ForecastingPage = ({
       const w2 = recent[recent.length - 2] || w1;
       const w3 = recent[recent.length - 3] || w2;
       const predicted = Math.round((0.5 * w1 + 0.3 * w2 + 0.2 * w3) * machineGrowth);
-      const monthIdx = (new Date().getMonth() + i + 1) % 12;
-      forecastMonths.push({ name: `${futureMonths[monthIdx]} '26`, qty: predicted, forecast: true });
+      const future = new Date(now.getFullYear(), now.getMonth() + i + 1, 1);
+      const label = `${monthLabels[future.getMonth()]} '${String(future.getFullYear()).slice(-2)}`;
+      forecastMonths.push({ name: label, qty: predicted, forecast: true });
     }
   }
   const chartData = [...matMonthly.map((m) => ({ ...m, forecast: false })), ...forecastMonths];
@@ -537,7 +542,10 @@ const ForecastingPage = ({
                         if (saved) {
                           setMachines((prev) => [saved, ...prev]);
                           logAction('create', 'machine', String(saved.id), { name: m.name, modality: m.modality });
+                          notify('Machine Added', `${m.name} (${m.modality})`, 'success');
                         }
+                        // Return the API result so dbSync can surface null/false as a save failure
+                        return saved;
                       }),
                       'Machine not saved',
                     );
@@ -550,7 +558,6 @@ const ForecastingPage = ({
                       notes: '',
                     });
                     setShowAddMachine(false);
-                    notify('Machine Added', `${m.name} (${m.modality})`, 'success');
                   }}
                 >
                   <Check size={14} /> Save Machine

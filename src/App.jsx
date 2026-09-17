@@ -96,7 +96,17 @@ import {
 import * as XLSX from 'xlsx';
 import api from './api.js';
 import { PARTS_CATALOG, PRICE_CONFIG_DEFAULT, CATEGORIES, DEFAULT_USERS, MONTH_OPTIONS } from './constants.js';
-import { fmt, fmtDate, fmtNum, applySortData, toggleSort, exportToFile, exportToPDF, fillTemplate } from './utils.js';
+import {
+  fmt,
+  fmtDate,
+  fmtNum,
+  applySortData,
+  toggleSort,
+  exportToFile,
+  exportToPDF,
+  fillTemplate,
+  escapeHtml,
+} from './utils.js';
 import {
   STATUS_CFG,
   Badge,
@@ -151,6 +161,8 @@ export default function App() {
   const [authView, setAuthView] = useState('login'); // login | register
   const [loginForm, setLoginForm] = useState({ username: '', password: '' });
   const [regForm, setRegForm] = useState({ username: '', password: '', name: '', email: '', phone: '' });
+  // Offline-only fallback list of registrations (when /api/auth/register is unreachable).
+  // The authoritative pending list is derived from `users` (status === 'pending') — see allPendingUsers.
   const [pendingUsers, setPendingUsers] = useState([]);
 
   // ── App State ──
@@ -225,7 +237,9 @@ export default function App() {
     try {
       const saved = localStorage.getItem('mih_catalogUploadMeta');
       return saved ? JSON.parse(saved) : null;
-    } catch { return null; }
+    } catch {
+      return null;
+    }
   });
   const [priceConfig, setPriceConfig] = useState(PRICE_CONFIG_DEFAULT);
   const [blurPrices, setBlurPrices] = useState(() => {
@@ -244,6 +258,11 @@ export default function App() {
 
   // ── WhatsApp Baileys State ──
   const [waConnected, setWaConnected] = useState(false);
+  // Ref mirror of waConnected so long-lived timers/polls (QR connect flow) see the latest value
+  const waConnectedRef = useRef(false);
+  useEffect(() => {
+    waConnectedRef.current = waConnected;
+  }, [waConnected]);
   const [waConnecting, setWaConnecting] = useState(false);
   const [waQrVisible, setWaQrVisible] = useState(false);
   const [waQrCode, setWaQrCode] = useState('');
@@ -852,6 +871,13 @@ export default function App() {
       if (!order) return;
       const pending = pendingArrival[orderId];
       const val = pending ? pending.qtyReceived : order.qtyReceived || 0;
+      const prevReceived = Number(order.qtyReceived) || 0;
+      const delta = val - prevReceived;
+      // Guard: re-confirming an already-Received order with the same qty is a no-op
+      if (order.status === 'Received' && delta <= 0) {
+        notify('Already Confirmed', `${order.description || orderId} is already marked as received`, 'info');
+        return;
+      }
       const status = val >= order.quantity ? 'Received' : order.status;
       const updates = {
         qtyReceived: val,
@@ -878,9 +904,9 @@ export default function App() {
       logAction('Confirm Arrival', 'order', orderId, { qtyReceived: val, status });
       notify('Arrival Confirmed', `${order.description || orderId}: ${val}/${order.quantity} received`, 'success');
       sendArrivalReport([updatedOrder]);
-      // Auto-add received quantity to local inventory
-      if (val > 0 && order.materialNo) {
-        api.arrivalToInventory([{ materialNo: order.materialNo, description: order.description, quantity: val }]);
+      // Auto-add only the newly received quantity (delta) to local inventory
+      if (delta > 0 && order.materialNo) {
+        api.arrivalToInventory([{ materialNo: order.materialNo, description: order.description, quantity: delta }]);
       }
     },
     [orders, pendingArrival, currentUser, checkBulkGroupCompletion, dbSync, logAction, notify, sendArrivalReport],
@@ -894,11 +920,13 @@ export default function App() {
       const confirmedIds = [];
       const confirmedOrdersList = [];
       const updates = [];
+      const arrivalItems = [];
       orderIds.forEach((orderId) => {
         const order = updatedOrders.find((o) => o.id === orderId);
         if (!order || order.status === 'Received') return;
         const pending = pendingArrival[orderId];
         const val = pending ? pending.qtyReceived : order.qtyReceived || 0;
+        const delta = val - (Number(order.qtyReceived) || 0);
         const status = val >= order.quantity ? 'Received' : order.status;
         const upd = {
           qtyReceived: val,
@@ -912,6 +940,9 @@ export default function App() {
         updates.push({ orderId, upd, bulkGroupId: order.bulkGroupId });
         confirmedIds.push(orderId);
         confirmedOrdersList.push(updatedOrder);
+        if (delta > 0 && order.materialNo) {
+          arrivalItems.push({ materialNo: order.materialNo, description: order.description, quantity: delta });
+        }
       });
       if (confirmedIds.length === 0) return;
       setOrders(updatedOrders);
@@ -928,16 +959,22 @@ export default function App() {
       logAction('Batch Confirm Arrival', 'order', confirmedIds.join(','), { count: confirmedIds.length });
       notify('Arrival Confirmed', `${confirmedIds.length} order(s) status updated`, 'success');
       sendArrivalReport(confirmedOrdersList);
-      // Auto-add received quantities to local inventory
-      const arrivalItems = confirmedOrdersList
-        .filter((o) => o.materialNo && (o.qtyReceived || 0) > 0)
-        .map((o) => ({ materialNo: o.materialNo, description: o.description, quantity: o.qtyReceived }));
+      // Auto-add only newly received quantities (deltas) to local inventory
       if (arrivalItems.length > 0) api.arrivalToInventory(arrivalItems);
     },
     [orders, pendingArrival, currentUser, checkBulkGroupCompletion, dbSync, logAction, notify, sendArrivalReport],
   );
 
   const isAdmin = currentUser?.role === 'admin';
+
+  // Pending registrations: DB rows (status 'pending') first, then any offline-only entries not yet in the DB
+  const allPendingUsers = useMemo(
+    () => [
+      ...users.filter((u) => u.status === 'pending'),
+      ...pendingUsers.filter((p) => !users.some((u) => u.username === p.username)),
+    ],
+    [users, pendingUsers],
+  );
 
   // ── Feature Permissions ──
   const FEATURE_PERMISSIONS = [
@@ -1013,7 +1050,9 @@ export default function App() {
     }));
     if (catalogSearch) {
       const q = catalogSearch.toLowerCase();
-      items = items.filter((p) => p.materialNo.toLowerCase().includes(q) || p.description.toLowerCase().includes(q));
+      items = items.filter(
+        (p) => (p.materialNo || '').toLowerCase().includes(q) || (p.description || '').toLowerCase().includes(q),
+      );
     }
     if (catFilter !== 'All') items = items.filter((p) => p.category === catFilter);
     const key =
@@ -1195,7 +1234,7 @@ export default function App() {
     orders.forEach((o) => {
       if (!m[o.description])
         m[o.description] = {
-          name: o.description.length > 30 ? o.description.slice(0, 30) + '...' : o.description,
+          name: (o.description || '').length > 30 ? (o.description || '').slice(0, 30) + '...' : o.description || '',
           qty: 0,
           cost: 0,
         };
@@ -1549,8 +1588,25 @@ export default function App() {
         }
       }
 
-      // 3. Load all app data from DB (requires valid token for protected routes)
-      const loaded = await loadAppData();
+      // 3. Load all app data from DB (requires valid token for protected routes).
+      //    Without a token, skip the API entirely to avoid a burst of 401s
+      //    triggering a spurious "Session Expired" toast.
+      const loaded = hasToken ? await loadAppData() : false;
+
+      // 4. Check WhatsApp connection status on load (runs whether DB or localStorage path)
+      if (hasToken) {
+        try {
+          const waRes = await fetch('/api/whatsapp/status', { headers: { Authorization: `Bearer ${api.getToken()}` } });
+          const waData = await waRes.json();
+          if (waData.status === 'connected') {
+            setWaConnected(true);
+            setWaSessionInfo(waData.sessionInfo);
+          }
+        } catch {
+          /* ignore */
+        }
+      }
+
       if (loaded) return;
 
       // Fallback to localStorage
@@ -1575,18 +1631,6 @@ export default function App() {
         if (saved.stockChecks?.length) setStockChecks(saved.stockChecks);
       } catch (e) {
         console.warn('Failed to load saved data:', e);
-      }
-
-      // 4. Check WhatsApp connection status on load
-      try {
-        const waRes = await fetch('/api/whatsapp/status', { headers: { Authorization: `Bearer ${api.getToken()}` } });
-        const waData = await waRes.json();
-        if (waData.status === 'connected') {
-          setWaConnected(true);
-          setWaSessionInfo(waData.sessionInfo);
-        }
-      } catch {
-        /* ignore */
       }
     }
     loadOnMount().finally(() => setIsLoading(false));
@@ -1755,7 +1799,9 @@ export default function App() {
   }, [bulkGroups]);
   useEffect(() => {
     try {
-      localStorage.setItem(LS_KEYS.emailConfig, JSON.stringify(emailConfig));
+      // Never persist the SMTP password to localStorage — the server keeps the stored secret
+      const { smtpPass: _smtpPass, ...safeEmailConfig } = emailConfig;
+      localStorage.setItem(LS_KEYS.emailConfig, JSON.stringify(safeEmailConfig));
     } catch (e) {
       /* ignore */
     }
@@ -1952,10 +1998,10 @@ export default function App() {
   // ── Duplicate Order ──
   const handleDuplicateOrder = async (sourceOrder) => {
     // Strip existing [Copy] or [Copy-N] prefix to get base name
-    const baseName = sourceOrder.description.replace(/^\[Copy(?:-\d+)?\]\s*/, '');
+    const baseName = (sourceOrder.description || '').replace(/^\[Copy(?:-\d+)?\]\s*/, '');
     // Count existing copies of this base name
     const copyCount = orders.filter((o) => {
-      const stripped = o.description.replace(/^\[Copy(?:-\d+)?\]\s*/, '');
+      const stripped = (o.description || '').replace(/^\[Copy(?:-\d+)?\]\s*/, '');
       return stripped === baseName && o.description !== baseName;
     }).length;
     const copyNum = copyCount + 1;
@@ -2015,7 +2061,7 @@ export default function App() {
           ),
         );
         setBulkGroups((prev) => prev.map((g) => (g.id === approval.orderId ? { ...g, status: 'Approved' } : g)));
-        dbSync(api.bulkUpdateOrderStatus(approval.orderIds, 'Approved'), 'Bulk order status not saved');
+        dbSync(api.bulkUpdateOrderStatus(approval.orderIds, 'Approved', 'approved'), 'Bulk order status not saved');
         dbSync(api.updateBulkGroup(approval.orderId, { status: 'Approved' }), 'Bulk group approval not saved');
       } else if (approval.orderType === 'batch' && approval.orderIds) {
         setOrders((prev) =>
@@ -2023,7 +2069,7 @@ export default function App() {
             approval.orderIds.includes(o.id) ? { ...o, status: 'Approved', approvalStatus: 'approved' } : o,
           ),
         );
-        dbSync(api.bulkUpdateOrderStatus(approval.orderIds, 'Approved'), 'Batch order approval not saved');
+        dbSync(api.bulkUpdateOrderStatus(approval.orderIds, 'Approved', 'approved'), 'Batch order approval not saved');
       }
       addNotifEntry({
         id: `N-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
@@ -2051,7 +2097,7 @@ export default function App() {
           ),
         );
         setBulkGroups((prev) => prev.map((g) => (g.id === approval.orderId ? { ...g, status: 'Rejected' } : g)));
-        dbSync(api.bulkUpdateOrderStatus(approval.orderIds, 'Rejected'), 'Bulk order rejection not saved');
+        dbSync(api.bulkUpdateOrderStatus(approval.orderIds, 'Rejected', 'rejected'), 'Bulk order rejection not saved');
         dbSync(api.updateBulkGroup(approval.orderId, { status: 'Rejected' }), 'Bulk group rejection not saved');
       } else if (approval.orderType === 'batch' && approval.orderIds) {
         setOrders((prev) =>
@@ -2059,7 +2105,7 @@ export default function App() {
             approval.orderIds.includes(o.id) ? { ...o, status: 'Rejected', approvalStatus: 'rejected' } : o,
           ),
         );
-        dbSync(api.bulkUpdateOrderStatus(approval.orderIds, 'Rejected'), 'Batch order rejection not saved');
+        dbSync(api.bulkUpdateOrderStatus(approval.orderIds, 'Rejected', 'rejected'), 'Batch order rejection not saved');
       }
       addNotifEntry({
         id: `N-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
@@ -2170,7 +2216,7 @@ export default function App() {
         cols
           .map((c, ci) => {
             const align = colAlign?.[ci];
-            return `<th style="${align === 'right' ? thRight : align === 'center' ? thCenter : thStyle}">${c}</th>`;
+            return `<th style="${align === 'right' ? thRight : align === 'center' ? thCenter : thStyle}">${escapeHtml(c)}</th>`;
           })
           .join('') +
         '</tr></thead><tbody>';
@@ -2182,7 +2228,7 @@ export default function App() {
             .map((v, ci) => {
               const align = colAlign?.[ci];
               const style = ci === 0 ? tdMono : align === 'right' ? tdRight : align === 'center' ? tdCenter : tdStyle;
-              return `<td style="${style}">${v}</td>`;
+              return `<td style="${style}">${escapeHtml(v)}</td>`;
             })
             .join('') +
           '</tr>';
@@ -2194,7 +2240,7 @@ export default function App() {
             .map((v, ci) => {
               const align = colAlign?.[ci];
               const base = align === 'right' ? tdRight : tdStyle;
-              return `<td style="${base}font-weight:700;color:#1B4332;">${v}</td>`;
+              return `<td style="${base}font-weight:700;color:#1B4332;">${escapeHtml(v)}</td>`;
             })
             .join('') +
           '</tr>';
@@ -2204,7 +2250,7 @@ export default function App() {
     };
     let body = `<div style="max-width:900px;margin:0 auto;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#1A202C;">`;
     body += `<div style="background:linear-gradient(135deg,#1B4332,#2D6A4F);padding:24px 32px;border-radius:10px 10px 0 0;">`;
-    body += `<h1 style="margin:0;font-size:20px;color:#fff;font-weight:700;">${title}</h1></div>`;
+    body += `<h1 style="margin:0;font-size:20px;color:#fff;font-weight:700;">${escapeHtml(title)}</h1></div>`;
     body += `<div style="padding:24px 32px;background:#fff;border:1px solid #E8ECF0;border-top:none;">`;
     // Header summary as compact grid
     body +=
@@ -2212,19 +2258,19 @@ export default function App() {
       headerFields
         .map(
           ([l, v]) =>
-            `<tr><td style="padding:6px 14px;font-size:11px;color:#64748B;font-weight:600;background:#F8FAFB;border:1px solid #D0D5DD;white-space:nowrap;">${l}</td><td style="padding:6px 14px;font-size:12px;font-weight:700;color:#1B4332;border:1px solid #D0D5DD;">${v}</td></tr>`,
+            `<tr><td style="padding:6px 14px;font-size:11px;color:#64748B;font-weight:600;background:#F8FAFB;border:1px solid #D0D5DD;white-space:nowrap;">${escapeHtml(l)}</td><td style="padding:6px 14px;font-size:12px;font-weight:700;color:#1B4332;border:1px solid #D0D5DD;">${escapeHtml(v)}</td></tr>`,
         )
         .join('') +
       '</table>';
     sections.forEach((s) => {
       if (s.heading)
-        body += `<h3 style="font-size:13px;font-weight:700;color:#1B4332;margin:20px 0 6px;padding:6px 10px;background:#D8F3DC;border-left:4px solid #2D6A4F;border-radius:0 4px 4px 0;">${s.heading}</h3>`;
+        body += `<h3 style="font-size:13px;font-weight:700;color:#1B4332;margin:20px 0 6px;padding:6px 10px;background:#D8F3DC;border-left:4px solid #2D6A4F;border-radius:0 4px 4px 0;">${escapeHtml(s.heading)}</h3>`;
       body += renderTable(s.cols, s.rows, s.totals, s.colAlign);
     });
     body += `<div style="margin-top:24px;padding:16px 20px;background:#FEF3C7;border-radius:8px;border-left:4px solid #D97706;">`;
     body += `<p style="margin:0;font-size:13px;color:#92400E;font-weight:600;">Reply <strong>APPROVE</strong> to approve or <strong>REJECT</strong> to decline.</p></div>`;
     body += `</div><div style="padding:14px 32px;background:#F8FAFB;border:1px solid #E8ECF0;border-top:none;border-radius:0 0 10px 10px;text-align:center;">`;
-    body += `<p style="margin:0;font-size:11px;color:#94A3B8;">${footer || 'Miltenyi Inventory Hub SG'}</p></div></div>`;
+    body += `<p style="margin:0;font-size:11px;color:#94A3B8;">${escapeHtml(footer || 'Miltenyi Inventory Hub SG')}</p></div></div>`;
     return body;
   };
 
@@ -2928,7 +2974,8 @@ export default function App() {
       const res = await fetch(`${WA_API_URL}/status`, { headers: { Authorization: `Bearer ${api.getToken()}` } });
       const data = await res.json();
 
-      if (data.status === 'connected' && !waConnected) {
+      if (data.status === 'connected' && !waConnectedRef.current) {
+        waConnectedRef.current = true;
         setWaConnected(true);
         setWaConnecting(false);
         setWaQrVisible(false);
@@ -2937,7 +2984,8 @@ export default function App() {
       } else if (data.status === 'awaiting_scan' && data.qrCode) {
         setWaQrCode(data.qrCode);
         setWaQrVisible(true);
-      } else if (data.status === 'disconnected' && waConnected) {
+      } else if (data.status === 'disconnected' && waConnectedRef.current) {
+        waConnectedRef.current = false;
         setWaConnected(false);
         setWaSessionInfo(null);
       }
@@ -2966,6 +3014,7 @@ export default function App() {
           setWaQrCode(data.qrCode);
         }
         if (data.status === 'connected') {
+          waConnectedRef.current = true;
           setWaConnected(true);
           setWaConnecting(false);
           setWaQrVisible(false);
@@ -2978,11 +3027,17 @@ export default function App() {
 
         // Fast poll: 800ms for first 20s, then 2s after
         let pollCount = 0;
+        let stopped = false;
         const pollInterval = setInterval(
           async () => {
+            if (stopped || waConnectedRef.current) {
+              clearInterval(pollInterval);
+              return;
+            }
             pollCount++;
             const status = await pollWaStatus();
             if (status === 'connected' || status === 'error') {
+              stopped = true;
               clearInterval(pollInterval);
               setWaConnecting(false);
               if (status === 'error') {
@@ -2994,10 +3049,12 @@ export default function App() {
           pollCount < 25 ? 800 : 2000,
         );
 
-        // Stop polling after 2 minutes
+        // Stop polling after 2 minutes — read the ref (not the stale closure) to see if the scan succeeded
         setTimeout(() => {
           clearInterval(pollInterval);
-          if (!waConnected) {
+          if (stopped) return;
+          stopped = true;
+          if (!waConnectedRef.current) {
             setWaConnecting(false);
             setWaQrVisible(false);
             notify('QR Expired', 'QR code timed out. Press Scan QR Code to try again.', 'warning');
@@ -3305,15 +3362,7 @@ export default function App() {
         'success',
       );
     } else {
-      // Fallback: local login when backend/DB is unavailable
-      const localUser = users.find((u) => u.username === loginForm.username && u.status === 'active');
-      if (localUser && loginForm.password === 'admin123' && localUser.role === 'admin') {
-        setCurrentUser(localUser);
-        setActiveModule(null); // show module picker on fresh login
-        notify(`Welcome back, ${localUser.name}`, 'Admin access granted (offline mode)', 'success');
-      } else {
-        notify('Login Failed', 'Invalid credentials or account not approved', 'warning');
-      }
+      notify('Login Failed', 'Invalid credentials or account not approved', 'warning');
     }
   };
   const handleRegister = async () => {
@@ -3335,36 +3384,47 @@ export default function App() {
       email: regForm.email,
       phone: regForm.phone,
     });
-    if (result) {
-      setPendingUsers((prev) => [
-        ...prev,
-        {
-          id: result.id || `P${String(prev.length + 2).padStart(3, '0')}`,
-          username: regForm.username,
-          name: regForm.name,
-          email: regForm.email,
-          phone: regForm.phone,
-          requestDate: new Date().toISOString().slice(0, 10),
-        },
-      ]);
-    } else {
-      setPendingUsers((prev) => [
-        ...prev,
-        {
-          id: `P${String(prev.length + 2).padStart(3, '0')}`,
-          username: regForm.username,
-          name: regForm.name,
-          email: regForm.email,
-          phone: regForm.phone,
-          requestDate: new Date().toISOString().slice(0, 10),
-        },
-      ]);
+    if (!result) {
+      notify('Registration Failed', 'Registration failed — username may be taken', 'error');
+      return;
     }
+    // Server created a DB row with status 'pending'; admins see it via users.filter(status === 'pending').
+    // Keep a local copy too so the pending badge shows before the next users refresh.
+    setPendingUsers((prev) => [
+      ...prev,
+      {
+        id: result.id || `P-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        username: regForm.username,
+        name: regForm.name,
+        email: regForm.email,
+        phone: regForm.phone,
+        requestDate: result.created || new Date().toISOString().slice(0, 10),
+      },
+    ]);
     setRegForm({ username: '', password: '', name: '', email: '', phone: '' });
     setAuthView('login');
     notify('Registration Submitted', 'Your account is pending admin approval', 'info');
   };
   const handleApproveUser = async (pending) => {
+    const isDbRow = typeof pending.id === 'string' && pending.id.startsWith('U-');
+    if (isDbRow) {
+      // Registration already exists in DB with status 'pending' — just activate it.
+      // The user keeps the password they registered with.
+      const updated = await api.updateUser(pending.id, {
+        status: 'active',
+        role: 'user',
+        permissions: { ...DEFAULT_USER_PERMS },
+      });
+      if (!updated) {
+        notify('Approval Failed', 'Could not activate user — please try again', 'error');
+        return;
+      }
+      setUsers((prev) => prev.map((u) => (u.id === pending.id ? { ...u, ...updated } : u)));
+      setPendingUsers((prev) => prev.filter((u) => u.id !== pending.id && u.username !== pending.username));
+      notify('User Approved', `${pending.name} can now login`, 'success');
+      return;
+    }
+    // Offline fallback: registration was never persisted — create the account now
     const newUser = {
       id: `U-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
       username: pending.username,
@@ -3380,12 +3440,21 @@ export default function App() {
     if (created) {
       setUsers((prev) => [...prev, created]);
     } else {
-      setUsers((prev) => [...prev, { ...newUser, created: new Date().toISOString().slice(0, 10) }]);
+      const { password: _pw, ...safeUser } = newUser;
+      setUsers((prev) => [...prev, { ...safeUser, created: new Date().toISOString().slice(0, 10) }]);
     }
     setPendingUsers((prev) => prev.filter((u) => u.id !== pending.id));
     notify('User Approved', `${pending.name} can now login (temp password: temp123)`, 'success');
   };
-  const handleRejectUser = (id) => {
+  const handleRejectUser = async (id) => {
+    if (typeof id === 'string' && id.startsWith('U-')) {
+      const ok = await api.deleteUser(id);
+      if (!ok) {
+        notify('Reject Failed', 'Could not remove registration — please try again', 'error');
+        return;
+      }
+      setUsers((prev) => prev.filter((u) => u.id !== id));
+    }
     setPendingUsers((prev) => prev.filter((u) => u.id !== id));
     notify('Registration Rejected', 'User has been denied access', 'warning');
   };
@@ -3409,7 +3478,8 @@ export default function App() {
     if (created) {
       setUsers((prev) => [...prev, created]);
     } else {
-      setUsers((prev) => [...prev, { ...newUser, created: new Date().toISOString().slice(0, 10) }]);
+      const { password: _pw, ...safeUser } = newUser;
+      setUsers((prev) => [...prev, { ...safeUser, created: new Date().toISOString().slice(0, 10) }]);
     }
     notify('User Created', `${form.name} (${form.role}) added`, 'success');
   };
@@ -3554,7 +3624,8 @@ export default function App() {
           engineer: '',
           emailFull: '',
           emailBack: '',
-          status: 'Pending',
+          status: 'Pending Approval',
+          approvalStatus: 'pending',
           orderBy: currentUser?.name || '',
           month: aiMonth,
           year: String(aiNow.getFullYear()),
@@ -3739,7 +3810,7 @@ export default function App() {
   };
 
   // Parse rows from a 2D array (headers + data) into order objects
-  const parseRowsToOrders = (headers, rows, sheetMonth) => {
+  const parseRowsToOrders = (headers, rows, sheetMonth, bulkGroupId = null) => {
     const colMap = {};
     headers.forEach((h, i) => {
       const key = String(h || '')
@@ -3750,14 +3821,17 @@ export default function App() {
     });
 
     const existingIds = new Set(orders.map((o) => o.id));
-    let nextId = Math.max(0, ...orders.map((o) => parseInt(o.id.replace('ORD-', '')) || 0)) + 1;
     const parsed = [];
+    // Local YYYY-MM-DD (avoid toISOString — it shifts dates across the UTC boundary)
+    const toLocalDate = (d) =>
+      `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 
     for (const row of rows) {
       const getValue = (field) => {
         const idx = colMap[field];
         if (idx === undefined) return '';
         const val = row[idx];
+        if (val instanceof Date) return isNaN(val.getTime()) ? '' : toLocalDate(val);
         return val != null
           ? String(val)
               .trim()
@@ -3767,7 +3841,7 @@ export default function App() {
 
       let orderId = getValue('id');
       if (!orderId || existingIds.has(orderId)) {
-        orderId = 'ORD-' + String(nextId++).padStart(4, '0');
+        orderId = `ORD-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
       }
       existingIds.add(orderId);
 
@@ -3793,6 +3867,7 @@ export default function App() {
         status: getValue('status') || (received >= qty && qty > 0 ? 'Received' : 'Pending Approval'),
         month: getValue('month') || sheetMonth || 'Import ' + new Date().toISOString().slice(0, 7),
         year: getValue('year') || new Date().getFullYear().toString(),
+        ...(bulkGroupId ? { bulkGroupId } : {}),
       };
 
       if (order.description !== 'Imported Item' || order.materialNo) {
@@ -3827,14 +3902,15 @@ export default function App() {
 
           // Use sheet name as month batch if it looks like a month
           const sheetMonth = sheetName.trim();
-          const sheetOrders = parseRowsToOrders(headers, rows, sheetMonth);
+          const bgId = `BG-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+          const sheetOrders = parseRowsToOrders(headers, rows, sheetMonth, bgId);
 
           if (sheetOrders.length > 0) {
             allOrders.push(...sheetOrders);
-            // Auto-create a bulk group from each sheet
+            // Auto-create a bulk group from each sheet (orders are linked via bulkGroupId)
             const totalCost = sheetOrders.reduce((s, o) => s + o.totalCost, 0);
             newBulkGroups.push({
-              id: 'BG-' + String(bulkGroups.length + newBulkGroups.length + 1).padStart(3, '0'),
+              id: bgId,
               month: sheetMonth,
               createdBy: currentUser.name,
               items: sheetOrders.length,
@@ -5174,7 +5250,7 @@ export default function App() {
             onClick={() => {
               setCurrentUser(null);
               setActiveModule(null);
-              localStorage.removeItem('mih_token');
+              api.logout(); // clears in-memory token AND localStorage
               localStorage.removeItem('mih_currentUser');
             }}
             style={{
@@ -5439,7 +5515,7 @@ export default function App() {
                     }}
                   />
                 )}
-                {item.id === 'users' && sidebarOpen && pendingUsers.length > 0 && (
+                {item.id === 'users' && sidebarOpen && allPendingUsers.length > 0 && (
                   <span
                     style={{
                       marginLeft: 'auto',
@@ -5451,7 +5527,7 @@ export default function App() {
                       fontWeight: 700,
                     }}
                   >
-                    {pendingUsers.length}
+                    {allPendingUsers.length}
                   </span>
                 )}
               </div>
@@ -8401,7 +8477,7 @@ export default function App() {
           {page === 'users' && hasPermission('users') && (
             <div>
               {/* Pending Approvals */}
-              {pendingUsers.length > 0 && (
+              {allPendingUsers.length > 0 && (
                 <div
                   className="card"
                   style={{ padding: '20px 24px', marginBottom: 24, border: '2px solid #FDE68A', background: '#FFFBEB' }}
@@ -8409,10 +8485,10 @@ export default function App() {
                   <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
                     <AlertTriangle size={18} color="#D97706" />
                     <h3 style={{ fontSize: 15, fontWeight: 600, color: '#92400E' }}>
-                      Pending Approvals ({pendingUsers.length})
+                      Pending Approvals ({allPendingUsers.length})
                     </h3>
                   </div>
-                  {pendingUsers.map((u) => (
+                  {allPendingUsers.map((u) => (
                     <div
                       key={u.id}
                       style={{
@@ -8441,7 +8517,7 @@ export default function App() {
                             fontWeight: 700,
                           }}
                         >
-                          {u.name
+                          {(u.name || u.username || '?')
                             .split(' ')
                             .map((w) => w[0])
                             .join('')}
@@ -8449,7 +8525,7 @@ export default function App() {
                         <div>
                           <div style={{ fontWeight: 600, fontSize: 14 }}>{u.name}</div>
                           <div style={{ fontSize: 11, color: '#94A3B8' }}>
-                            {u.email} • {u.username} • Requested: {fmtDate(u.requestDate)}
+                            {u.email} • {u.username} • Requested: {fmtDate(u.requestDate || u.created)}
                           </div>
                         </div>
                       </div>
@@ -8548,11 +8624,12 @@ export default function App() {
                     {(() => {
                       const fu = users.filter(
                         (u) =>
-                          !userSearch ||
-                          [u.name, u.username, u.email, u.role, u.phone || '']
-                            .join(' ')
-                            .toLowerCase()
-                            .includes(userSearch.toLowerCase()),
+                          u.status !== 'pending' &&
+                          (!userSearch ||
+                            [u.name, u.username, u.email, u.role, u.phone || '']
+                              .join(' ')
+                              .toLowerCase()
+                              .includes(userSearch.toLowerCase())),
                       );
                       return fu.length === 0 ? (
                         <tr>
@@ -8598,7 +8675,7 @@ export default function App() {
                                     fontWeight: 700,
                                   }}
                                 >
-                                  {u.name
+                                  {(u.name || u.username || '?')
                                     .split(' ')
                                     .map((w) => w[0])
                                     .join('')}
@@ -9066,18 +9143,22 @@ export default function App() {
                       Cancel
                     </button>
                     <button
-                      onClick={() => {
+                      onClick={async () => {
                         if (selectedUser._newPassword && selectedUser._newPassword.length < 6) {
                           notify('Error', 'Password must be at least 6 characters', 'error');
                           return;
                         }
-                        const payload = { ...selectedUser };
-                        if (payload._newPassword) {
-                          payload.password = payload._newPassword;
+                        // Never keep plaintext password fields in state / localStorage
+                        const { _newPassword, password: _oldPw, ...safeUser } = selectedUser;
+                        const payload = { ...safeUser };
+                        if (_newPassword) payload.password = _newPassword;
+                        const updated = await api.updateUser(selectedUser.id, payload);
+                        if (!updated) {
+                          notify('Save Failed', 'User not saved', 'error');
+                          return;
                         }
-                        delete payload._newPassword;
-                        setUsers((prev) => prev.map((u) => (u.id === selectedUser.id ? selectedUser : u)));
-                        api.updateUser(selectedUser.id, payload);
+                        const { password: _pw, ...savedUser } = { ...safeUser, ...updated };
+                        setUsers((prev) => prev.map((u) => (u.id === selectedUser.id ? savedUser : u)));
                         setSelectedUser(null);
                         notify(
                           'User Updated',
@@ -10346,13 +10427,18 @@ export default function App() {
                         const updatedOrders = orders.map((o) => (o.id === editingOrder.id ? finalOrder : o));
                         setOrders(updatedOrders);
                         const { qtyReceived, backOrder, arrivalDate, ...editFields } = finalOrder;
-                        // Include arrival fields when manually marking as Received
+                        const originalOrder = orders.find((o) => o.id === editingOrder.id);
+                        const qtyChanged = Number(originalOrder?.quantity) !== Number(finalOrder.quantity);
+                        // Include arrival fields when manually marking as Received.
+                        // When the quantity changed, also send the recomputed backOrder so it stays
+                        // consistent server-side (server only rejects qty_received for non-admins).
                         const payload = isManualReceived
                           ? { ...editFields, qtyReceived, backOrder, arrivalDate }
-                          : editFields;
+                          : qtyChanged
+                            ? { ...editFields, backOrder }
+                            : editFields;
                         dbSync(api.updateOrder(editingOrder.id, payload), 'Order edit not saved');
                         // Recalculate affected bulk group(s) — both old and new if re-linked
-                        const originalOrder = orders.find((o) => o.id === editingOrder.id);
                         const bgIdsToRecalc = [
                           ...new Set([originalOrder?.bulkGroupId, editingOrder.bulkGroupId].filter(Boolean)),
                         ];
@@ -10878,7 +10964,11 @@ export default function App() {
                     partsCount: mapped.length,
                   };
                   setCatalogUploadMeta(meta);
-                  try { localStorage.setItem('mih_catalogUploadMeta', JSON.stringify(meta)); } catch {}
+                  try {
+                    localStorage.setItem('mih_catalogUploadMeta', JSON.stringify(meta));
+                  } catch {
+                    /* ignore — localStorage may be unavailable */
+                  }
                   if (uploadResult) {
                     notify(
                       'Catalog Uploaded',
@@ -12186,7 +12276,11 @@ export default function App() {
                 { l: 'Unit Price', v: fmt(selectedPart.singaporePrice), c: '#0B7A3E' },
                 { l: 'Dist Price', v: fmt(selectedPart.distributorPrice), c: '#2563EB' },
                 { l: 'RSP Price', v: fmt(selectedPart.transferPrice), c: '#7C3AED' },
-                { l: 'RSP (EUR)', v: selectedPart.rspEur ? `€${selectedPart.rspEur.toLocaleString()}` : '—', c: '#D97706' },
+                {
+                  l: 'RSP (EUR)',
+                  v: selectedPart.rspEur ? `€${selectedPart.rspEur.toLocaleString()}` : '—',
+                  c: '#D97706',
+                },
                 {
                   l: 'Margin',
                   v: `${selectedPart.singaporePrice > 0 ? (((selectedPart.singaporePrice - (selectedPart.distributorPrice || 0)) / selectedPart.singaporePrice) * 100).toFixed(1) : 0}%`,
