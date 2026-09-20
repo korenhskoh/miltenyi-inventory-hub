@@ -5,11 +5,7 @@ import rateLimit from 'express-rate-limit';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import makeWASocket, {
-  DisconnectReason,
-  fetchLatestBaileysVersion,
-  makeCacheableSignalKeyStore,
-} from 'baileys';
+import makeWASocket, { DisconnectReason, fetchLatestBaileysVersion, makeCacheableSignalKeyStore } from 'baileys';
 import { usePostgresAuthState } from './waAuthState.js';
 import QRCode from 'qrcode';
 import pinoHttp from 'pino-http';
@@ -270,7 +266,7 @@ async function connectWhatsApp() {
           // sits watching the QR screen after a scan that actually worked.
           logger.info('WhatsApp asked for a restart (expected after pairing) — reconnecting now');
           waReconnectAttempts = 0;
-          setTimeout(() => connectWhatsApp().catch((e) => logger.error({ err: e }, "Restart reconnect failed")), 250);
+          setTimeout(() => connectWhatsApp().catch((e) => logger.error({ err: e }, 'Restart reconnect failed')), 250);
         } else {
           // All other disconnect reasons → auto-reconnect
           logger.info({ statusCode, error: lastDisconnect?.error?.message }, 'WhatsApp disconnected');
@@ -841,7 +837,18 @@ app.get('/api/health', async (req, res) => {
   } catch (_e) {
     /* timeout or db error */
   }
-  res.json({ status: 'ok', whatsapp: connectionStatus, database: dbOk ? 'connected' : 'error', pool: poolInfo });
+  // Answer 503 when the database is unreachable. This used to always return
+  // 200, so anything treating /api/health as a readiness probe — a deploy
+  // gate, a CI wait loop, Railway's own check — saw a healthy server that had
+  // fallen back to running without persistence, and only found out later
+  // through confusing downstream errors.
+  const ready = dbOk;
+  res.status(ready ? 200 : 503).json({
+    status: ready ? 'ok' : 'degraded',
+    whatsapp: connectionStatus,
+    database: dbOk ? 'connected' : 'error',
+    pool: poolInfo,
+  });
 });
 
 // ── Scheduled Reports API ──
@@ -912,6 +919,14 @@ async function start() {
       logger.info('Database initialized');
     } catch (err) {
       logger.error({ err }, 'Database init failed');
+      // The localStorage fallback is a development convenience. In production
+      // it means serving an app with no persistence — and, when the failure is
+      // a refused admin seed, no accounts at all — while still answering
+      // requests. Fail loudly instead of limping.
+      if (process.env.NODE_ENV === 'production') {
+        logger.fatal('Refusing to start in production without a working database. Fix the error above and restart.');
+        process.exit(1);
+      }
       logger.info('Continuing without database — localStorage fallback active');
     }
   } else {

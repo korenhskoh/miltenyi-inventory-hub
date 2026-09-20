@@ -3,7 +3,7 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { query } from '../db.js';
 import { snakeToCamel, camelToSnake } from '../utils.js';
-import { generateToken, JWT_SECRET } from '../middleware/auth.js';
+import { generateToken, JWT_SECRET, verifyToken } from '../middleware/auth.js';
 import logger from '../logger.js';
 
 const router = Router();
@@ -42,6 +42,46 @@ router.post('/login', async (req, res) => {
   } catch (e) {
     logger.error({ err: e }, 'Login error');
     res.status(500).json({ error: 'Server error — database may not be connected' });
+  }
+});
+
+// POST /change-password — the signed-in user changes their own password.
+//
+// There was no route for this at all, which is why the seeded admin password
+// could only ever be changed by an admin editing the user record. An account
+// flagged must_change_password is expected to come through here before doing
+// anything else.
+router.post('/change-password', verifyToken, async (req, res) => {
+  try {
+    const { currentPassword, newPassword } = req.body || {};
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({ error: 'Current and new password are required' });
+    }
+    if (String(newPassword).length < 8) {
+      return res.status(400).json({ error: 'New password must be at least 8 characters' });
+    }
+    if (currentPassword === newPassword) {
+      return res.status(400).json({ error: 'The new password must be different from the current one' });
+    }
+
+    const result = await query('SELECT id, password_hash FROM users WHERE id = $1', [req.user.id]);
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Account not found' });
+
+    // Proving the current password matters even though the caller already holds
+    // a valid token: it stops a borrowed or stolen session from locking the
+    // real owner out of their account.
+    const valid = await bcrypt.compare(currentPassword, result.rows[0].password_hash);
+    if (!valid) return res.status(401).json({ error: 'Current password is incorrect' });
+
+    await query('UPDATE users SET password_hash = $1, must_change_password = FALSE WHERE id = $2', [
+      await bcrypt.hash(newPassword, 10),
+      req.user.id,
+    ]);
+    logger.info({ userId: req.user.id }, 'Password changed');
+    res.json({ success: true });
+  } catch (e) {
+    logger.error({ err: e }, 'Change password error');
+    res.status(500).json({ error: 'Could not change the password' });
   }
 });
 
