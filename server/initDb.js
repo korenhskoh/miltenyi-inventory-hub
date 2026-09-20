@@ -5,6 +5,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import bcryptjs from 'bcryptjs';
 import { defaultEmailTemplates } from './defaultEmailTemplates.js';
+import { CONFIG_GLOBAL_KEYS } from './routes/config.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -128,6 +129,35 @@ export async function initDatabase() {
 
       logger.info('Default app_config seeded');
     }
+
+    // --- 4. One-time repair: settings that the server reads from '__global__'
+    // (scheduler, email, logo, bot) used to be saved per-user by Settings, so
+    // the server never saw them. Promote the most recent per-user value when
+    // no explicit global row exists yet.
+    const promoted = await query(
+      `
+      WITH latest AS (
+        SELECT DISTINCT ON (key) key, value, updated_at
+        FROM app_config
+        WHERE user_id <> '__global__' AND key = ANY($1::text[])
+        ORDER BY key, updated_at DESC
+      )
+      INSERT INTO app_config (key, user_id, value, updated_at)
+      SELECT key, '__global__', value, updated_at FROM latest
+      ON CONFLICT (key, user_id) DO UPDATE
+        SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at
+        WHERE app_config.updated_at < EXCLUDED.updated_at
+      RETURNING key
+    `,
+      [[...CONFIG_GLOBAL_KEYS]],
+    );
+    if (promoted.rowCount) {
+      logger.info({ keys: promoted.rows.map((r) => r.key) }, 'Promoted per-user settings to global');
+    }
+    // Per-user rows for global keys are left in place on purpose: GET /api/config
+    // already reads global keys only from '__global__', so they cannot shadow it,
+    // and deleting them would irreversibly discard settings other users saved
+    // back when these keys were per-user.
 
     logger.info('Database initialized successfully');
   } catch (error) {

@@ -67,5 +67,5 @@ Total Value: ${data.totalValue}
 
 _Miltenyi Inventory Hub SG_`,
 
-  custom: (data) => data.message
+  custom: (data) => data.message,
 };

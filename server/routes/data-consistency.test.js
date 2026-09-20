@@ -31,22 +31,24 @@ vi.mock('../db.js', () => ({
       // Build row from column names in SQL
       const colMatch = sql.match(/INSERT INTO orders \(([^)]+)\)/i);
       if (colMatch) {
-        const cols = colMatch[1].split(',').map(c => c.trim());
-        cols.forEach((col, i) => { row[col] = params[i]; });
+        const cols = colMatch[1].split(',').map((c) => c.trim());
+        cols.forEach((col, i) => {
+          row[col] = params[i];
+        });
       }
       ordersTable.push(row);
       return { rows: [row] };
     }
     if (sqlLower.startsWith('update orders set')) {
       const id = params[params.length - 1];
-      const idx = ordersTable.findIndex(o => o.id === id);
+      const idx = ordersTable.findIndex((o) => o.id === id);
       if (idx >= 0) {
         // Extract SET clauses — e.g. qty_received = $1
         const setMatch = sql.match(/SET (.+) WHERE/i);
         if (setMatch) {
-          const setParts = setMatch[1].split(',').map(s => s.trim());
-          setParts.forEach(part => {
-            const [col, placeholder] = part.split('=').map(s => s.trim());
+          const setParts = setMatch[1].split(',').map((s) => s.trim());
+          setParts.forEach((part) => {
+            const [col, placeholder] = part.split('=').map((s) => s.trim());
             const paramIdx = parseInt(placeholder.replace('$', '')) - 1;
             ordersTable[idx][col] = params[paramIdx];
           });
@@ -64,8 +66,10 @@ vi.mock('../db.js', () => ({
       const row = {};
       const colMatch = sql.match(/INSERT INTO bulk_groups \(([^)]+)\)/i);
       if (colMatch) {
-        const cols = colMatch[1].split(',').map(c => c.trim());
-        cols.forEach((col, i) => { row[col] = params[i]; });
+        const cols = colMatch[1].split(',').map((c) => c.trim());
+        cols.forEach((col, i) => {
+          row[col] = params[i];
+        });
       }
       bulkGroupsTable.push(row);
       return { rows: [row] };
@@ -79,21 +83,23 @@ vi.mock('../db.js', () => ({
       const row = {};
       const colMatch = sql.match(/INSERT INTO stock_checks \(([^)]+)\)/i);
       if (colMatch) {
-        const cols = colMatch[1].split(',').map(c => c.trim());
-        cols.forEach((col, i) => { row[col] = params[i]; });
+        const cols = colMatch[1].split(',').map((c) => c.trim());
+        cols.forEach((col, i) => {
+          row[col] = params[i];
+        });
       }
       stockChecksTable.push(row);
       return { rows: [row] };
     }
     if (sqlLower.startsWith('update stock_checks set')) {
       const id = params[params.length - 1];
-      const idx = stockChecksTable.findIndex(o => o.id === id);
+      const idx = stockChecksTable.findIndex((o) => o.id === id);
       if (idx >= 0) {
         const setMatch = sql.match(/SET (.+) WHERE/i);
         if (setMatch) {
-          const setParts = setMatch[1].split(',').map(s => s.trim());
-          setParts.forEach(part => {
-            const [col, placeholder] = part.split('=').map(s => s.trim());
+          const setParts = setMatch[1].split(',').map((s) => s.trim());
+          setParts.forEach((part) => {
+            const [col, placeholder] = part.split('=').map((s) => s.trim());
             const paramIdx = parseInt(placeholder.replace('$', '')) - 1;
             stockChecksTable[idx][col] = params[paramIdx];
           });
@@ -101,6 +107,12 @@ vi.mock('../db.js', () => ({
         return { rows: [stockChecksTable[idx]] };
       }
       return { rows: [] };
+    }
+
+    // Permission lookups (middleware/permissions.js). These tests are about data
+    // being shared between users, so give both of them the rights they exercise.
+    if (sqlLower.startsWith('select') && sqlLower.includes('from users')) {
+      return { rows: [{ role: 'user', status: 'active', permissions: { approvals: true } }] };
     }
 
     return { rows: [] };
@@ -121,8 +133,15 @@ function mockRes() {
   const res = {
     _status: 200,
     _json: null,
-    status(code) { res._status = code; return res; },
-    json(data) { res._json = data; return res; },
+    status(code) {
+      res._status = code;
+      return res;
+    },
+    // List endpoints return a paginated envelope { data, total, page, pageSize }; unwrap it
+    json(data) {
+      res._json = data && Array.isArray(data.data) ? data.data : data;
+      return res;
+    },
   };
   return res;
 }
@@ -192,20 +211,20 @@ describe('Data consistency - Orders', () => {
     // User A creates order 1
     await createHandler(
       mockReq({ method: 'POST', body: { id: 'ORD-201', description: 'Order by A', quantity: 1 }, user: userA }),
-      mockRes()
+      mockRes(),
     );
 
     // User B creates order 2
     await createHandler(
       mockReq({ method: 'POST', body: { id: 'ORD-202', description: 'Order by B', quantity: 2 }, user: userB }),
-      mockRes()
+      mockRes(),
     );
 
     // User A fetches — sees both
     const resA = mockRes();
     await listHandler(mockReq({ user: userA, query: {} }), resA);
     expect(resA._json.length).toBe(2);
-    const idsA = resA._json.map(o => o.id);
+    const idsA = resA._json.map((o) => o.id);
     expect(idsA).toContain('ORD-201');
     expect(idsA).toContain('ORD-202');
 
@@ -213,7 +232,7 @@ describe('Data consistency - Orders', () => {
     const resB = mockRes();
     await listHandler(mockReq({ user: userB, query: {} }), resB);
     expect(resB._json.length).toBe(2);
-    const idsB = resB._json.map(o => o.id);
+    const idsB = resB._json.map((o) => o.id);
     expect(idsB).toContain('ORD-201');
     expect(idsB).toContain('ORD-202');
   });
@@ -225,8 +244,12 @@ describe('Data consistency - Orders', () => {
 
     // Create an approved order (approval_status must be 'approved' for qty_received updates)
     await createHandler(
-      mockReq({ method: 'POST', body: { id: 'ORD-301', description: 'Part', quantity: 10, approval_status: 'approved' }, user: userA }),
-      mockRes()
+      mockReq({
+        method: 'POST',
+        body: { id: 'ORD-301', description: 'Part', quantity: 10, approval_status: 'approved' },
+        user: userA,
+      }),
+      mockRes(),
     );
 
     // User A records part arrival (qty_received)
@@ -256,10 +279,7 @@ describe('Data consistency - Bulk Groups', () => {
     const listHandler = findHandler(bulkGroupsRouter, 'GET', '/');
 
     // User A creates a bulk group
-    await createHandler(
-      mockReq({ method: 'POST', body: { id: 'BG-101', month: 'Feb 2026' }, user: userA }),
-      mockRes()
-    );
+    await createHandler(mockReq({ method: 'POST', body: { id: 'BG-101', month: 'Feb 2026' }, user: userA }), mockRes());
 
     // User B fetches — should see it
     const resB = mockRes();
@@ -273,14 +293,8 @@ describe('Data consistency - Bulk Groups', () => {
     const createHandler = findHandler(bulkGroupsRouter, 'POST', '/');
     const listHandler = findHandler(bulkGroupsRouter, 'GET', '/');
 
-    await createHandler(
-      mockReq({ method: 'POST', body: { id: 'BG-201', month: 'Jan 2026' }, user: userA }),
-      mockRes()
-    );
-    await createHandler(
-      mockReq({ method: 'POST', body: { id: 'BG-202', month: 'Feb 2026' }, user: userB }),
-      mockRes()
-    );
+    await createHandler(mockReq({ method: 'POST', body: { id: 'BG-201', month: 'Jan 2026' }, user: userA }), mockRes());
+    await createHandler(mockReq({ method: 'POST', body: { id: 'BG-202', month: 'Feb 2026' }, user: userB }), mockRes());
 
     // Both users see both groups
     for (const user of [userA, userB]) {
@@ -305,7 +319,7 @@ describe('Data consistency - Stock Checks', () => {
         body: { id: 'SC-101', checkedBy: 'Alice', items: 50, disc: 2, status: 'In Progress' },
         user: userA,
       }),
-      mockRes()
+      mockRes(),
     );
 
     const resB = mockRes();
@@ -322,13 +336,13 @@ describe('Data consistency - Stock Checks', () => {
     // Create
     await createHandler(
       mockReq({ method: 'POST', body: { id: 'SC-201', items: 30, status: 'In Progress' }, user: userA }),
-      mockRes()
+      mockRes(),
     );
 
     // User A updates status to Completed
     await updateHandler(
       mockReq({ method: 'PUT', params: { id: 'SC-201' }, body: { status: 'Completed' }, user: userA }),
-      mockRes()
+      mockRes(),
     );
 
     // User B fetches — sees updated status
@@ -349,10 +363,7 @@ describe('Data consistency - Bulk-linked orders', () => {
     const listOrders = findHandler(ordersRouter, 'GET', '/');
 
     // User A creates bulk group
-    await createBG(
-      mockReq({ method: 'POST', body: { id: 'BG-301', month: 'Mar 2026' }, user: userA }),
-      mockRes()
-    );
+    await createBG(mockReq({ method: 'POST', body: { id: 'BG-301', month: 'Mar 2026' }, user: userA }), mockRes());
 
     // User A creates order linked to that bulk group
     await createOrder(
@@ -361,7 +372,7 @@ describe('Data consistency - Bulk-linked orders', () => {
         body: { id: 'ORD-401', description: 'Linked order', quantity: 3, bulk_group_id: 'BG-301' },
         user: userA,
       }),
-      mockRes()
+      mockRes(),
     );
 
     // User B fetches orders — sees the bulkGroupId linkage

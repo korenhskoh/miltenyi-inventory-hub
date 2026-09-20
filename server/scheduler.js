@@ -230,13 +230,15 @@ async function sendEmailReport(emailConfig, recipients, report) {
 /**
  * Send the report via WhatsApp (uses the sock reference passed in)
  */
-async function sendWaReport(sock, formatPhoneNumber, recipients, report) {
-  if (!sock || !recipients?.length) return 0;
+async function sendWaReport(sendText, formatPhoneNumber, recipients, report) {
+  if (!sendText || !recipients?.length) return 0;
   let sent = 0;
   for (const phone of recipients) {
     try {
       const jid = formatPhoneNumber(phone);
-      await sock.sendMessage(jid, { text: report.text });
+      // Goes through the caller's sender so the message is cached for retry
+      // receipts like every other outgoing message.
+      await sendText(jid, report.text);
       sent++;
       await new Promise((r) => setTimeout(r, 1000)); // rate limit
     } catch (e) {
@@ -290,11 +292,12 @@ async function runScheduledReport(getWaContext) {
   isRunning = true;
   const startTime = Date.now();
 
-  // Safety timeout — force-release the running flag if execution hangs
+  // Safety timeout — record that this run overran, but do NOT clear isRunning:
+  // the run is still going, and releasing the lock let a second run start and
+  // send everyone a duplicate report. The finally block is the only release.
   const safetyTimer = setTimeout(() => {
     if (isRunning) {
-      logger.error({ durationMs: Date.now() - startTime }, 'Scheduled report timed out — releasing lock');
-      isRunning = false;
+      logger.error({ durationMs: Date.now() - startTime }, 'Scheduled report overran the 5-minute budget');
     }
   }, REPORT_TIMEOUT_MS);
 
@@ -323,7 +326,11 @@ async function runScheduledReport(getWaContext) {
             : activeUsers.filter((u) => u.email).map((u) => u.email);
       }
       if (config.whatsappEnabled) {
-        waRecipients = activeUsers.filter((u) => u.phone).map((u) => u.phone);
+        // Honour an explicit recipient list the same way email does. Before this,
+        // WhatsApp ignored config.waRecipients entirely and always messaged every
+        // active user with a phone number on file.
+        const explicit = (config.waRecipients || []).filter(Boolean);
+        waRecipients = explicit.length > 0 ? explicit : activeUsers.filter((u) => u.phone).map((u) => u.phone);
       }
     } catch (e) {
       logger.error({ err: e }, 'Failed to load recipients for scheduled report');
@@ -337,9 +344,9 @@ async function runScheduledReport(getWaContext) {
 
     // Send via WhatsApp
     if (config.whatsappEnabled && waRecipients.length > 0) {
-      const { sock, formatPhoneNumber } = getWaContext();
-      if (sock) {
-        const sent = await sendWaReport(sock, formatPhoneNumber, waRecipients, report);
+      const { sock, formatPhoneNumber, sendText } = getWaContext();
+      if (sock && sendText) {
+        const sent = await sendWaReport(sendText, formatPhoneNumber, waRecipients, report);
         await logReport('whatsapp', `${waRecipients.length} user(s)`, sent > 0 ? 'Delivered' : 'Failed');
       } else {
         logger.warn('WhatsApp not connected — skipping WA scheduled report');
@@ -357,10 +364,12 @@ async function runScheduledReport(getWaContext) {
 /**
  * Build cron expression from config
  */
-function buildCronExpression(config) {
+export function buildCronExpression(config) {
   const [rawHour, rawMinute] = (config.time || '09:00').split(':').map(Number);
-  const hour = Math.max(0, Math.min(23, rawHour || 9));
-  const minute = Math.max(0, Math.min(59, rawMinute || 0));
+  // `rawHour || 9` turned midnight into 9am: 0 is falsy. Only fall back when
+  // the value is genuinely not a number.
+  const hour = Math.max(0, Math.min(23, Number.isFinite(rawHour) ? rawHour : 9));
+  const minute = Math.max(0, Math.min(59, Number.isFinite(rawMinute) ? rawMinute : 0));
   const dayOfWeek = Math.max(0, Math.min(6, config.dayOfWeek ?? 1));
   const dayOfMonth = Math.max(1, Math.min(31, config.dayOfMonth ?? 1));
 
@@ -374,6 +383,58 @@ function buildCronExpression(config) {
     default:
       return `${minute} ${hour} * * 1`; // default weekly Monday
   }
+}
+
+/**
+ * Stop and fully dispose the current cron task.
+ * node-cron v4 keeps a stopped task in its internal registry, so calling
+ * stop() alone leaked one task per Settings save.
+ */
+function stopCronJob() {
+  if (!cronJob) return;
+  try {
+    cronJob.stop();
+    if (typeof cronJob.destroy === 'function') cronJob.destroy();
+  } catch (e) {
+    logger.warn({ err: e }, 'Failed to dispose previous cron task');
+  }
+  cronJob = null;
+}
+
+/**
+ * How long after a missed slot we still consider it worth sending.
+ * A redeploy across the scheduled minute used to drop that run silently.
+ */
+const CATCHUP_GRACE_MS = 6 * 60 * 60 * 1000; // 6 hours
+
+/**
+ * Decide whether a scheduled run was missed while the server was down.
+ * Exported for testing.
+ */
+export function shouldCatchUp(config, now = new Date()) {
+  if (!config?.enabled) return false;
+  const [rawHour, rawMinute] = (config.time || '09:00').split(':').map(Number);
+  const hour = Number.isFinite(rawHour) ? rawHour : 9;
+  const minute = Number.isFinite(rawMinute) ? rawMinute : 0;
+
+  // The most recent moment the report should have fired, on or before `now`.
+  const slot = new Date(now);
+  slot.setHours(hour, minute, 0, 0);
+  if (slot > now) slot.setDate(slot.getDate() - 1);
+
+  if (config.frequency === 'weekly') {
+    const target = Math.max(0, Math.min(6, config.dayOfWeek ?? 1));
+    while (slot.getDay() !== target) slot.setDate(slot.getDate() - 1);
+  } else if (config.frequency === 'monthly') {
+    const target = Math.max(1, Math.min(31, config.dayOfMonth ?? 1));
+    while (slot.getDate() !== target) slot.setDate(slot.getDate() - 1);
+  }
+
+  const age = now.getTime() - slot.getTime();
+  if (age < 0 || age > CATCHUP_GRACE_MS) return false; // too stale to be useful
+  const lastRun = config.lastRun ? new Date(config.lastRun).getTime() : 0;
+  if (Number.isNaN(lastRun)) return true;
+  return lastRun < slot.getTime(); // already ran for this slot?
 }
 
 /**
@@ -396,10 +457,7 @@ export async function startScheduler(getWaContext) {
 
   logger.info({ cronExpr, frequency: config.frequency, enabled: config.enabled }, 'Scheduler initialized');
 
-  if (cronJob) {
-    cronJob.stop();
-    cronJob = null;
-  }
+  stopCronJob();
 
   // Schedule with Asia/Singapore timezone so reports fire at the right local time
   cronJob = cron.schedule(
@@ -413,6 +471,14 @@ export async function startScheduler(getWaContext) {
   if (!config.enabled) {
     cronJob.stop();
     logger.info('Scheduler created but stopped (disabled in config)');
+    return;
+  }
+
+  // If the server was down across the scheduled minute (a redeploy, say), that
+  // run used to be dropped silently. lastRun was written but never read.
+  if (shouldCatchUp(config)) {
+    logger.info({ lastRun: config.lastRun }, 'Missed a scheduled run while down — sending now');
+    runScheduledReport(getWaContext).catch((e) => logger.error({ err: e }, 'Catch-up report error'));
   }
 }
 
@@ -420,10 +486,7 @@ export async function startScheduler(getWaContext) {
  * Reload scheduler config (call when user updates settings)
  */
 export async function reloadScheduler(getWaContext) {
-  if (cronJob) {
-    cronJob.stop();
-    cronJob = null;
-  }
+  stopCronJob();
   await startScheduler(getWaContext);
 }
 

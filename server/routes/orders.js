@@ -2,9 +2,11 @@ import { Router } from 'express';
 import { query } from '../db.js';
 import { snakeToCamel, camelToSnake } from '../utils.js';
 import { pickAllowed, requireFields, sanitizeDates } from '../validation.js';
-import { paginate, envelope } from '../pagination.js';
+import { paginate, envelope, limitClause } from '../pagination.js';
 import { asyncHandler } from '../middleware/errorHandler.js';
 import { requireAdmin } from '../middleware/auth.js';
+import logger from '../logger.js';
+import { requirePermission, userHasPermission } from '../middleware/permissions.js';
 
 const router = Router();
 
@@ -40,12 +42,71 @@ const ORDER_DATE_FIELDS = ['order_date', 'arrival_date', 'approval_sent_date'];
 // Allowed columns for ORDER BY (prevents SQL injection)
 const ALLOWED_ORDER_COLUMNS = new Set([...ORDER_FIELDS, 'created_at']);
 
+const APPROVAL_STATUSES = new Set(['approved', 'rejected']);
+const lower = (v) => String(v ?? '').toLowerCase();
+
+// Does this write record an approval decision? Only users with the 'approvals'
+// permission (or admins) may do that. Both fields are compared case
+// INSENSITIVELY: a capitalised-only check let `status: 'approved'` through.
+function isApprovalDecision(body) {
+  return APPROVAL_STATUSES.has(lower(body.approval_status)) || APPROVAL_STATUSES.has(lower(body.status));
+}
+
+// Does this write close an order out as delivered? Allowed for anyone doing
+// part arrival, but only once the order has actually been approved.
+function isCloseOut(body) {
+  return body.qty_received !== undefined || lower(body.status) === 'received';
+}
+
+// GET /stats - server-side aggregates for the dashboard (never subject to paging)
+router.get(
+  '/stats',
+  asyncHandler(async (req, res) => {
+    const totals = await query(`
+      SELECT
+        COUNT(*)::int AS total,
+        COUNT(*) FILTER (WHERE status = 'Pending Approval')::int AS pending_approval,
+        COUNT(*) FILTER (WHERE status = 'Approved')::int AS approved,
+        COUNT(*) FILTER (WHERE status = 'Received')::int AS received,
+        COUNT(*) FILTER (WHERE status = 'Rejected')::int AS rejected,
+        COUNT(*) FILTER (WHERE back_order < 0)::int AS back_orders,
+        COALESCE(SUM(total_cost), 0)::float AS total_value,
+        COALESCE(SUM(total_cost) FILTER (WHERE status = 'Received'), 0)::float AS received_value
+      FROM orders
+    `);
+    const byMonth = await query(`
+      SELECT
+        to_char(date_trunc('month', order_date), 'YYYY-MM') AS ym,
+        COUNT(*)::int AS orders,
+        COALESCE(SUM(quantity), 0)::int AS items,
+        COALESCE(SUM(total_cost), 0)::float AS value
+      FROM orders
+      WHERE order_date IS NOT NULL
+      GROUP BY 1
+      ORDER BY 1
+    `);
+    const topMaterials = await query(`
+      SELECT material_no, MAX(description) AS description, SUM(quantity)::int AS quantity, COUNT(*)::int AS orders
+      FROM orders
+      WHERE material_no IS NOT NULL AND material_no <> ''
+      GROUP BY material_no
+      ORDER BY quantity DESC
+      LIMIT 10
+    `);
+    res.json({
+      totals: snakeToCamel(totals.rows[0]),
+      byMonth: byMonth.rows,
+      topMaterials: topMaterials.rows.map(snakeToCamel),
+    });
+  }),
+);
+
 // GET / - list all orders, optional query params: status, month, orderBy, page, limit
 router.get(
   '/',
   asyncHandler(async (req, res) => {
     const { status, month, orderBy } = req.query;
-    const { page, pageSize, offset } = paginate(req.query);
+    const { page, pageSize } = paginate(req.query);
     const conditions = [];
     const params = [];
     let paramIndex = 1;
@@ -72,12 +133,13 @@ router.get(
     const countResult = await query(`SELECT COUNT(*) FROM orders${whereClause}`, params);
     const total = parseInt(countResult.rows[0].count);
 
-    const dataResult = await query(
-      `SELECT * FROM orders${whereClause}${orderClause} LIMIT $${paramIndex++} OFFSET $${paramIndex++}`,
-      [...params, pageSize, offset],
-    );
+    const lim = limitClause(req, paramIndex);
+    const dataResult = await query(`SELECT * FROM orders${whereClause}${orderClause}${lim.clause}`, [
+      ...params,
+      ...lim.params,
+    ]);
     const rows = dataResult.rows.map(snakeToCamel);
-    res.json(envelope(rows, total, page, pageSize));
+    res.json(envelope(rows, total, lim.clause ? page : 1, lim.clause ? pageSize : rows.length));
   }),
 );
 
@@ -87,6 +149,12 @@ router.post('/', async (req, res) => {
     const snakeBody = sanitizeDates(pickAllowed(camelToSnake(req.body), ORDER_FIELDS), ORDER_DATE_FIELDS);
     const err = requireFields(snakeBody, ORDER_REQUIRED);
     if (err) return res.status(400).json({ error: err });
+
+    // An order may not be born already approved / rejected / received — that
+    // would skip the approval workflow entirely.
+    if ((isApprovalDecision(snakeBody) || isCloseOut(snakeBody)) && !(await userHasPermission(req.user, 'approvals'))) {
+      return res.status(403).json({ error: 'Permission required: approvals' });
+    }
 
     const keys = Object.keys(snakeBody);
     const values = Object.values(snakeBody);
@@ -110,14 +178,33 @@ router.put('/bulk-status', async (req, res) => {
     if (!status) {
       return res.status(400).json({ error: 'status is required' });
     }
+    const bulkBody = { status, approval_status: approvalStatus };
+    const canApprove = await userHasPermission(req.user, 'approvals');
+    if (isApprovalDecision(bulkBody) && !canApprove) {
+      return res.status(403).json({ error: 'Permission required: approvals' });
+    }
+    // Closing orders out as received without the 'approvals' permission is fine
+    // for part-arrival work, but it must not become a way around the approval
+    // gate: restrict the update to orders that are already approved.
+    const approvedOnly = isCloseOut(bulkBody) && !canApprove;
 
-    const placeholders = ids.map((_, i) => `$${i + (approvalStatus ? 3 : 2)}`).join(', ');
-    const sql = approvalStatus
-      ? `UPDATE orders SET status = $1, approval_status = $2 WHERE id IN (${placeholders}) RETURNING *`
-      : `UPDATE orders SET status = $1 WHERE id IN (${placeholders}) RETURNING *`;
-    const params = approvalStatus ? [status, approvalStatus, ...ids] : [status, ...ids];
-    const result = await query(sql, params);
+    const params = approvalStatus ? [status, approvalStatus] : [status];
+    const placeholders = ids.map((_, i) => `$${i + params.length + 1}`).join(', ');
+    const setClause = approvalStatus ? 'status = $1, approval_status = $2' : 'status = $1';
+    const sql = `UPDATE orders SET ${setClause} WHERE id IN (${placeholders})${
+      approvedOnly ? " AND approval_status = 'approved'" : ''
+    } RETURNING *`;
+    const result = await query(sql, [...params, ...ids]);
     const rows = result.rows.map(snakeToCamel);
+    // Keep the array response contract; 207 signals that some ids were skipped
+    // because they had not been approved.
+    if (approvedOnly && rows.length < ids.length) {
+      logger.warn(
+        { userId: req.user?.id, requested: ids.length, updated: rows.length },
+        'Bulk close-out skipped unapproved orders',
+      );
+      return res.status(207).json(rows);
+    }
     res.json(rows);
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -130,9 +217,13 @@ router.put('/:id', async (req, res) => {
     const { id } = req.params;
     const snakeBody = sanitizeDates(pickAllowed(camelToSnake(req.body), ORDER_FIELDS), ORDER_DATE_FIELDS);
 
-    // Enforce approval before allowing part arrival updates
-    // Skip check if this request is also setting approval_status to 'approved'
-    if (snakeBody.qty_received !== undefined && snakeBody.approval_status !== 'approved') {
+    if (isApprovalDecision(snakeBody) && !(await userHasPermission(req.user, 'approvals'))) {
+      return res.status(403).json({ error: 'Permission required: approvals' });
+    }
+
+    // Enforce approval before allowing part arrival / close-out.
+    // Skip check if this request is also setting approval_status to 'approved'.
+    if (isCloseOut(snakeBody) && lower(snakeBody.approval_status) !== 'approved') {
       const check = await query('SELECT approval_status FROM orders WHERE id = $1', [id]);
       if (check.rows.length && check.rows[0].approval_status !== 'approved') {
         return res.status(403).json({ error: 'Order must be approved before recording part arrival' });
@@ -171,7 +262,7 @@ router.delete('/all', requireAdmin, async (req, res) => {
 });
 
 // DELETE /:id - delete order by id
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', requirePermission('deleteOrders'), async (req, res) => {
   try {
     const { id } = req.params;
     const result = await query('DELETE FROM orders WHERE id = $1 RETURNING *', [id]);

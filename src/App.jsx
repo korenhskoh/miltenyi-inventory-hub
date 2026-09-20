@@ -73,7 +73,6 @@ import {
   WifiOff,
   Layers,
   FolderPlus,
-  ChevronLeft,
   Bot,
   Upload,
   Sparkles,
@@ -96,7 +95,17 @@ import {
 import * as XLSX from 'xlsx';
 import api from './api.js';
 import { PARTS_CATALOG, PRICE_CONFIG_DEFAULT, CATEGORIES, DEFAULT_USERS, MONTH_OPTIONS } from './constants.js';
-import { fmt, fmtDate, fmtNum, applySortData, toggleSort, exportToFile, exportToPDF, fillTemplate } from './utils.js';
+import {
+  fmt,
+  fmtDate,
+  fmtNum,
+  applySortData,
+  toggleSort,
+  exportToFile,
+  exportToPDF,
+  fillTemplate,
+  escapeHtml,
+} from './utils.js';
 import {
   STATUS_CFG,
   Badge,
@@ -111,6 +120,11 @@ import {
   SelBox,
   QRCodeCanvas,
 } from './components/ui.jsx';
+import Pagination, { usePagination } from './components/Pagination.jsx';
+import { todayLocal, toLocalYmd } from './lib/dates.js';
+import { getCatalogPrice, getEffectiveUnitPrice, getEffectiveTotal } from './lib/pricing.js';
+import { computeArrival, arrivalDelta } from './lib/arrival.js';
+import { ORDER_STATUS, approvalTransition } from './lib/approvals.js';
 import SettingsPage from './pages/SettingsPage.jsx';
 import WhatsAppPage from './pages/WhatsAppPage.jsx';
 import DeliveryPage from './pages/DeliveryPage.jsx';
@@ -130,8 +144,14 @@ export default function App() {
   const isOrderDetailWindow = urlParams.get('orderDetail') === 'true';
   const [orderDetailData, setOrderDetailData] = useState(() => {
     if (isOrderDetailWindow) {
-      const stored = localStorage.getItem('viewOrderDetail');
-      return stored ? JSON.parse(stored) : null;
+      try {
+        // One-shot hand-off from the opener window — read it, then clear it so no order data lingers
+        const stored = localStorage.getItem('viewOrderDetail');
+        localStorage.removeItem('viewOrderDetail');
+        return stored ? JSON.parse(stored) : null;
+      } catch {
+        return null;
+      }
     }
     return null;
   });
@@ -148,9 +168,16 @@ export default function App() {
       return null;
     }
   });
+  // Ref mirror so callbacks created before a login commit still see the user
+  const currentUserRef = useRef(null);
+  useEffect(() => {
+    currentUserRef.current = currentUser;
+  }, [currentUser]);
   const [authView, setAuthView] = useState('login'); // login | register
   const [loginForm, setLoginForm] = useState({ username: '', password: '' });
   const [regForm, setRegForm] = useState({ username: '', password: '', name: '', email: '', phone: '' });
+  // Offline-only fallback list of registrations (when /api/auth/register is unreachable).
+  // The authoritative pending list is derived from `users` (status === 'pending') — see allPendingUsers.
   const [pendingUsers, setPendingUsers] = useState([]);
 
   // ── App State ──
@@ -180,19 +207,14 @@ export default function App() {
   const [allOrdersStatus, setAllOrdersStatus] = useState('All');
   const [allOrdersUserFilter, setAllOrdersUserFilter] = useState('All');
   const [allOrdersSort, setAllOrdersSort] = useState({ key: null, dir: 'asc' });
-  const [singleOrderPage, setSingleOrderPage] = useState(0);
-  const [singleOrderPageSize, setSingleOrderPageSize] = useState(50);
-  const [bulkOrderPage, setBulkOrderPage] = useState(0);
-  const [bulkOrderPageSize, setBulkOrderPageSize] = useState(50);
   const [bulkMonthFilter, setBulkMonthFilter] = useState('All');
-  const [allOrdersPage, setAllOrdersPage] = useState(0);
-  const [allOrdersPageSize, setAllOrdersPageSize] = useState(50);
   const [expandedAllMonth, setExpandedAllMonth] = useState(null);
   const [expandedAllBulkGroup, setExpandedAllBulkGroup] = useState(null);
   const [catFilter, setCatFilter] = useState('All');
   const [notifs, setNotifs] = useState([]);
+  const [quickCompose, setQuickCompose] = useState({ subject: 'Monthly Full Received', to: '', message: '' });
+  const [quickSending, setQuickSending] = useState(false);
   const [showNewOrder, setShowNewOrder] = useState(false);
-  const [selectedOrder, setSelectedOrder] = useState(null);
   const [editingOrder, setEditingOrder] = useState(null);
   const [showEditWarning, setShowEditWarning] = useState(false);
   const [selectedPart, setSelectedPart] = useState(null);
@@ -201,6 +223,7 @@ export default function App() {
   const [priceFinderResults, setPriceFinderResults] = useState([]);
   const [selectedUser, setSelectedUser] = useState(null);
   const [selectedBulkGroup, setSelectedBulkGroup] = useState(null);
+  const [bulkDraft, setBulkDraft] = useState({}); // Edit Bulk Order: unsaved per-order edits { orderId: partial }
   const [expandedBulkGroup, setExpandedBulkGroup] = useState(null);
   const [addToBulkItem, setAddToBulkItem] = useState({
     materialNo: '',
@@ -225,7 +248,9 @@ export default function App() {
     try {
       const saved = localStorage.getItem('mih_catalogUploadMeta');
       return saved ? JSON.parse(saved) : null;
-    } catch { return null; }
+    } catch {
+      return null;
+    }
   });
   const [priceConfig, setPriceConfig] = useState(PRICE_CONFIG_DEFAULT);
   const [blurPrices, setBlurPrices] = useState(() => {
@@ -236,14 +261,17 @@ export default function App() {
       return false;
     }
   });
-  const [catalogPage, setCatalogPage] = useState(0);
-  const [catalogPageSize, setCatalogPageSize] = useState(50);
   const [showCatalogMapper, setShowCatalogMapper] = useState(false);
   const [catalogMapperData, setCatalogMapperData] = useState({ rows: [], headers: [], fileName: '' });
   const [catalogColumnMap, setCatalogColumnMap] = useState({ m: '', d: '', c: '', sg: '', dist: '', tp: '', rsp: '' });
 
   // ── WhatsApp Baileys State ──
   const [waConnected, setWaConnected] = useState(false);
+  // Ref mirror of waConnected so long-lived timers/polls (QR connect flow) see the latest value
+  const waConnectedRef = useRef(false);
+  useEffect(() => {
+    waConnectedRef.current = waConnected;
+  }, [waConnected]);
   const [waConnecting, setWaConnecting] = useState(false);
   const [waQrVisible, setWaQrVisible] = useState(false);
   const [waQrCode, setWaQrCode] = useState('');
@@ -286,6 +314,7 @@ export default function App() {
   const [selectedStockCheck, setSelectedStockCheck] = useState(null);
 
   const [notifLog, setNotifLog] = useState([]);
+  const [serverStats, setServerStats] = useState(null); // GET /api/orders/stats — null until loaded
   const [auditLog, setAuditLog] = useState([]);
   const [auditFilter, setAuditFilter] = useState({ action: 'All', user: 'All', entityType: 'All' });
   const [machines, setMachines] = useState([]);
@@ -505,7 +534,7 @@ export default function App() {
   const sendArrivalReport = useCallback(
     async (confirmedOrders) => {
       if (!confirmedOrders.length) return;
-      const now = new Date().toISOString().slice(0, 10);
+      const now = todayLocal();
       const received = confirmedOrders.filter((o) => o.qtyReceived >= o.quantity).length;
       const backOrders = confirmedOrders.filter((o) => o.qtyReceived < o.quantity).length;
       const itemsList =
@@ -637,7 +666,7 @@ export default function App() {
           type: 'whatsapp',
           to: `${recipients.length} user(s)`,
           subject: subject || `Auto-notification: ${ruleKey}`,
-          date: new Date().toISOString().slice(0, 10),
+          date: todayLocal(),
           status: sent === recipients.length ? 'Delivered' : sent > 0 ? 'Partial' : 'Failed',
         });
       }
@@ -673,7 +702,7 @@ export default function App() {
     const recipients = (scheduledNotifs.recipients || []).filter(Boolean);
     if (recipients.length === 0) return;
 
-    const now = new Date().toISOString().slice(0, 10);
+    const now = todayLocal();
     const sections = [];
 
     // Order Summary
@@ -816,8 +845,8 @@ export default function App() {
 
       // Check if already ran today
       if (scheduledNotifs.lastRun) {
-        const lastDate = new Date(scheduledNotifs.lastRun).toISOString().slice(0, 10);
-        if (lastDate === now.toISOString().slice(0, 10)) return;
+        const lastDate = toLocalYmd(new Date(scheduledNotifs.lastRun));
+        if (lastDate === toLocalYmd(now)) return;
       }
 
       const freq = scheduledNotifs.frequency;
@@ -852,12 +881,17 @@ export default function App() {
       if (!order) return;
       const pending = pendingArrival[orderId];
       const val = pending ? pending.qtyReceived : order.qtyReceived || 0;
-      const status = val >= order.quantity ? 'Received' : order.status;
+      const delta = arrivalDelta(order, val);
+      // Guard: re-confirming an already-Received order with the same qty is a no-op
+      if (order.status === ORDER_STATUS.RECEIVED && delta <= 0) {
+        notify('Already Confirmed', `${order.description || orderId} is already marked as received`, 'info');
+        return;
+      }
+      const { status, ...arrival } = computeArrival(order, val);
       const updates = {
-        qtyReceived: val,
-        backOrder: val - order.quantity,
+        ...arrival,
         status,
-        arrivalDate: new Date().toISOString().slice(0, 10),
+        arrivalDate: todayLocal(),
         arrivalCheckedBy: currentUser?.name || 'System',
       };
       const updatedOrder = { ...order, ...updates };
@@ -878,9 +912,9 @@ export default function App() {
       logAction('Confirm Arrival', 'order', orderId, { qtyReceived: val, status });
       notify('Arrival Confirmed', `${order.description || orderId}: ${val}/${order.quantity} received`, 'success');
       sendArrivalReport([updatedOrder]);
-      // Auto-add received quantity to local inventory
-      if (val > 0 && order.materialNo) {
-        api.arrivalToInventory([{ materialNo: order.materialNo, description: order.description, quantity: val }]);
+      // Auto-add only the newly received quantity (delta) to local inventory
+      if (delta > 0 && order.materialNo) {
+        api.arrivalToInventory([{ materialNo: order.materialNo, description: order.description, quantity: delta }]);
       }
     },
     [orders, pendingArrival, currentUser, checkBulkGroupCompletion, dbSync, logAction, notify, sendArrivalReport],
@@ -894,17 +928,18 @@ export default function App() {
       const confirmedIds = [];
       const confirmedOrdersList = [];
       const updates = [];
+      const arrivalItems = [];
       orderIds.forEach((orderId) => {
         const order = updatedOrders.find((o) => o.id === orderId);
-        if (!order || order.status === 'Received') return;
+        if (!order) return;
         const pending = pendingArrival[orderId];
         const val = pending ? pending.qtyReceived : order.qtyReceived || 0;
-        const status = val >= order.quantity ? 'Received' : order.status;
+        const delta = arrivalDelta(order, val);
+        // Mirror confirmArrival: an already-Received order may still be topped up when delta > 0
+        if (order.status === ORDER_STATUS.RECEIVED && delta <= 0) return;
         const upd = {
-          qtyReceived: val,
-          backOrder: val - order.quantity,
-          status,
-          arrivalDate: new Date().toISOString().slice(0, 10),
+          ...computeArrival(order, val),
+          arrivalDate: todayLocal(),
           arrivalCheckedBy: currentUser?.name || 'System',
         };
         const updatedOrder = { ...order, ...upd };
@@ -912,6 +947,9 @@ export default function App() {
         updates.push({ orderId, upd, bulkGroupId: order.bulkGroupId });
         confirmedIds.push(orderId);
         confirmedOrdersList.push(updatedOrder);
+        if (delta > 0 && order.materialNo) {
+          arrivalItems.push({ materialNo: order.materialNo, description: order.description, quantity: delta });
+        }
       });
       if (confirmedIds.length === 0) return;
       setOrders(updatedOrders);
@@ -928,16 +966,22 @@ export default function App() {
       logAction('Batch Confirm Arrival', 'order', confirmedIds.join(','), { count: confirmedIds.length });
       notify('Arrival Confirmed', `${confirmedIds.length} order(s) status updated`, 'success');
       sendArrivalReport(confirmedOrdersList);
-      // Auto-add received quantities to local inventory
-      const arrivalItems = confirmedOrdersList
-        .filter((o) => o.materialNo && (o.qtyReceived || 0) > 0)
-        .map((o) => ({ materialNo: o.materialNo, description: o.description, quantity: o.qtyReceived }));
+      // Auto-add only newly received quantities (deltas) to local inventory
       if (arrivalItems.length > 0) api.arrivalToInventory(arrivalItems);
     },
     [orders, pendingArrival, currentUser, checkBulkGroupCompletion, dbSync, logAction, notify, sendArrivalReport],
   );
 
   const isAdmin = currentUser?.role === 'admin';
+
+  // Pending registrations: DB rows (status 'pending') first, then any offline-only entries not yet in the DB
+  const allPendingUsers = useMemo(
+    () => [
+      ...users.filter((u) => u.status === 'pending'),
+      ...pendingUsers.filter((p) => !users.some((u) => u.username === p.username)),
+    ],
+    [users, pendingUsers],
+  );
 
   // ── Feature Permissions ──
   const FEATURE_PERMISSIONS = [
@@ -1013,7 +1057,9 @@ export default function App() {
     }));
     if (catalogSearch) {
       const q = catalogSearch.toLowerCase();
-      items = items.filter((p) => p.materialNo.toLowerCase().includes(q) || p.description.toLowerCase().includes(q));
+      items = items.filter(
+        (p) => (p.materialNo || '').toLowerCase().includes(q) || (p.description || '').toLowerCase().includes(q),
+      );
     }
     if (catFilter !== 'All') items = items.filter((p) => p.category === catFilter);
     const key =
@@ -1032,18 +1078,34 @@ export default function App() {
     return items;
   }, [partsCatalog, catalogSearch, catFilter, catalogSort]);
 
+  // Users table: pending registrations are approved via the Approve button, not this table,
+  // so the header select-all must span exactly the rows the tbody renders.
+  const visibleUsers = useMemo(
+    () =>
+      users.filter(
+        (u) =>
+          u.status !== 'pending' &&
+          (!userSearch ||
+            [u.name, u.username, u.email, u.role, u.phone || '']
+              .join(' ')
+              .toLowerCase()
+              .includes(userSearch.toLowerCase())),
+      ),
+    [users, userSearch],
+  );
+
   // ── Stats ──
   const stats = useMemo(() => {
     const t = orders.length,
       r = orders.filter((o) => o.status === 'Received').length,
-      b = orders.filter((o) => o.arrivalDate && (o.qtyReceived || 0) < o.quantity).length;
+      // Match the server aggregate (/api/orders/stats counts back_order < 0) so the tile
+      // does not jump when the server numbers land.
+      b = orders.filter((o) => (o.backOrder ?? (Number(o.qtyReceived) || 0) - (Number(o.quantity) || 0)) < 0).length;
     const pa = orders.filter((o) => o.status === 'Pending Approval').length,
       ap = orders.filter((o) => o.status === 'Approved').length;
     const rej = orders.filter((o) => o.status === 'Rejected').length;
     const tc = orders.reduce((s, o) => {
-      const cp = catalogLookup[o.materialNo];
-      const price = cp ? cp.sg || cp.tp || cp.dist || 0 : Number(o.listPrice) || 0;
-      return s + (price > 0 ? price * o.quantity : Number(o.totalCost) || 0);
+      return s + getEffectiveTotal(o, catalogLookup);
     }, 0);
     const tq = orders.reduce((s, o) => s + (Number(o.quantity) || 0), 0),
       tr = orders.reduce((s, o) => s + (Number(o.qtyReceived) || 0), 0);
@@ -1059,6 +1121,24 @@ export default function App() {
       fulfillmentRate: tq > 0 ? ((tr / tq) * 100).toFixed(1) : 0,
     };
   }, [orders, catalogLookup]);
+  // Headline tiles prefer the server aggregates (authoritative, not limited to what the client loaded);
+  // charts keep using the client-side `stats`.
+  const headlineStats = useMemo(() => {
+    const t = serverStats?.totals;
+    if (!t) return stats;
+    const pick = (v, fallback) => (v === null || v === undefined ? fallback : Number(v) || 0);
+    return {
+      ...stats,
+      total: pick(t.total, stats.total),
+      pendingApproval: pick(t.pendingApproval, stats.pendingApproval),
+      approved: pick(t.approved, stats.approved),
+      received: pick(t.received, stats.received),
+      rejected: pick(t.rejected, stats.rejected),
+      backOrder: pick(t.backOrders, stats.backOrder),
+      pending: pick(t.pendingApproval, stats.pendingApproval) + pick(t.approved, stats.approved),
+      totalCost: pick(t.totalValue, stats.totalCost),
+    };
+  }, [stats, serverStats]);
   const singleOrderMonths = useMemo(
     () =>
       [
@@ -1134,9 +1214,7 @@ export default function App() {
           _sortKey: norm,
         };
       monthMap[shortLabel].orders++;
-      const cp = catalogLookup[o.materialNo];
-      const price = cp ? cp.sg || cp.tp || cp.dist || 0 : Number(o.listPrice) || 0;
-      monthMap[shortLabel].cost += price > 0 ? price * (Number(o.quantity) || 0) : Number(o.totalCost) || 0;
+      monthMap[shortLabel].cost += getEffectiveTotal(o, catalogLookup);
       if (o.status === 'Received') monthMap[shortLabel].received++;
       if (o.arrivalDate && (o.qtyReceived || 0) < o.quantity) monthMap[shortLabel].backOrder++;
       if (o.status === 'Pending Approval') monthMap[shortLabel].pending++;
@@ -1190,19 +1268,99 @@ export default function App() {
     if (allOrdersUserFilter !== 'All') combined = combined.filter((o) => o.orderBy === allOrdersUserFilter);
     return combined;
   }, [orders, allOrdersTypeFilter, allOrdersMonth, allOrdersStatus, allOrdersUserFilter]);
+
+  // ── Table views + pagination ──
+  // Every data table pages through the same `usePagination` hook: the array
+  // passed in is exactly the filtered/sorted list the table renders, so the
+  // row count, the page slice and any select-all box all agree.
+  const sortedOrders = useMemo(() => applySortData(filteredOrders, orderSort), [filteredOrders, orderSort]);
+  const filteredBulkGroups = useMemo(
+    () =>
+      applySortData(
+        bulkGroups.filter(
+          (g) =>
+            (bulkMonthFilter === 'All' || g.month === bulkMonthFilter) &&
+            (bulkCreatedByFilter === 'All' || g.createdBy === bulkCreatedByFilter),
+        ),
+        bulkSort,
+      ),
+    [bulkGroups, bulkMonthFilter, bulkCreatedByFilter, bulkSort],
+  );
+  const expandedBulkGroupOrders = useMemo(
+    () => (expandedBulkGroup ? orders.filter((o) => o.bulkGroupId === expandedBulkGroup) : []),
+    [orders, expandedBulkGroup],
+  );
+  const filteredNotifLog = useMemo(
+    () =>
+      notifLog.filter(
+        (n) =>
+          !notifSearch ||
+          [n.id, n.type, n.to, n.subject, n.status].join(' ').toLowerCase().includes(notifSearch.toLowerCase()),
+      ),
+    [notifLog, notifSearch],
+  );
+  const filteredAuditLog = useMemo(
+    () =>
+      auditLog.filter((a) => {
+        if (auditFilter.action !== 'All' && a.action !== auditFilter.action) return false;
+        if (auditFilter.user !== 'All' && a.userName !== auditFilter.user) return false;
+        if (auditFilter.entityType !== 'All' && a.entityType !== auditFilter.entityType) return false;
+        if (auditSearch) {
+          const q = auditSearch.toLowerCase();
+          if (
+            ![a.userName, a.action, a.entityType, a.entityId, a.details ? JSON.stringify(a.details) : '']
+              .join(' ')
+              .toLowerCase()
+              .includes(q)
+          )
+            return false;
+        }
+        return true;
+      }),
+    [auditLog, auditFilter, auditSearch],
+  );
+
+  const catalogPg = usePagination(catalog, {
+    storageKey: 'catalog',
+    initialSize: 100,
+    resetKey: `${catalogSearch}|${catFilter}|${catalogSort.key}|${catalogSort.dir}`,
+  });
+  const ordersPg = usePagination(sortedOrders, {
+    storageKey: 'orders',
+    resetKey: `${search}|${statusFilter}|${singleOrderMonth}|${orderByFilter}|${orderSort.key}|${orderSort.dir}`,
+  });
+  const bulkPg = usePagination(filteredBulkGroups, {
+    storageKey: 'bulk',
+    resetKey: `${bulkMonthFilter}|${bulkCreatedByFilter}|${bulkSort.key}|${bulkSort.dir}`,
+  });
+  const bulkGroupOrdersPg = usePagination(expandedBulkGroupOrders, {
+    storageKey: 'bulkgroup',
+    resetKey: expandedBulkGroup || '',
+  });
+  const notifsPg = usePagination(filteredNotifLog, { storageKey: 'notifs', resetKey: notifSearch });
+  const auditPg = usePagination(filteredAuditLog, {
+    storageKey: 'audit',
+    resetKey: `${auditFilter.action}|${auditFilter.user}|${auditFilter.entityType}|${auditSearch}`,
+  });
+  const usersPg = usePagination(visibleUsers, { storageKey: 'users', resetKey: userSearch });
+  const approvalsPg = usePagination(allPendingUsers, { storageKey: 'approvals' });
+  const wishlistPg = usePagination(wishlist, { storageKey: 'wishlist', resetKey: showWishlistPicker || '' });
+  const priceFinderPg = usePagination(priceFinderResults, { storageKey: 'pricefinder', resetKey: priceFinderInput });
+  const importPreviewPg = usePagination(historyImportData, {
+    storageKey: 'importpreview',
+    resetKey: String(historyImportData.length),
+  });
   const topItems = useMemo(() => {
     const m = {};
     orders.forEach((o) => {
       if (!m[o.description])
         m[o.description] = {
-          name: o.description.length > 30 ? o.description.slice(0, 30) + '...' : o.description,
+          name: (o.description || '').length > 30 ? (o.description || '').slice(0, 30) + '...' : o.description || '',
           qty: 0,
           cost: 0,
         };
-      const cp = catalogLookup[o.materialNo];
-      const price = cp ? cp.sg || cp.tp || cp.dist || 0 : Number(o.listPrice) || 0;
       m[o.description].qty += Number(o.quantity) || 0;
-      m[o.description].cost += price > 0 ? price * (Number(o.quantity) || 0) : Number(o.totalCost) || 0;
+      m[o.description].cost += getEffectiveTotal(o, catalogLookup);
     });
     return Object.values(m)
       .sort((a, b) => b.cost - a.cost)
@@ -1301,10 +1459,8 @@ export default function App() {
           cost: 0,
           orderCount: 0,
         };
-      const cp = catalogLookup[o.materialNo];
-      const price = cp ? cp.sg || cp.tp || cp.dist || 0 : Number(o.listPrice) || 0;
       m[key].qty += Number(o.quantity) || 0;
-      m[key].cost += price > 0 ? price * (Number(o.quantity) || 0) : Number(o.totalCost) || 0;
+      m[key].cost += getEffectiveTotal(o, catalogLookup);
       m[key].orderCount++;
     });
     return Object.values(m)
@@ -1320,8 +1476,7 @@ export default function App() {
       const catName = cat ? CATEGORIES[cat.c]?.short || cat.c || 'Unknown' : 'Unknown';
       const catColor = cat ? CATEGORIES[cat.c]?.color || '#94A3B8' : '#94A3B8';
       if (!catMap[catName]) catMap[catName] = { name: catName, value: 0, count: 0, qty: 0, color: catColor };
-      const price = cp ? cp.sg || cp.tp || cp.dist || 0 : Number(o.listPrice) || 0;
-      catMap[catName].value += price > 0 ? price * (Number(o.quantity) || 0) : Number(o.totalCost) || 0;
+      catMap[catName].value += getEffectiveTotal(o, catalogLookup);
       catMap[catName].qty += Number(o.quantity) || 0;
       catMap[catName].count++;
     });
@@ -1342,14 +1497,7 @@ export default function App() {
     greeting: "Hi! I'm your Miltenyi inventory assistant. I can help with pricing, orders, and stock checks.",
     apiKey: '',
   });
-  const [customLogo, setCustomLogo] = useState(() => {
-    try {
-      const v = localStorage.getItem('mih_customLogo');
-      return v ? JSON.parse(v) : null;
-    } catch {
-      return null;
-    }
-  });
+  const [customLogo, setCustomLogo] = useState(null);
   const [waAutoReply, setWaAutoReply] = useState(false);
   const [editingTemplate, setEditingTemplate] = useState(null);
   const [pendingApprovals, setPendingApprovals] = useState([]);
@@ -1412,26 +1560,15 @@ export default function App() {
     });
   }, [notify]);
 
-  // ── localStorage Persistence ──
-  const LS_KEYS = {
-    orders: 'mih_orders',
-    bulkGroups: 'mih_bulkGroups',
-    emailConfig: 'mih_emailConfig',
-    emailTemplates: 'mih_emailTemplates',
-    priceConfig: 'mih_priceConfig',
-    notifLog: 'mih_notifLog',
-    pendingApprovals: 'mih_pendingApprovals',
-    users: 'mih_users',
-    waNotifyRules: 'mih_waNotifyRules',
-    scheduledNotifs: 'mih_scheduledNotifs',
-    customLogo: 'mih_customLogo',
-    stockChecks: 'mih_stockChecks',
-    waMessageTemplates: 'mih_waMessageTemplates',
-  };
-
   // Shared function to load all app data from DB
   // Uses !== null checks: null = API failed (skip), [] = DB empty (set empty state)
-  const loadAppData = useCallback(async () => {
+  // `forUser` lets the mount/login paths pass the freshly authenticated user
+  // before React has committed it to state, so we don't request admin-only
+  // lists (users, audit log) for people who'd just get a 403.
+  const loadAppData = useCallback(async (forUser) => {
+    const u = forUser || currentUserRef.current;
+    const canUsers = u?.role === 'admin';
+    const canAudit = u?.role === 'admin' || u?.permissions?.auditTrail === true;
     try {
       const [
         apiOrders,
@@ -1445,20 +1582,23 @@ export default function App() {
         apiAudit,
         apiMachines,
         apiWishlist,
+        apiStats,
       ] = await Promise.all([
         api.getOrders(),
         api.getBulkGroups(),
-        api.getUsers(),
+        canUsers ? api.getUsers() : Promise.resolve(null),
         api.getStockChecks(),
         api.getNotifLog(),
         api.getApprovals(),
         api.getConfig(),
         api.getCatalog(),
-        api.getAuditLog(),
+        canAudit ? api.getAuditLog() : Promise.resolve(null),
         api.getMachines({ all: true }),
         api.getWishlist(),
+        api.getOrderStats(),
       ]);
       if (apiOrders !== null) setOrders(numOrders(apiOrders));
+      if (apiStats !== null) setServerStats(apiStats);
       if (apiBulk !== null) setBulkGroups(numBulk(apiBulk));
       if (apiUsers !== null) setUsers(apiUsers);
       if (apiChecks !== null) setStockChecks(numStockChecks(apiChecks));
@@ -1531,62 +1671,46 @@ export default function App() {
 
       // 2. If we have a stored token, validate session and refresh user from DB
       const hasToken = !!api.getToken();
+      let meUser = null;
       if (hasToken) {
-        try {
-          const meResult = await api.getMe();
-          if (meResult && meResult.user) {
-            setCurrentUser(meResult.user); // Fresh data from DB (permissions, role, etc.)
-          } else {
+        const meResult = await api.getMe();
+        if (meResult && meResult.user) {
+          meUser = meResult.user;
+          setCurrentUser(meResult.user); // Fresh data from DB (permissions, role, etc.)
+        } else {
+          // Either the token is invalid/expired or the server is unreachable.
+          // No cached business data is ever loaded — show the login screen.
+          const reachable = await api.checkServer();
+          setCurrentUser(null);
+          setActiveModule(null);
+          if (reachable) {
             // Token invalid/expired — clear session silently (no toast on first load)
-            setCurrentUser(null);
-            setActiveModule(null);
             api.logout();
-            api.resetAuthError(); // suppress any 401 toasts from data-load calls below
-            return; // skip data loading — not authenticated
+          } else {
+            notify('Server unreachable', 'Could not reach the server. Please try again later.', 'error');
           }
-        } catch {
-          // API unreachable — keep localStorage user as fallback
+          api.resetAuthError(); // suppress any 401 toasts from data-load calls below
+          return; // skip data loading — not authenticated
         }
       }
 
-      // 3. Load all app data from DB (requires valid token for protected routes)
-      const loaded = await loadAppData();
-      if (loaded) return;
-
-      // Fallback to localStorage
-      try {
-        const saved = {};
-        Object.entries(LS_KEYS).forEach(([key, lsKey]) => {
-          const v = localStorage.getItem(lsKey);
-          if (v) saved[key] = JSON.parse(v);
-        });
-        if (saved.orders?.length) setOrders(saved.orders);
-        if (saved.bulkGroups?.length) setBulkGroups(saved.bulkGroups);
-        if (saved.emailConfig) setEmailConfig(saved.emailConfig);
-        if (saved.emailTemplates) setEmailTemplates(saved.emailTemplates);
-        if (saved.priceConfig) setPriceConfig(saved.priceConfig);
-        if (saved.notifLog?.length) setNotifLog(saved.notifLog);
-        if (saved.pendingApprovals?.length) setPendingApprovals(saved.pendingApprovals);
-        if (saved.users?.length) setUsers(saved.users);
-        if (saved.waNotifyRules) setWaNotifyRules(saved.waNotifyRules);
-        if (saved.waMessageTemplates) setWaMessageTemplates((prev) => ({ ...prev, ...saved.waMessageTemplates }));
-        if (saved.scheduledNotifs) setScheduledNotifs(saved.scheduledNotifs);
-        if (saved.customLogo) setCustomLogo(saved.customLogo);
-        if (saved.stockChecks?.length) setStockChecks(saved.stockChecks);
-      } catch (e) {
-        console.warn('Failed to load saved data:', e);
-      }
+      // 3. Load all app data from DB (requires valid token for protected routes).
+      //    Without a token, skip the API entirely to avoid a burst of 401s
+      //    triggering a spurious "Session Expired" toast.
+      if (hasToken) await loadAppData(meUser);
 
       // 4. Check WhatsApp connection status on load
-      try {
-        const waRes = await fetch('/api/whatsapp/status', { headers: { Authorization: `Bearer ${api.getToken()}` } });
-        const waData = await waRes.json();
-        if (waData.status === 'connected') {
-          setWaConnected(true);
-          setWaSessionInfo(waData.sessionInfo);
+      if (hasToken) {
+        try {
+          const waRes = await fetch('/api/whatsapp/status', { headers: { Authorization: `Bearer ${api.getToken()}` } });
+          const waData = await waRes.json();
+          if (waData.status === 'connected') {
+            setWaConnected(true);
+            setWaSessionInfo(waData.sessionInfo);
+          }
+        } catch {
+          /* ignore */
         }
-      } catch {
-        /* ignore */
       }
     }
     loadOnMount().finally(() => setIsLoading(false));
@@ -1733,82 +1857,28 @@ export default function App() {
     }
   }, []);
 
+  // Keep the server aggregates in step with local order mutations (debounced)
+  const statsLoadedOnce = useRef(false);
+  useEffect(() => {
+    if (!currentUser) return;
+    if (!statsLoadedOnce.current) {
+      statsLoadedOnce.current = true; // initial load already fetched stats in loadAppData
+      return;
+    }
+    const t = setTimeout(() => {
+      api.getOrderStats().then((st) => {
+        if (st) setServerStats(st);
+      });
+    }, 600);
+    return () => clearTimeout(t);
+  }, [orders, currentUser]);
+
   // Refresh data when tab changes
   useEffect(() => {
     if (currentUser && page) refreshPageData(page);
   }, [page, refreshPageData, currentUser]);
 
-  // Save to localStorage on changes
-  useEffect(() => {
-    try {
-      localStorage.setItem(LS_KEYS.orders, JSON.stringify(orders));
-    } catch (e) {
-      /* ignore */
-    }
-  }, [orders]);
-  useEffect(() => {
-    try {
-      localStorage.setItem(LS_KEYS.bulkGroups, JSON.stringify(bulkGroups));
-    } catch (e) {
-      /* ignore */
-    }
-  }, [bulkGroups]);
-  useEffect(() => {
-    try {
-      localStorage.setItem(LS_KEYS.emailConfig, JSON.stringify(emailConfig));
-    } catch (e) {
-      /* ignore */
-    }
-  }, [emailConfig]);
-  useEffect(() => {
-    try {
-      localStorage.setItem(LS_KEYS.emailTemplates, JSON.stringify(emailTemplates));
-    } catch (e) {
-      /* ignore */
-    }
-  }, [emailTemplates]);
-  useEffect(() => {
-    try {
-      localStorage.setItem(LS_KEYS.priceConfig, JSON.stringify(priceConfig));
-    } catch (e) {
-      /* ignore */
-    }
-  }, [priceConfig]);
-  useEffect(() => {
-    try {
-      localStorage.setItem(LS_KEYS.notifLog, JSON.stringify(notifLog));
-    } catch (e) {
-      /* ignore */
-    }
-  }, [notifLog]);
-  useEffect(() => {
-    try {
-      localStorage.setItem(LS_KEYS.pendingApprovals, JSON.stringify(pendingApprovals));
-    } catch (e) {
-      /* ignore */
-    }
-  }, [pendingApprovals]);
-  useEffect(() => {
-    try {
-      localStorage.setItem(LS_KEYS.users, JSON.stringify(users));
-    } catch (e) {
-      /* ignore */
-    }
-  }, [users]);
-  useEffect(() => {
-    try {
-      localStorage.setItem(LS_KEYS.waNotifyRules, JSON.stringify(waNotifyRules));
-    } catch (e) {
-      /* ignore */
-    }
-  }, [waNotifyRules]);
-  useEffect(() => {
-    try {
-      localStorage.setItem(LS_KEYS.scheduledNotifs, JSON.stringify(scheduledNotifs));
-    } catch (e) {
-      /* ignore */
-    }
-  }, [scheduledNotifs]);
+  // UI preference only — never business data
   useEffect(() => {
     try {
       localStorage.setItem('mih_blurPrices', JSON.stringify(blurPrices));
@@ -1816,27 +1886,6 @@ export default function App() {
       /* ignore */
     }
   }, [blurPrices]);
-  useEffect(() => {
-    try {
-      localStorage.setItem(LS_KEYS.customLogo, JSON.stringify(customLogo));
-    } catch (e) {
-      /* ignore */
-    }
-  }, [customLogo]);
-  useEffect(() => {
-    try {
-      localStorage.setItem(LS_KEYS.stockChecks, JSON.stringify(stockChecks));
-    } catch (e) {
-      /* ignore */
-    }
-  }, [stockChecks]);
-  useEffect(() => {
-    try {
-      localStorage.setItem(LS_KEYS.waMessageTemplates, JSON.stringify(waMessageTemplates));
-    } catch (e) {
-      /* ignore */
-    }
-  }, [waMessageTemplates]);
 
   // ── Open Order in New Tab ──
   const openOrderInNewTab = (order) => {
@@ -1862,7 +1911,7 @@ export default function App() {
   const handleMaterialLookup = (matNo) => {
     const p = catalogLookup[matNo];
     if (p) {
-      setNewOrder((prev) => ({ ...prev, materialNo: matNo, description: p.d, listPrice: p.sg || p.tp || p.dist || 0 }));
+      setNewOrder((prev) => ({ ...prev, materialNo: matNo, description: p.d, listPrice: getCatalogPrice(p) }));
       notify('Part Found', `${p.d}`, 'success');
     }
   };
@@ -1894,7 +1943,7 @@ export default function App() {
       quantity: parseInt(newOrder.quantity),
       listPrice: parseFloat(newOrder.listPrice) || 0,
       totalCost: (parseFloat(newOrder.listPrice) || 0) * parseInt(newOrder.quantity),
-      orderDate: now.toISOString().slice(0, 10),
+      orderDate: toLocalYmd(now),
       arrivalDate: null,
       qtyReceived: 0,
       backOrder: -parseInt(newOrder.quantity),
@@ -1952,10 +2001,10 @@ export default function App() {
   // ── Duplicate Order ──
   const handleDuplicateOrder = async (sourceOrder) => {
     // Strip existing [Copy] or [Copy-N] prefix to get base name
-    const baseName = sourceOrder.description.replace(/^\[Copy(?:-\d+)?\]\s*/, '');
+    const baseName = (sourceOrder.description || '').replace(/^\[Copy(?:-\d+)?\]\s*/, '');
     // Count existing copies of this base name
     const copyCount = orders.filter((o) => {
-      const stripped = o.description.replace(/^\[Copy(?:-\d+)?\]\s*/, '');
+      const stripped = (o.description || '').replace(/^\[Copy(?:-\d+)?\]\s*/, '');
       return stripped === baseName && o.description !== baseName;
     }).length;
     const copyNum = copyCount + 1;
@@ -1963,7 +2012,7 @@ export default function App() {
       ...sourceOrder,
       id: `ORD-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
       description: `[Copy-${copyNum}] ${baseName}`,
-      orderDate: new Date().toISOString().slice(0, 10),
+      orderDate: todayLocal(),
       arrivalDate: null,
       qtyReceived: 0,
       backOrder: -sourceOrder.quantity,
@@ -1987,90 +2036,40 @@ export default function App() {
   const handleApprovalAction = (approvalId, action) => {
     const approval = pendingApprovals.find((a) => a.id === approvalId);
     if (!approval) return;
+    const today = todayLocal();
+    // Single source of truth for the order fields an approve / reject sets
+    const transition = approvalTransition(action);
+    const { status: newStatus, approvalStatus } = transition;
+    const isApprove = approvalStatus === 'approved';
 
     setPendingApprovals((prev) =>
-      prev.map((a) =>
-        a.id === approvalId ? { ...a, status: action, actionDate: new Date().toISOString().slice(0, 10) } : a,
-      ),
+      prev.map((a) => (a.id === approvalId ? { ...a, status: action, actionDate: today } : a)),
     );
-    dbSync(
-      api.updateApproval(approvalId, { status: action, actionDate: new Date().toISOString().slice(0, 10) }),
-      'Approval update not saved',
-    );
+    dbSync(api.updateApproval(approvalId, { status: action, actionDate: today }), 'Approval update not saved');
 
-    if (action === 'approved') {
-      // Update order status to Approved
-      if (approval.orderType === 'single') {
-        setOrders((prev) =>
-          prev.map((o) => (o.id === approval.orderId ? { ...o, status: 'Approved', approvalStatus: 'approved' } : o)),
-        );
-        dbSync(
-          api.updateOrder(approval.orderId, { status: 'Approved', approvalStatus: 'approved' }),
-          'Order approval not saved',
-        );
-      } else if (approval.orderType === 'bulk' && approval.orderIds) {
-        setOrders((prev) =>
-          prev.map((o) =>
-            approval.orderIds.includes(o.id) ? { ...o, status: 'Approved', approvalStatus: 'approved' } : o,
-          ),
-        );
-        setBulkGroups((prev) => prev.map((g) => (g.id === approval.orderId ? { ...g, status: 'Approved' } : g)));
-        dbSync(api.bulkUpdateOrderStatus(approval.orderIds, 'Approved'), 'Bulk order status not saved');
-        dbSync(api.updateBulkGroup(approval.orderId, { status: 'Approved' }), 'Bulk group approval not saved');
-      } else if (approval.orderType === 'batch' && approval.orderIds) {
-        setOrders((prev) =>
-          prev.map((o) =>
-            approval.orderIds.includes(o.id) ? { ...o, status: 'Approved', approvalStatus: 'approved' } : o,
-          ),
-        );
-        dbSync(api.bulkUpdateOrderStatus(approval.orderIds, 'Approved'), 'Batch order approval not saved');
-      }
-      addNotifEntry({
-        id: `N-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-        type: 'email',
-        to: approval.requestedBy,
-        subject: `Order ${approval.orderId} Approved`,
-        date: new Date().toISOString().slice(0, 10),
-        status: 'Approved',
-      });
-      notify('Order Approved', `${approval.orderId} has been approved`, 'success');
-    } else {
-      // Update order status to Rejected
-      if (approval.orderType === 'single') {
-        setOrders((prev) =>
-          prev.map((o) => (o.id === approval.orderId ? { ...o, status: 'Rejected', approvalStatus: 'rejected' } : o)),
-        );
-        dbSync(
-          api.updateOrder(approval.orderId, { status: 'Rejected', approvalStatus: 'rejected' }),
-          'Order rejection not saved',
-        );
-      } else if (approval.orderType === 'bulk' && approval.orderIds) {
-        setOrders((prev) =>
-          prev.map((o) =>
-            approval.orderIds.includes(o.id) ? { ...o, status: 'Rejected', approvalStatus: 'rejected' } : o,
-          ),
-        );
-        setBulkGroups((prev) => prev.map((g) => (g.id === approval.orderId ? { ...g, status: 'Rejected' } : g)));
-        dbSync(api.bulkUpdateOrderStatus(approval.orderIds, 'Rejected'), 'Bulk order rejection not saved');
-        dbSync(api.updateBulkGroup(approval.orderId, { status: 'Rejected' }), 'Bulk group rejection not saved');
-      } else if (approval.orderType === 'batch' && approval.orderIds) {
-        setOrders((prev) =>
-          prev.map((o) =>
-            approval.orderIds.includes(o.id) ? { ...o, status: 'Rejected', approvalStatus: 'rejected' } : o,
-          ),
-        );
-        dbSync(api.bulkUpdateOrderStatus(approval.orderIds, 'Rejected'), 'Batch order rejection not saved');
-      }
-      addNotifEntry({
-        id: `N-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-        type: 'email',
-        to: approval.requestedBy,
-        subject: `Order ${approval.orderId} Rejected`,
-        date: new Date().toISOString().slice(0, 10),
-        status: 'Rejected',
-      });
-      notify('Order Rejected', `${approval.orderId} has been rejected`, 'warning');
+    const label = isApprove ? 'approval' : 'rejection';
+    if (approval.orderType === 'single') {
+      setOrders((prev) => prev.map((o) => (o.id === approval.orderId ? { ...o, ...transition } : o)));
+      dbSync(api.updateOrder(approval.orderId, transition), `Order ${label} not saved`);
+    } else if (approval.orderType === 'bulk' && approval.orderIds) {
+      setOrders((prev) => prev.map((o) => (approval.orderIds.includes(o.id) ? { ...o, ...transition } : o)));
+      setBulkGroups((prev) => prev.map((g) => (g.id === approval.orderId ? { ...g, status: newStatus } : g)));
+      dbSync(api.bulkUpdateOrderStatus(approval.orderIds, newStatus, approvalStatus), `Bulk order ${label} not saved`);
+      dbSync(api.updateBulkGroup(approval.orderId, { status: newStatus }), `Bulk group ${label} not saved`);
+    } else if (approval.orderType === 'batch' && approval.orderIds) {
+      setOrders((prev) => prev.map((o) => (approval.orderIds.includes(o.id) ? { ...o, ...transition } : o)));
+      dbSync(api.bulkUpdateOrderStatus(approval.orderIds, newStatus, approvalStatus), `Batch order ${label} not saved`);
     }
+    addNotifEntry({
+      id: `N-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      type: 'email',
+      to: approval.requestedBy,
+      subject: `Order ${approval.orderId} ${newStatus}`,
+      date: today,
+      status: newStatus,
+    });
+    if (isApprove) notify('Order Approved', `${approval.orderId} has been approved`, 'success');
+    else notify('Order Rejected', `${approval.orderId} has been rejected`, 'warning');
   };
 
   // ── Batch Selection Helpers ──
@@ -2081,6 +2080,13 @@ export default function App() {
       return n;
     });
   const toggleAll = (set, setter, ids) => setter((prev) => (prev.size === ids.length ? new Set() : new Set(ids)));
+  // Label shown beside a pagination control so a selection that reaches rows the
+  // current page does not show stays visible ("12 selected across all pages").
+  const selectionNote = (sel, pageItems) => {
+    if (!sel.size) return null;
+    const onPage = pageItems.filter((r) => sel.has(r.id)).length;
+    return sel.size > onPage ? `${sel.size} selected across all pages` : `${sel.size} selected`;
+  };
 
   // Batch Actions — Orders
   const batchDeleteOrders = () => {
@@ -2170,7 +2176,7 @@ export default function App() {
         cols
           .map((c, ci) => {
             const align = colAlign?.[ci];
-            return `<th style="${align === 'right' ? thRight : align === 'center' ? thCenter : thStyle}">${c}</th>`;
+            return `<th style="${align === 'right' ? thRight : align === 'center' ? thCenter : thStyle}">${escapeHtml(c)}</th>`;
           })
           .join('') +
         '</tr></thead><tbody>';
@@ -2182,7 +2188,7 @@ export default function App() {
             .map((v, ci) => {
               const align = colAlign?.[ci];
               const style = ci === 0 ? tdMono : align === 'right' ? tdRight : align === 'center' ? tdCenter : tdStyle;
-              return `<td style="${style}">${v}</td>`;
+              return `<td style="${style}">${escapeHtml(v)}</td>`;
             })
             .join('') +
           '</tr>';
@@ -2194,7 +2200,7 @@ export default function App() {
             .map((v, ci) => {
               const align = colAlign?.[ci];
               const base = align === 'right' ? tdRight : tdStyle;
-              return `<td style="${base}font-weight:700;color:#1B4332;">${v}</td>`;
+              return `<td style="${base}font-weight:700;color:#1B4332;">${escapeHtml(v)}</td>`;
             })
             .join('') +
           '</tr>';
@@ -2204,7 +2210,7 @@ export default function App() {
     };
     let body = `<div style="max-width:900px;margin:0 auto;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#1A202C;">`;
     body += `<div style="background:linear-gradient(135deg,#1B4332,#2D6A4F);padding:24px 32px;border-radius:10px 10px 0 0;">`;
-    body += `<h1 style="margin:0;font-size:20px;color:#fff;font-weight:700;">${title}</h1></div>`;
+    body += `<h1 style="margin:0;font-size:20px;color:#fff;font-weight:700;">${escapeHtml(title)}</h1></div>`;
     body += `<div style="padding:24px 32px;background:#fff;border:1px solid #E8ECF0;border-top:none;">`;
     // Header summary as compact grid
     body +=
@@ -2212,19 +2218,19 @@ export default function App() {
       headerFields
         .map(
           ([l, v]) =>
-            `<tr><td style="padding:6px 14px;font-size:11px;color:#64748B;font-weight:600;background:#F8FAFB;border:1px solid #D0D5DD;white-space:nowrap;">${l}</td><td style="padding:6px 14px;font-size:12px;font-weight:700;color:#1B4332;border:1px solid #D0D5DD;">${v}</td></tr>`,
+            `<tr><td style="padding:6px 14px;font-size:11px;color:#64748B;font-weight:600;background:#F8FAFB;border:1px solid #D0D5DD;white-space:nowrap;">${escapeHtml(l)}</td><td style="padding:6px 14px;font-size:12px;font-weight:700;color:#1B4332;border:1px solid #D0D5DD;">${escapeHtml(v)}</td></tr>`,
         )
         .join('') +
       '</table>';
     sections.forEach((s) => {
       if (s.heading)
-        body += `<h3 style="font-size:13px;font-weight:700;color:#1B4332;margin:20px 0 6px;padding:6px 10px;background:#D8F3DC;border-left:4px solid #2D6A4F;border-radius:0 4px 4px 0;">${s.heading}</h3>`;
+        body += `<h3 style="font-size:13px;font-weight:700;color:#1B4332;margin:20px 0 6px;padding:6px 10px;background:#D8F3DC;border-left:4px solid #2D6A4F;border-radius:0 4px 4px 0;">${escapeHtml(s.heading)}</h3>`;
       body += renderTable(s.cols, s.rows, s.totals, s.colAlign);
     });
     body += `<div style="margin-top:24px;padding:16px 20px;background:#FEF3C7;border-radius:8px;border-left:4px solid #D97706;">`;
     body += `<p style="margin:0;font-size:13px;color:#92400E;font-weight:600;">Reply <strong>APPROVE</strong> to approve or <strong>REJECT</strong> to decline.</p></div>`;
     body += `</div><div style="padding:14px 32px;background:#F8FAFB;border:1px solid #E8ECF0;border-top:none;border-radius:0 0 10px 10px;text-align:center;">`;
-    body += `<p style="margin:0;font-size:11px;color:#94A3B8;">${footer || 'Miltenyi Inventory Hub SG'}</p></div></div>`;
+    body += `<p style="margin:0;font-size:11px;color:#94A3B8;">${escapeHtml(footer || 'Miltenyi Inventory Hub SG')}</p></div></div>`;
     return body;
   };
 
@@ -2257,7 +2263,7 @@ export default function App() {
       ['Miltenyi Inventory Hub — Approval Request'],
       [],
       ['Batch ID', batchId || 'N/A', '', 'Requested By', requestedBy || ''],
-      ['Month', month || '', '', 'Date', new Date().toISOString().slice(0, 10)],
+      ['Month', month || '', '', 'Date', todayLocal()],
       ['Total Qty', totalQty || 0, '', 'Total Cost (S$)', totalCost || 0],
       [],
       [
@@ -2312,21 +2318,10 @@ export default function App() {
     }
     const selected = orders.filter((o) => selOrders.has(o.id));
     if (!selected.length) return;
-    const now = new Date().toISOString().slice(0, 10);
+    const now = todayLocal();
     const approvalId = `APR-${Date.now()}`;
     const orderIds = selected.map((o) => o.id);
-    // Use catalog prices (same as UI display) for consistency
-    const getEffectiveTotal = (o) => {
-      const cp = catalogLookup[o.materialNo];
-      const price = cp ? cp.sg || cp.tp || cp.dist || 0 : Number(o.listPrice) || 0;
-      return price > 0 ? price * (Number(o.quantity) || 0) : Number(o.totalCost) || 0;
-    };
-    const getEffectivePrice = (o) => {
-      const cp = catalogLookup[o.materialNo];
-      const price = cp ? cp.sg || cp.tp || cp.dist || 0 : Number(o.listPrice) || 0;
-      return price > 0 ? price : Number(o.listPrice) || 0;
-    };
-    const totalCost = selected.reduce((s, o) => s + getEffectiveTotal(o), 0);
+    const totalCost = selected.reduce((s, o) => s + getEffectiveTotal(o, catalogLookup), 0);
     const totalQty = selected.reduce((s, o) => s + (Number(o.quantity) || 0), 0);
 
     // Create batch approval record
@@ -2354,7 +2349,7 @@ export default function App() {
       '----|--------------|------------------|------------------------------------|------------------|------------|-----------|------|-------------|------------';
     const rows = selected.map(
       (o, i) =>
-        `${String(i + 1).padEnd(3)} | ${(o.id || '').padEnd(12)} | ${(o.materialNo || 'N/A').padEnd(16)} | ${(o.description || '').substring(0, 34).padEnd(34)} | ${(o.orderBy || '').substring(0, 16).padEnd(16)} | ${(o.orderDate || '').padEnd(10)} | ${(o.status || 'Pending').padEnd(9)} | ${String(o.quantity || 0).padEnd(4)} | S$${getEffectivePrice(o).toFixed(2).padStart(8)} | S$${getEffectiveTotal(o).toFixed(2)}`,
+        `${String(i + 1).padEnd(3)} | ${(o.id || '').padEnd(12)} | ${(o.materialNo || 'N/A').padEnd(16)} | ${(o.description || '').substring(0, 34).padEnd(34)} | ${(o.orderBy || '').substring(0, 16).padEnd(16)} | ${(o.orderDate || '').padEnd(10)} | ${(o.status || 'Pending').padEnd(9)} | ${String(o.quantity || 0).padEnd(4)} | S$${getEffectiveUnitPrice(o, catalogLookup).toFixed(2).padStart(8)} | S$${getEffectiveTotal(o, catalogLookup).toFixed(2)}`,
     );
     const table = [
       hdr,
@@ -2425,8 +2420,8 @@ export default function App() {
                 o.orderDate || '',
                 o.status || 'Pending',
                 o.quantity || 0,
-                `S$${getEffectivePrice(o).toFixed(2)}`,
-                `S$${getEffectiveTotal(o).toFixed(2)}`,
+                `S$${getEffectiveUnitPrice(o, catalogLookup).toFixed(2)}`,
+                `S$${getEffectiveTotal(o, catalogLookup).toFixed(2)}`,
               ]),
               totals: [
                 '',
@@ -2452,8 +2447,8 @@ export default function App() {
             o.orderDate || '',
             o.status || 'Pending',
             o.quantity || 0,
-            getEffectivePrice(o),
-            getEffectiveTotal(o),
+            getEffectiveUnitPrice(o, catalogLookup),
+            getEffectiveTotal(o, catalogLookup),
           ]),
           {
             batchId: approvalId,
@@ -2504,7 +2499,7 @@ export default function App() {
         selected
           .map(
             (o, i) =>
-              `${String(i + 1).padEnd(2)}│ ${(o.id || '').padEnd(13)}│ ${(o.materialNo || 'N/A').padEnd(16)}│ ${(o.description || '').slice(0, 20).padEnd(20)}│ ${String(o.quantity || 0).padStart(3)} │ S$${getEffectivePrice(o).toFixed(2).padStart(6)}│ S$${getEffectiveTotal(o).toFixed(2)}`,
+              `${String(i + 1).padEnd(2)}│ ${(o.id || '').padEnd(13)}│ ${(o.materialNo || 'N/A').padEnd(16)}│ ${(o.description || '').slice(0, 20).padEnd(20)}│ ${String(o.quantity || 0).padStart(3)} │ S$${getEffectiveUnitPrice(o, catalogLookup).toFixed(2).padStart(6)}│ S$${getEffectiveTotal(o, catalogLookup).toFixed(2)}`,
           )
           .join('\n') +
         '\n' +
@@ -2545,26 +2540,15 @@ export default function App() {
     }
     const selectedGroups = bulkGroups.filter((g) => selBulk.has(g.id));
     if (!selectedGroups.length) return;
-    const now = new Date().toISOString().slice(0, 10);
+    const now = todayLocal();
     const linkedOrders = orders.filter((o) => o.bulkGroupId && selBulk.has(o.bulkGroupId));
-    // Use catalog prices (same as UI display) for consistency
-    const getEffectiveTotal = (o) => {
-      const cp = catalogLookup[o.materialNo];
-      const price = cp ? cp.sg || cp.tp || cp.dist || 0 : Number(o.listPrice) || 0;
-      return price > 0 ? price * (Number(o.quantity) || 0) : Number(o.totalCost) || 0;
-    };
-    const getEffectivePrice = (o) => {
-      const cp = catalogLookup[o.materialNo];
-      const price = cp ? cp.sg || cp.tp || cp.dist || 0 : Number(o.listPrice) || 0;
-      return price > 0 ? price : Number(o.listPrice) || 0;
-    };
-    const totalCost = linkedOrders.reduce((s, o) => s + getEffectiveTotal(o), 0);
+    const totalCost = linkedOrders.reduce((s, o) => s + getEffectiveTotal(o, catalogLookup), 0);
     const totalQty = linkedOrders.reduce((s, o) => s + (Number(o.quantity) || 0), 0);
 
     // Create approval per bulk group
     selectedGroups.forEach((bg) => {
       const bgOrders = orders.filter((o) => o.bulkGroupId === bg.id);
-      const bgCost = bgOrders.reduce((s, o) => s + getEffectiveTotal(o), 0);
+      const bgCost = bgOrders.reduce((s, o) => s + getEffectiveTotal(o, catalogLookup), 0);
       const bgQty = bgOrders.reduce((s, o) => s + (Number(o.quantity) || 0), 0);
       addApproval({
         id: `APR-${Date.now()}-${bg.id}`,
@@ -2593,13 +2577,13 @@ export default function App() {
     let lines = [];
     selectedGroups.forEach((bg) => {
       const bgOrders = orders.filter((o) => o.bulkGroupId === bg.id);
-      const bgCost = bgOrders.reduce((s, o) => s + getEffectiveTotal(o), 0);
+      const bgCost = bgOrders.reduce((s, o) => s + getEffectiveTotal(o, catalogLookup), 0);
       lines.push(`\n=== ${bg.id} | ${bg.month} | By: ${bg.createdBy || 'N/A'} ===`);
       lines.push(bulkHdr);
       lines.push(bulkSep);
       bgOrders.forEach((o, i) => {
         lines.push(
-          `${String(i + 1).padEnd(3)} | ${(o.id || '').padEnd(12)} | ${(o.materialNo || 'N/A').padEnd(16)} | ${(o.description || '').substring(0, 34).padEnd(34)} | ${(o.orderBy || '').substring(0, 16).padEnd(16)} | ${(o.orderDate || '').padEnd(10)} | ${(o.status || 'Pending').padEnd(9)} | ${String(o.quantity || 0).padEnd(4)} | S$${getEffectivePrice(o).toFixed(2).padStart(8)} | S$${getEffectiveTotal(o).toFixed(2)}`,
+          `${String(i + 1).padEnd(3)} | ${(o.id || '').padEnd(12)} | ${(o.materialNo || 'N/A').padEnd(16)} | ${(o.description || '').substring(0, 34).padEnd(34)} | ${(o.orderBy || '').substring(0, 16).padEnd(16)} | ${(o.orderDate || '').padEnd(10)} | ${(o.status || 'Pending').padEnd(9)} | ${String(o.quantity || 0).padEnd(4)} | S$${getEffectiveUnitPrice(o, catalogLookup).toFixed(2).padStart(8)} | S$${getEffectiveTotal(o, catalogLookup).toFixed(2)}`,
         );
       });
       const bgTotalQty = bgOrders.reduce((s, o) => s + (Number(o.quantity) || 0), 0);
@@ -2635,7 +2619,7 @@ export default function App() {
     if (emailConfig.approvalAutoEmail !== false) {
       const bulkSections = selectedGroups.map((bg) => {
         const bgOrders = orders.filter((o) => o.bulkGroupId === bg.id);
-        const bgCost = bgOrders.reduce((s, o) => s + getEffectiveTotal(o), 0);
+        const bgCost = bgOrders.reduce((s, o) => s + getEffectiveTotal(o, catalogLookup), 0);
         const bgTotalQty = bgOrders.reduce((s, o) => s + (Number(o.quantity) || 0), 0);
         return {
           heading: `${bg.id} — ${bg.month} (By: ${bg.createdBy || 'N/A'})`,
@@ -2661,8 +2645,8 @@ export default function App() {
             o.orderDate || '',
             o.status || 'Pending',
             o.quantity || 0,
-            `S$${getEffectivePrice(o).toFixed(2)}`,
-            `S$${getEffectiveTotal(o).toFixed(2)}`,
+            `S$${getEffectiveUnitPrice(o, catalogLookup).toFixed(2)}`,
+            `S$${getEffectiveTotal(o, catalogLookup).toFixed(2)}`,
           ]),
           totals: [
             '',
@@ -2705,8 +2689,8 @@ export default function App() {
             o.orderDate || '',
             o.status || 'Pending',
             o.quantity || 0,
-            getEffectivePrice(o),
-            getEffectiveTotal(o),
+            getEffectiveUnitPrice(o, catalogLookup),
+            getEffectiveTotal(o, catalogLookup),
           ]),
           {
             batchId: selectedGroups.map((g) => g.id).join('_'),
@@ -2753,12 +2737,12 @@ export default function App() {
       const waSections = selectedGroups
         .map((bg) => {
           const bgOrders = orders.filter((o) => o.bulkGroupId === bg.id);
-          const bgCost = bgOrders.reduce((s, o) => s + getEffectiveTotal(o), 0);
+          const bgCost = bgOrders.reduce((s, o) => s + getEffectiveTotal(o, catalogLookup), 0);
           const bgTotalQty = bgOrders.reduce((s, o) => s + (Number(o.quantity) || 0), 0);
           const bgRows = bgOrders
             .map(
               (o, i) =>
-                `${String(i + 1).padEnd(2)}│ ${(o.id || '').padEnd(13)}│ ${(o.materialNo || 'N/A').padEnd(16)}│ ${(o.description || '').slice(0, 20).padEnd(20)}│ ${String(o.quantity || 0).padStart(3)} │ S$${getEffectivePrice(o).toFixed(2).padStart(6)}│ S$${getEffectiveTotal(o).toFixed(2)}`,
+                `${String(i + 1).padEnd(2)}│ ${(o.id || '').padEnd(13)}│ ${(o.materialNo || 'N/A').padEnd(16)}│ ${(o.description || '').slice(0, 20).padEnd(20)}│ ${String(o.quantity || 0).padStart(3)} │ S$${getEffectiveUnitPrice(o, catalogLookup).toFixed(2).padStart(6)}│ S$${getEffectiveTotal(o, catalogLookup).toFixed(2)}`,
             )
             .join('\n');
           return (
@@ -2876,7 +2860,7 @@ export default function App() {
       return;
     }
     setWaSending(true);
-    const now = new Date().toISOString().slice(0, 10);
+    const now = todayLocal();
     let waSent = 0;
     const failures = [];
     for (const u of recipients) {
@@ -2928,7 +2912,8 @@ export default function App() {
       const res = await fetch(`${WA_API_URL}/status`, { headers: { Authorization: `Bearer ${api.getToken()}` } });
       const data = await res.json();
 
-      if (data.status === 'connected' && !waConnected) {
+      if (data.status === 'connected' && !waConnectedRef.current) {
+        waConnectedRef.current = true;
         setWaConnected(true);
         setWaConnecting(false);
         setWaQrVisible(false);
@@ -2937,7 +2922,8 @@ export default function App() {
       } else if (data.status === 'awaiting_scan' && data.qrCode) {
         setWaQrCode(data.qrCode);
         setWaQrVisible(true);
-      } else if (data.status === 'disconnected' && waConnected) {
+      } else if (data.status === 'disconnected' && waConnectedRef.current) {
+        waConnectedRef.current = false;
         setWaConnected(false);
         setWaSessionInfo(null);
       }
@@ -2966,6 +2952,7 @@ export default function App() {
           setWaQrCode(data.qrCode);
         }
         if (data.status === 'connected') {
+          waConnectedRef.current = true;
           setWaConnected(true);
           setWaConnecting(false);
           setWaQrVisible(false);
@@ -2978,11 +2965,17 @@ export default function App() {
 
         // Fast poll: 800ms for first 20s, then 2s after
         let pollCount = 0;
+        let stopped = false;
         const pollInterval = setInterval(
           async () => {
+            if (stopped || waConnectedRef.current) {
+              clearInterval(pollInterval);
+              return;
+            }
             pollCount++;
             const status = await pollWaStatus();
             if (status === 'connected' || status === 'error') {
+              stopped = true;
               clearInterval(pollInterval);
               setWaConnecting(false);
               if (status === 'error') {
@@ -2994,10 +2987,12 @@ export default function App() {
           pollCount < 25 ? 800 : 2000,
         );
 
-        // Stop polling after 2 minutes
+        // Stop polling after 2 minutes — read the ref (not the stale closure) to see if the scan succeeded
         setTimeout(() => {
           clearInterval(pollInterval);
-          if (!waConnected) {
+          if (stopped) return;
+          stopped = true;
+          if (!waConnectedRef.current) {
             setWaConnecting(false);
             setWaQrVisible(false);
             notify('QR Expired', 'QR code timed out. Press Scan QR Code to try again.', 'warning');
@@ -3064,7 +3059,7 @@ export default function App() {
           type: 'whatsapp',
           to: waRecipient,
           subject: waMessageText.slice(0, 50),
-          date: new Date().toISOString().slice(0, 10),
+          date: todayLocal(),
           status: 'Delivered',
         });
         setWaRecipient('');
@@ -3137,23 +3132,6 @@ export default function App() {
     }
   };
 
-  // Auto-notify function for system events
-  const sendAutoNotify = async (template, data, recipients) => {
-    if (!waConnected || !waAutoReply) return;
-
-    for (const phone of recipients) {
-      try {
-        await fetch(`${WA_API_URL}/send`, {
-          method: 'POST',
-          headers: waHeaders(),
-          body: JSON.stringify({ phone, template, data }),
-        });
-      } catch (err) {
-        console.error('Auto-notify error:', err);
-      }
-    }
-  };
-
   // Use editable waMessageTemplates for template previews in Send Message dropdown
   const waTemplates = {
     backOrder: () =>
@@ -3181,7 +3159,7 @@ export default function App() {
         const updated = { ...item, [field]: val };
         if (field === 'materialNo' && val.length >= 10) {
           const p = catalogLookup[val];
-          if (p) return { ...updated, description: p.d, listPrice: p.sg || p.tp || p.dist || 0 };
+          if (p) return { ...updated, description: p.d, listPrice: getCatalogPrice(p) };
         }
         return updated;
       }),
@@ -3206,7 +3184,7 @@ export default function App() {
       quantity: parseInt(item.quantity) || 1,
       listPrice: parseFloat(item.listPrice) || 0,
       totalCost: (parseFloat(item.listPrice) || 0) * (parseInt(item.quantity) || 1),
-      orderDate: new Date().toISOString().slice(0, 10),
+      orderDate: todayLocal(),
       orderBy: bulkOrderBy,
       remark: `Bulk: ${bulkMonth} — ${bulkRemark}`,
       arrivalDate: null,
@@ -3228,7 +3206,7 @@ export default function App() {
       items: newOrders.length,
       totalCost,
       status: 'Pending Approval',
-      date: new Date().toISOString().slice(0, 10),
+      date: todayLocal(),
     };
     // Save to DB first, then update local state
     const bgCreated = await api.createBulkGroup(bg);
@@ -3279,7 +3257,7 @@ export default function App() {
         totalQty: successOrders.reduce((s, o) => s + (o.quantity || 0), 0),
         totalCost: bg.totalCost.toFixed(2),
         orderBy: bulkOrderBy || currentUser?.name || 'System',
-        date: new Date().toISOString().slice(0, 10),
+        date: todayLocal(),
       },
       `Bulk Order: ${successOrders.length} items for ${bulkMonth}`,
     );
@@ -3298,22 +3276,14 @@ export default function App() {
       setCurrentUser(result.user);
       setActiveModule(null); // show module picker on fresh login
       api.resetAuthError(); // allow future session-expired toasts
-      await loadAppData(); // fetch all data from DB after login
+      await loadAppData(result.user); // fetch all data from DB after login
       notify(
         `Welcome back, ${result.user.name}`,
         result.user.role === 'admin' ? 'Admin access granted' : 'User access granted',
         'success',
       );
     } else {
-      // Fallback: local login when backend/DB is unavailable
-      const localUser = users.find((u) => u.username === loginForm.username && u.status === 'active');
-      if (localUser && loginForm.password === 'admin123' && localUser.role === 'admin') {
-        setCurrentUser(localUser);
-        setActiveModule(null); // show module picker on fresh login
-        notify(`Welcome back, ${localUser.name}`, 'Admin access granted (offline mode)', 'success');
-      } else {
-        notify('Login Failed', 'Invalid credentials or account not approved', 'warning');
-      }
+      notify('Login Failed', 'Invalid credentials or account not approved', 'warning');
     }
   };
   const handleRegister = async () => {
@@ -3335,36 +3305,47 @@ export default function App() {
       email: regForm.email,
       phone: regForm.phone,
     });
-    if (result) {
-      setPendingUsers((prev) => [
-        ...prev,
-        {
-          id: result.id || `P${String(prev.length + 2).padStart(3, '0')}`,
-          username: regForm.username,
-          name: regForm.name,
-          email: regForm.email,
-          phone: regForm.phone,
-          requestDate: new Date().toISOString().slice(0, 10),
-        },
-      ]);
-    } else {
-      setPendingUsers((prev) => [
-        ...prev,
-        {
-          id: `P${String(prev.length + 2).padStart(3, '0')}`,
-          username: regForm.username,
-          name: regForm.name,
-          email: regForm.email,
-          phone: regForm.phone,
-          requestDate: new Date().toISOString().slice(0, 10),
-        },
-      ]);
+    if (!result) {
+      notify('Registration Failed', 'Registration failed — username may be taken', 'error');
+      return;
     }
+    // Server created a DB row with status 'pending'; admins see it via users.filter(status === 'pending').
+    // Keep a local copy too so the pending badge shows before the next users refresh.
+    setPendingUsers((prev) => [
+      ...prev,
+      {
+        id: result.id || `P-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        username: regForm.username,
+        name: regForm.name,
+        email: regForm.email,
+        phone: regForm.phone,
+        requestDate: result.created || todayLocal(),
+      },
+    ]);
     setRegForm({ username: '', password: '', name: '', email: '', phone: '' });
     setAuthView('login');
     notify('Registration Submitted', 'Your account is pending admin approval', 'info');
   };
   const handleApproveUser = async (pending) => {
+    const isDbRow = typeof pending.id === 'string' && pending.id.startsWith('U-');
+    if (isDbRow) {
+      // Registration already exists in DB with status 'pending' — just activate it.
+      // The user keeps the password they registered with.
+      const updated = await api.updateUser(pending.id, {
+        status: 'active',
+        role: 'user',
+        permissions: { ...DEFAULT_USER_PERMS },
+      });
+      if (!updated) {
+        notify('Approval Failed', 'Could not activate user — please try again', 'error');
+        return;
+      }
+      setUsers((prev) => prev.map((u) => (u.id === pending.id ? { ...u, ...updated } : u)));
+      setPendingUsers((prev) => prev.filter((u) => u.id !== pending.id && u.username !== pending.username));
+      notify('User Approved', `${pending.name} can now login`, 'success');
+      return;
+    }
+    // Offline fallback: registration was never persisted — create the account now
     const newUser = {
       id: `U-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
       username: pending.username,
@@ -3380,12 +3361,21 @@ export default function App() {
     if (created) {
       setUsers((prev) => [...prev, created]);
     } else {
-      setUsers((prev) => [...prev, { ...newUser, created: new Date().toISOString().slice(0, 10) }]);
+      const { password: _pw, ...safeUser } = newUser;
+      setUsers((prev) => [...prev, { ...safeUser, created: todayLocal() }]);
     }
     setPendingUsers((prev) => prev.filter((u) => u.id !== pending.id));
     notify('User Approved', `${pending.name} can now login (temp password: temp123)`, 'success');
   };
-  const handleRejectUser = (id) => {
+  const handleRejectUser = async (id) => {
+    if (typeof id === 'string' && id.startsWith('U-')) {
+      const ok = await api.deleteUser(id);
+      if (!ok) {
+        notify('Reject Failed', 'Could not remove registration — please try again', 'error');
+        return;
+      }
+      setUsers((prev) => prev.filter((u) => u.id !== id));
+    }
     setPendingUsers((prev) => prev.filter((u) => u.id !== id));
     notify('Registration Rejected', 'User has been denied access', 'warning');
   };
@@ -3409,7 +3399,8 @@ export default function App() {
     if (created) {
       setUsers((prev) => [...prev, created]);
     } else {
-      setUsers((prev) => [...prev, { ...newUser, created: new Date().toISOString().slice(0, 10) }]);
+      const { password: _pw, ...safeUser } = newUser;
+      setUsers((prev) => [...prev, { ...safeUser, created: todayLocal() }]);
     }
     notify('User Created', `${form.name} (${form.role}) added`, 'success');
   };
@@ -3439,11 +3430,14 @@ export default function App() {
     { id: 'notifications', label: 'Notifications', icon: Bell, perm: 'notifications', module: 'shared' },
     { id: 'audit', label: 'Audit Trail', icon: Shield, perm: 'auditTrail', module: 'shared' },
     { id: 'aibot', label: 'AI Bot Admin', icon: Bot, perm: 'aiBot', module: 'shared' },
-    { id: 'users', label: 'User Management', icon: Users, perm: 'users', module: 'shared' },
+    // /api/users is mounted behind requireAdmin server-side; keep the page admin-only so a
+    // non-admin granted the 'users' permission does not land on a page that only 403s.
+    { id: 'users', label: 'User Management', icon: Users, perm: 'users', module: 'shared', adminOnly: true },
     { id: 'settings', label: 'Settings', icon: Settings, perm: 'settings', module: 'shared' },
   ];
   const navItems = allNavItems
     .filter((n) => n.module === activeModule || n.module === 'shared')
+    .filter((n) => !n.adminOnly || isAdmin)
     .map((n) => {
       if (!n.children) return hasPermission(n.perm) ? n : null;
       const visibleChildren = n.children.filter((c) => hasPermission(c.perm));
@@ -3520,12 +3514,12 @@ export default function App() {
           const p = catalogLookupLocal[matNo];
           return {
             type: 'order_confirm',
-            text: `🛒 **Ready to order:**\n\n• Part: ${p.d}\n• Material: ${matNo}\n• Quantity: ${qty}\n• Unit Price: ${fmt(p.sg || p.tp || p.dist || 0)}\n• Total: ${fmt((p.sg || p.tp || p.dist || 0) * parseInt(qty))}\n\nType "confirm" to place this order or "cancel" to abort.`,
+            text: `🛒 **Ready to order:**\n\n• Part: ${p.d}\n• Material: ${matNo}\n• Quantity: ${qty}\n• Unit Price: ${fmt(getCatalogPrice(p))}\n• Total: ${fmt(getCatalogPrice(p) * parseInt(qty))}\n\nType "confirm" to place this order or "cancel" to abort.`,
             pendingOrder: {
               materialNo: matNo,
               description: p.d,
               quantity: parseInt(qty),
-              listPrice: p.sg || p.tp || p.dist || 0,
+              listPrice: getCatalogPrice(p),
             },
           };
         }
@@ -3547,14 +3541,15 @@ export default function App() {
           id: `ORD-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
           ...po,
           totalCost: po.listPrice * po.quantity,
-          orderDate: aiNow.toISOString().slice(0, 10),
+          orderDate: toLocalYmd(aiNow),
           arrivalDate: null,
           qtyReceived: 0,
           backOrder: -po.quantity,
           engineer: '',
           emailFull: '',
           emailBack: '',
-          status: 'Pending',
+          status: 'Pending Approval',
+          approvalStatus: 'pending',
           orderBy: currentUser?.name || '',
           month: aiMonth,
           year: String(aiNow.getFullYear()),
@@ -3644,7 +3639,7 @@ export default function App() {
       name: f.name,
       size: (f.size / 1024).toFixed(1) + ' KB',
       type: f.name.split('.').pop().toUpperCase(),
-      uploadedAt: new Date().toISOString().slice(0, 10),
+      uploadedAt: todayLocal(),
       uploadedBy: currentUser.name,
     }));
     setAiKnowledgeBase((prev) => [...prev, ...newFiles]);
@@ -3739,7 +3734,7 @@ export default function App() {
   };
 
   // Parse rows from a 2D array (headers + data) into order objects
-  const parseRowsToOrders = (headers, rows, sheetMonth) => {
+  const parseRowsToOrders = (headers, rows, sheetMonth, bulkGroupId = null) => {
     const colMap = {};
     headers.forEach((h, i) => {
       const key = String(h || '')
@@ -3750,14 +3745,13 @@ export default function App() {
     });
 
     const existingIds = new Set(orders.map((o) => o.id));
-    let nextId = Math.max(0, ...orders.map((o) => parseInt(o.id.replace('ORD-', '')) || 0)) + 1;
     const parsed = [];
-
     for (const row of rows) {
       const getValue = (field) => {
         const idx = colMap[field];
         if (idx === undefined) return '';
         const val = row[idx];
+        if (val instanceof Date) return toLocalYmd(val);
         return val != null
           ? String(val)
               .trim()
@@ -3767,7 +3761,7 @@ export default function App() {
 
       let orderId = getValue('id');
       if (!orderId || existingIds.has(orderId)) {
-        orderId = 'ORD-' + String(nextId++).padStart(4, '0');
+        orderId = `ORD-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
       }
       existingIds.add(orderId);
 
@@ -3781,7 +3775,7 @@ export default function App() {
         quantity: qty,
         listPrice: parseFloat(getValue('listPrice')) || 0,
         totalCost: parseFloat(getValue('totalCost')) || (parseFloat(getValue('listPrice')) || 0) * qty,
-        orderDate: getValue('orderDate') || new Date().toISOString().slice(0, 10),
+        orderDate: getValue('orderDate') || todayLocal(),
         orderBy: getValue('orderBy') || currentUser?.name || '',
         remark: getValue('remark') || 'Imported from file',
         arrivalDate: getValue('arrivalDate') || '',
@@ -3791,8 +3785,9 @@ export default function App() {
         emailFull: '',
         emailBack: '',
         status: getValue('status') || (received >= qty && qty > 0 ? 'Received' : 'Pending Approval'),
-        month: getValue('month') || sheetMonth || 'Import ' + new Date().toISOString().slice(0, 7),
+        month: getValue('month') || sheetMonth || 'Import ' + todayLocal().slice(0, 7),
         year: getValue('year') || new Date().getFullYear().toString(),
+        ...(bulkGroupId ? { bulkGroupId } : {}),
       };
 
       if (order.description !== 'Imported Item' || order.materialNo) {
@@ -3827,20 +3822,21 @@ export default function App() {
 
           // Use sheet name as month batch if it looks like a month
           const sheetMonth = sheetName.trim();
-          const sheetOrders = parseRowsToOrders(headers, rows, sheetMonth);
+          const bgId = `BG-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+          const sheetOrders = parseRowsToOrders(headers, rows, sheetMonth, bgId);
 
           if (sheetOrders.length > 0) {
             allOrders.push(...sheetOrders);
-            // Auto-create a bulk group from each sheet
+            // Auto-create a bulk group from each sheet (orders are linked via bulkGroupId)
             const totalCost = sheetOrders.reduce((s, o) => s + o.totalCost, 0);
             newBulkGroups.push({
-              id: 'BG-' + String(bulkGroups.length + newBulkGroups.length + 1).padStart(3, '0'),
+              id: bgId,
               month: sheetMonth,
               createdBy: currentUser.name,
               items: sheetOrders.length,
               totalCost,
               status: 'Pending Approval',
-              date: new Date().toISOString().slice(0, 10),
+              date: todayLocal(),
             });
           }
         });
@@ -5174,7 +5170,7 @@ export default function App() {
             onClick={() => {
               setCurrentUser(null);
               setActiveModule(null);
-              localStorage.removeItem('mih_token');
+              api.logout(); // clears in-memory token AND localStorage
               localStorage.removeItem('mih_currentUser');
             }}
             style={{
@@ -5366,7 +5362,6 @@ export default function App() {
                         setOrdersMenuOpen((prev) => !prev);
                       } else {
                         setPage('allorders');
-                        setCatalogPage(0);
                       }
                     }}
                     title={item.label}
@@ -5387,7 +5382,6 @@ export default function App() {
                         className={`ni ${page === child.id ? 'a' : ''}`}
                         onClick={() => {
                           setPage(child.id);
-                          setCatalogPage(0);
                           if (window.innerWidth <= 768) setSidebarOpen(false);
                         }}
                         title={child.label}
@@ -5406,7 +5400,6 @@ export default function App() {
                 className={`ni ${page === item.id ? 'a' : ''}`}
                 onClick={() => {
                   setPage(item.id);
-                  setCatalogPage(0);
                   if (window.innerWidth <= 768) setSidebarOpen(false);
                 }}
                 title={item.label}
@@ -5439,7 +5432,7 @@ export default function App() {
                     }}
                   />
                 )}
-                {item.id === 'users' && sidebarOpen && pendingUsers.length > 0 && (
+                {item.id === 'users' && sidebarOpen && allPendingUsers.length > 0 && (
                   <span
                     style={{
                       marginLeft: 'auto',
@@ -5451,7 +5444,7 @@ export default function App() {
                       fontWeight: 700,
                     }}
                   >
-                    {pendingUsers.length}
+                    {allPendingUsers.length}
                   </span>
                 )}
               </div>
@@ -5622,8 +5615,18 @@ export default function App() {
                     i: Database,
                     bg: 'linear-gradient(135deg,#4338CA,#6366F1)',
                   },
-                  { l: 'Total Orders', v: stats.total, i: Package, bg: 'linear-gradient(135deg,#006837,#0B9A4E)' },
-                  { l: 'Spend', v: fmt(stats.totalCost), i: DollarSign, bg: 'linear-gradient(135deg,#1E40AF,#3B82F6)' },
+                  {
+                    l: 'Total Orders',
+                    v: headlineStats.total,
+                    i: Package,
+                    bg: 'linear-gradient(135deg,#006837,#0B9A4E)',
+                  },
+                  {
+                    l: 'Spend',
+                    v: fmt(headlineStats.totalCost),
+                    i: DollarSign,
+                    bg: 'linear-gradient(135deg,#1E40AF,#3B82F6)',
+                  },
                   {
                     l: 'Fulfillment',
                     v: `${stats.fulfillmentRate}%`,
@@ -5632,7 +5635,7 @@ export default function App() {
                   },
                   {
                     l: 'Back Orders',
-                    v: stats.backOrder,
+                    v: headlineStats.backOrder,
                     i: AlertTriangle,
                     bg: 'linear-gradient(135deg,#B91C1C,#EF4444)',
                   },
@@ -5880,21 +5883,11 @@ export default function App() {
                   <input
                     placeholder="Search material no. or description..."
                     value={catalogSearch}
-                    onChange={(e) => {
-                      setCatalogSearch(e.target.value);
-                      setCatalogPage(0);
-                    }}
+                    onChange={(e) => setCatalogSearch(e.target.value)}
                     style={{ paddingLeft: 32, width: '100%', height: 36 }}
                   />
                 </div>
-                <select
-                  value={catFilter}
-                  onChange={(e) => {
-                    setCatFilter(e.target.value);
-                    setCatalogPage(0);
-                  }}
-                  style={{ height: 36 }}
-                >
+                <select value={catFilter} onChange={(e) => setCatFilter(e.target.value)} style={{ height: 36 }}>
                   <option value="All">All Categories</option>
                   {Object.entries(CATEGORIES).map(([k, v]) => (
                     <option key={k} value={k}>
@@ -5913,31 +5906,6 @@ export default function App() {
                 >
                   <Search size={14} /> Price Finder
                 </button>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginLeft: 'auto' }}>
-                  <span style={{ fontSize: 12, color: '#94A3B8' }}>{catalog.length} parts</span>
-                  <select
-                    value={catalogPageSize}
-                    onChange={(e) => {
-                      setCatalogPageSize(Number(e.target.value));
-                      setCatalogPage(0);
-                    }}
-                    style={{
-                      padding: '4px 8px',
-                      borderRadius: 6,
-                      border: '1px solid #E2E8F0',
-                      fontSize: 11,
-                      fontFamily: 'inherit',
-                      cursor: 'pointer',
-                      color: '#1A202C',
-                    }}
-                  >
-                    {[20, 50, 100, 200].map((n) => (
-                      <option key={n} value={n}>
-                        {n} / page
-                      </option>
-                    ))}
-                  </select>
-                </div>
               </div>
               <div className="card" style={{ overflow: 'hidden' }}>
                 <div className="table-wrap" style={{ overflowX: 'auto' }}>
@@ -5977,7 +5945,7 @@ export default function App() {
                       </tr>
                     </thead>
                     <tbody>
-                      {catalog.slice(catalogPage * catalogPageSize, (catalogPage + 1) * catalogPageSize).map((p, i) => {
+                      {catalogPg.pageItems.map((p, i) => {
                         const margin =
                           p.singaporePrice > 0
                             ? (((p.singaporePrice - p.distributorPrice) / p.singaporePrice) * 100).toFixed(1)
@@ -6082,41 +6050,11 @@ export default function App() {
                     </tbody>
                   </table>
                 </div>
-                <div
-                  style={{
-                    padding: '12px 16px',
-                    borderTop: '1px solid #F0F2F5',
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    background: '#FCFCFD',
-                  }}
-                >
-                  <span style={{ fontSize: 12, color: '#94A3B8' }}>
-                    Showing {Math.min(catalogPage * catalogPageSize + 1, catalog.length)}–
-                    {Math.min((catalogPage + 1) * catalogPageSize, catalog.length)} of {catalog.length}
-                  </span>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <button
-                      className="bs"
-                      style={{ padding: '6px 10px', fontSize: 12 }}
-                      disabled={catalogPage === 0}
-                      onClick={() => setCatalogPage((p) => p - 1)}
-                    >
-                      <ChevronLeft size={14} />
-                    </button>
-                    <span style={{ fontSize: 12, color: '#64748B' }}>
-                      Page {catalogPage + 1}/{Math.max(1, Math.ceil(catalog.length / catalogPageSize))}
-                    </span>
-                    <button
-                      className="bs"
-                      style={{ padding: '6px 10px', fontSize: 12 }}
-                      disabled={(catalogPage + 1) * catalogPageSize >= catalog.length}
-                      onClick={() => setCatalogPage((p) => p + 1)}
-                    >
-                      <ChevronRight size={14} />
-                    </button>
-                  </div>
-                </div>
+                <Pagination
+                  {...catalogPg}
+                  unit="parts"
+                  style={{ padding: '10px 16px', borderTop: '1px solid #F0F2F5', background: '#FCFCFD' }}
+                />
               </div>
             </div>
           )}
@@ -6157,10 +6095,6 @@ export default function App() {
                 expandedAllBulkGroup,
                 setExpandedAllBulkGroup,
                 openOrderInNewTab,
-                allOrdersPage,
-                setAllOrdersPage,
-                allOrdersPageSize,
-                setAllOrdersPageSize,
               }}
             />
           )}
@@ -6181,10 +6115,7 @@ export default function App() {
                   {['All', 'Pending Approval', 'Approved', 'Received', 'Rejected'].map((s) => (
                     <button
                       key={s}
-                      onClick={() => {
-                        setStatusFilter(s);
-                        setSingleOrderPage(0);
-                      }}
+                      onClick={() => setStatusFilter(s)}
                       style={{
                         padding: '6px 14px',
                         borderRadius: 20,
@@ -6207,10 +6138,7 @@ export default function App() {
                   <div style={{ width: 1, height: 24, background: '#E2E8F0' }} />
                   <select
                     value={singleOrderMonth}
-                    onChange={(e) => {
-                      setSingleOrderMonth(e.target.value);
-                      setSingleOrderPage(0);
-                    }}
+                    onChange={(e) => setSingleOrderMonth(e.target.value)}
                     style={{
                       padding: '6px 10px',
                       borderRadius: 8,
@@ -6230,10 +6158,7 @@ export default function App() {
                   </select>
                   <select
                     value={orderByFilter}
-                    onChange={(e) => {
-                      setOrderByFilter(e.target.value);
-                      setSingleOrderPage(0);
-                    }}
+                    onChange={(e) => setOrderByFilter(e.target.value)}
                     style={{
                       padding: '6px 10px',
                       borderRadius: 8,
@@ -6260,28 +6185,6 @@ export default function App() {
                   </select>
                 </div>
                 <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                  <select
-                    value={singleOrderPageSize}
-                    onChange={(e) => {
-                      setSingleOrderPageSize(Number(e.target.value));
-                      setSingleOrderPage(0);
-                    }}
-                    style={{
-                      padding: '4px 8px',
-                      borderRadius: 6,
-                      border: '1px solid #E2E8F0',
-                      fontSize: 11,
-                      fontFamily: 'inherit',
-                      cursor: 'pointer',
-                      color: '#1A202C',
-                    }}
-                  >
-                    {[20, 50, 100, 200].map((n) => (
-                      <option key={n} value={n}>
-                        {n} / page
-                      </option>
-                    ))}
-                  </select>
                   <ExportDropdown
                     data={filteredOrders}
                     columns={[
@@ -6331,25 +6234,16 @@ export default function App() {
                       <tr style={{ background: '#F8FAFB' }}>
                         {hasPermission('deleteOrders') && (
                           <th className="th" style={{ width: 36 }}>
-                            {(() => {
-                              const sorted = applySortData(filteredOrders, orderSort);
-                              const pageItems = sorted.slice(
-                                singleOrderPage * singleOrderPageSize,
-                                (singleOrderPage + 1) * singleOrderPageSize,
-                              );
-                              return (
-                                <SelBox
-                                  checked={pageItems.length > 0 && pageItems.every((o) => selOrders.has(o.id))}
-                                  onChange={() =>
-                                    toggleAll(
-                                      selOrders,
-                                      setSelOrders,
-                                      pageItems.map((o) => o.id),
-                                    )
-                                  }
-                                />
-                              );
-                            })()}
+                            <SelBox
+                              checked={sortedOrders.length > 0 && sortedOrders.every((o) => selOrders.has(o.id))}
+                              onChange={() =>
+                                toggleAll(
+                                  selOrders,
+                                  setSelOrders,
+                                  sortedOrders.map((o) => o.id),
+                                )
+                              }
+                            />
                           </th>
                         )}
                         {[
@@ -6375,106 +6269,80 @@ export default function App() {
                       </tr>
                     </thead>
                     <tbody>
-                      {applySortData(filteredOrders, orderSort)
-                        .slice(singleOrderPage * singleOrderPageSize, (singleOrderPage + 1) * singleOrderPageSize)
-                        .map((o, i) => (
-                          <tr
-                            key={o.id}
-                            className="tr"
+                      {ordersPg.pageItems.map((o, i) => (
+                        <tr
+                          key={o.id}
+                          className="tr"
+                          style={{
+                            borderBottom: '1px solid #F7FAFC',
+                            background: selOrders.has(o.id) ? '#E6F4ED' : i % 2 === 0 ? '#fff' : '#FCFCFD',
+                            cursor: 'pointer',
+                          }}
+                          onClick={() => openOrderInNewTab(o)}
+                        >
+                          {hasPermission('deleteOrders') && (
+                            <td className="td" onClick={(e) => e.stopPropagation()}>
+                              <SelBox
+                                checked={selOrders.has(o.id)}
+                                onChange={() => toggleSel(selOrders, setSelOrders, o.id)}
+                              />
+                            </td>
+                          )}
+                          <td className="td mono" style={{ fontSize: 11, color: '#0B7A3E', fontWeight: 500 }}>
+                            {o.materialNo || '—'}
+                          </td>
+                          <td
+                            className="td"
                             style={{
-                              borderBottom: '1px solid #F7FAFC',
-                              background: selOrders.has(o.id) ? '#E6F4ED' : i % 2 === 0 ? '#fff' : '#FCFCFD',
-                              cursor: 'pointer',
+                              maxWidth: 200,
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                              whiteSpace: 'nowrap',
                             }}
-                            onClick={() => openOrderInNewTab(o)}
                           >
-                            {hasPermission('deleteOrders') && (
-                              <td className="td" onClick={(e) => e.stopPropagation()}>
-                                <SelBox
-                                  checked={selOrders.has(o.id)}
-                                  onChange={() => toggleSel(selOrders, setSelOrders, o.id)}
-                                />
-                              </td>
-                            )}
-                            <td className="td mono" style={{ fontSize: 11, color: '#0B7A3E', fontWeight: 500 }}>
-                              {o.materialNo || '—'}
-                            </td>
-                            <td
-                              className="td"
-                              style={{
-                                maxWidth: 200,
-                                overflow: 'hidden',
-                                textOverflow: 'ellipsis',
-                                whiteSpace: 'nowrap',
-                              }}
-                            >
-                              {o.description}
-                            </td>
-                            <td className="td" style={{ fontWeight: 600, textAlign: 'center' }}>
-                              {o.quantity}
-                            </td>
-                            <td className="td mono" style={{ fontSize: 11 }}>
-                              <span className="pv">
-                                {(() => {
-                                  const cp = catalogLookup[o.materialNo];
-                                  const price = cp ? cp.sg || cp.tp || cp.dist || 0 : o.listPrice;
-                                  return price > 0 ? fmt(price) : '—';
-                                })()}
-                              </span>
-                            </td>
-                            <td className="td mono" style={{ fontSize: 11, fontWeight: 600 }}>
-                              <span className="pv">
-                                {(() => {
-                                  const cp = catalogLookup[o.materialNo];
-                                  const price = cp ? cp.sg || cp.tp || cp.dist || 0 : o.listPrice;
-                                  const total = price > 0 ? price * o.quantity : o.totalCost;
-                                  return total > 0 ? fmt(total) : '—';
-                                })()}
-                              </span>
-                            </td>
-                            <td className="td" style={{ color: '#94A3B8', fontSize: 11 }}>
-                              {fmtDate(o.orderDate)}
-                            </td>
-                            <td className="td" style={{ fontSize: 11 }}>
-                              {o.orderBy || '—'}
-                            </td>
-                            <td className="td">
-                              <Badge status={o.status} />
-                            </td>
-                            <td className="td">
-                              <ArrivalBadge order={o} />
-                            </td>
-                            <td className="td">
-                              <div style={{ display: 'flex', gap: 4 }}>
-                                {(hasPermission('editAllOrders') || o.orderBy === currentUser?.name) && (
-                                  <button
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      setEditingOrder({ ...o });
-                                    }}
-                                    style={{
-                                      background: '#2563EB',
-                                      color: '#fff',
-                                      border: 'none',
-                                      borderRadius: 6,
-                                      padding: '4px 8px',
-                                      fontSize: 10,
-                                      cursor: 'pointer',
-                                      display: 'flex',
-                                      alignItems: 'center',
-                                      gap: 3,
-                                    }}
-                                  >
-                                    <Edit3 size={11} /> Edit
-                                  </button>
-                                )}
+                            {o.description}
+                          </td>
+                          <td className="td" style={{ fontWeight: 600, textAlign: 'center' }}>
+                            {o.quantity}
+                          </td>
+                          <td className="td mono" style={{ fontSize: 11 }}>
+                            <span className="pv">
+                              {(() => {
+                                const price = getEffectiveUnitPrice(o, catalogLookup);
+                                return price > 0 ? fmt(price) : '—';
+                              })()}
+                            </span>
+                          </td>
+                          <td className="td mono" style={{ fontSize: 11, fontWeight: 600 }}>
+                            <span className="pv">
+                              {(() => {
+                                const total = getEffectiveTotal(o, catalogLookup);
+                                return total > 0 ? fmt(total) : '—';
+                              })()}
+                            </span>
+                          </td>
+                          <td className="td" style={{ color: '#94A3B8', fontSize: 11 }}>
+                            {fmtDate(o.orderDate)}
+                          </td>
+                          <td className="td" style={{ fontSize: 11 }}>
+                            {o.orderBy || '—'}
+                          </td>
+                          <td className="td">
+                            <Badge status={o.status} />
+                          </td>
+                          <td className="td">
+                            <ArrivalBadge order={o} />
+                          </td>
+                          <td className="td">
+                            <div style={{ display: 'flex', gap: 4 }}>
+                              {(hasPermission('editAllOrders') || o.orderBy === currentUser?.name) && (
                                 <button
                                   onClick={(e) => {
                                     e.stopPropagation();
-                                    handleDuplicateOrder(o);
+                                    setEditingOrder({ ...o });
                                   }}
                                   style={{
-                                    background: '#7C3AED',
+                                    background: '#2563EB',
                                     color: '#fff',
                                     border: 'none',
                                     borderRadius: 6,
@@ -6486,83 +6354,84 @@ export default function App() {
                                     gap: 3,
                                   }}
                                 >
-                                  <Copy size={11} />
+                                  <Edit3 size={11} /> Edit
                                 </button>
-                                {hasPermission('deleteOrders') && (
-                                  <button
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      if (window.confirm(`Delete order ${o.id}?`)) {
-                                        const remaining = orders.filter((x) => x.id !== o.id);
-                                        setOrders(remaining);
-                                        dbSync(api.deleteOrder(o.id), 'Order delete not saved');
-                                        if (o.bulkGroupId) recalcBulkGroupForMonths([o.bulkGroupId], remaining);
-                                        notify('Deleted', o.id, 'success');
-                                      }
-                                    }}
-                                    style={{
-                                      background: '#DC2626',
-                                      color: '#fff',
-                                      border: 'none',
-                                      borderRadius: 6,
-                                      padding: '4px 8px',
-                                      fontSize: 10,
-                                      cursor: 'pointer',
-                                      display: 'flex',
-                                      alignItems: 'center',
-                                      gap: 3,
-                                    }}
-                                  >
-                                    <Trash2 size={11} />
-                                  </button>
-                                )}
-                              </div>
-                            </td>
-                          </tr>
-                        ))}
+                              )}
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleDuplicateOrder(o);
+                                }}
+                                style={{
+                                  background: '#7C3AED',
+                                  color: '#fff',
+                                  border: 'none',
+                                  borderRadius: 6,
+                                  padding: '4px 8px',
+                                  fontSize: 10,
+                                  cursor: 'pointer',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: 3,
+                                }}
+                              >
+                                <Copy size={11} />
+                              </button>
+                              {hasPermission('deleteOrders') && (
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    if (window.confirm(`Delete order ${o.id}?`)) {
+                                      const remaining = orders.filter((x) => x.id !== o.id);
+                                      setOrders(remaining);
+                                      dbSync(api.deleteOrder(o.id), 'Order delete not saved');
+                                      if (o.bulkGroupId) recalcBulkGroupForMonths([o.bulkGroupId], remaining);
+                                      notify('Deleted', o.id, 'success');
+                                    }
+                                  }}
+                                  style={{
+                                    background: '#DC2626',
+                                    color: '#fff',
+                                    border: 'none',
+                                    borderRadius: 6,
+                                    padding: '4px 8px',
+                                    fontSize: 10,
+                                    cursor: 'pointer',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: 3,
+                                  }}
+                                >
+                                  <Trash2 size={11} />
+                                </button>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
                     </tbody>
                   </table>
                 </div>
                 <div
                   style={{
-                    padding: '12px 16px',
+                    padding: '4px 16px 8px',
                     borderTop: '1px solid #F0F2F5',
                     display: 'flex',
-                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    gap: 12,
+                    flexWrap: 'wrap',
                     background: '#FCFCFD',
                   }}
                 >
-                  <span style={{ fontSize: 12, color: '#94A3B8' }}>
-                    Showing {Math.min(singleOrderPage * singleOrderPageSize + 1, filteredOrders.length)}–
-                    {Math.min((singleOrderPage + 1) * singleOrderPageSize, filteredOrders.length)} of{' '}
-                    {filteredOrders.length}
-                    {selOrders.size > 0 && ` • ${selOrders.size} selected`}
+                  <Pagination {...ordersPg} unit="orders" style={{ flex: 1, minWidth: 260 }} />
+                  {selectionNote(selOrders, ordersPg.pageItems) && (
+                    <span style={{ fontSize: 11.5, color: '#0B7A3E', fontWeight: 600 }}>
+                      {selectionNote(selOrders, ordersPg.pageItems)}
+                    </span>
+                  )}
+                  <span className="pv" style={{ fontSize: 12, fontWeight: 500 }}>
+                    {fmt(filteredOrders.reduce((s, o) => s + o.totalCost, 0))}
                   </span>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <span className="pv" style={{ fontSize: 12, fontWeight: 500 }}>
-                      {fmt(filteredOrders.reduce((s, o) => s + o.totalCost, 0))}
-                    </span>
-                    <div style={{ width: 1, height: 16, background: '#E2E8F0' }} />
-                    <button
-                      className="bs"
-                      style={{ padding: '6px 10px', fontSize: 12 }}
-                      disabled={singleOrderPage === 0}
-                      onClick={() => setSingleOrderPage((p) => p - 1)}
-                    >
-                      <ChevronLeft size={14} />
-                    </button>
-                    <span style={{ fontSize: 12, color: '#64748B' }}>
-                      Page {singleOrderPage + 1}/{Math.max(1, Math.ceil(filteredOrders.length / singleOrderPageSize))}
-                    </span>
-                    <button
-                      className="bs"
-                      style={{ padding: '6px 10px', fontSize: 12 }}
-                      disabled={(singleOrderPage + 1) * singleOrderPageSize >= filteredOrders.length}
-                      onClick={() => setSingleOrderPage((p) => p + 1)}
-                    >
-                      <ChevronRight size={14} />
-                    </button>
-                  </div>
                 </div>
               </div>
             </div>
@@ -6668,10 +6537,7 @@ export default function App() {
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                     <select
                       value={bulkMonthFilter}
-                      onChange={(e) => {
-                        setBulkMonthFilter(e.target.value);
-                        setBulkOrderPage(0);
-                      }}
+                      onChange={(e) => setBulkMonthFilter(e.target.value)}
                       style={{
                         padding: '6px 10px',
                         borderRadius: 8,
@@ -6691,10 +6557,7 @@ export default function App() {
                     </select>
                     <select
                       value={bulkCreatedByFilter}
-                      onChange={(e) => {
-                        setBulkCreatedByFilter(e.target.value);
-                        setBulkOrderPage(0);
-                      }}
+                      onChange={(e) => setBulkCreatedByFilter(e.target.value)}
                       style={{
                         padding: '6px 10px',
                         borderRadius: 8,
@@ -6719,28 +6582,6 @@ export default function App() {
                           </option>
                         ))}
                     </select>
-                    <select
-                      value={bulkOrderPageSize}
-                      onChange={(e) => {
-                        setBulkOrderPageSize(Number(e.target.value));
-                        setBulkOrderPage(0);
-                      }}
-                      style={{
-                        padding: '4px 8px',
-                        borderRadius: 6,
-                        border: '1px solid #E2E8F0',
-                        fontSize: 11,
-                        fontFamily: 'inherit',
-                        cursor: 'pointer',
-                        color: '#1A202C',
-                      }}
-                    >
-                      {[20, 50, 100, 200].map((n) => (
-                        <option key={n} value={n}>
-                          {n} / page
-                        </option>
-                      ))}
-                    </select>
                   </div>
                 </div>
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5 }}>
@@ -6748,30 +6589,18 @@ export default function App() {
                     <tr style={{ background: '#F8FAFB' }}>
                       {hasPermission('deleteBulkOrders') && (
                         <th className="th" style={{ width: 36 }}>
-                          {(() => {
-                            const filtered = bulkGroups.filter(
-                              (g) =>
-                                (bulkMonthFilter === 'All' || g.month === bulkMonthFilter) &&
-                                (bulkCreatedByFilter === 'All' || g.createdBy === bulkCreatedByFilter),
-                            );
-                            const sorted = applySortData(filtered, bulkSort);
-                            const pageItems = sorted.slice(
-                              bulkOrderPage * bulkOrderPageSize,
-                              (bulkOrderPage + 1) * bulkOrderPageSize,
-                            );
-                            return (
-                              <SelBox
-                                checked={pageItems.length > 0 && pageItems.every((g) => selBulk.has(g.id))}
-                                onChange={() =>
-                                  toggleAll(
-                                    selBulk,
-                                    setSelBulk,
-                                    pageItems.map((g) => g.id),
-                                  )
-                                }
-                              />
-                            );
-                          })()}
+                          <SelBox
+                            checked={
+                              filteredBulkGroups.length > 0 && filteredBulkGroups.every((g) => selBulk.has(g.id))
+                            }
+                            onChange={() =>
+                              toggleAll(
+                                selBulk,
+                                setSelBulk,
+                                filteredBulkGroups.map((g) => g.id),
+                              )
+                            }
+                          />
                         </th>
                       )}
                       {[
@@ -6795,17 +6624,7 @@ export default function App() {
                     </tr>
                   </thead>
                   <tbody>
-                    {(() => {
-                      const filtered = bulkGroups.filter(
-                        (g) =>
-                          (bulkMonthFilter === 'All' || g.month === bulkMonthFilter) &&
-                          (bulkCreatedByFilter === 'All' || g.createdBy === bulkCreatedByFilter),
-                      );
-                      return applySortData(filtered, bulkSort).slice(
-                        bulkOrderPage * bulkOrderPageSize,
-                        (bulkOrderPage + 1) * bulkOrderPageSize,
-                      );
-                    })().map((g) => (
+                    {bulkPg.pageItems.map((g) => (
                       <tr
                         key={g.id}
                         className="tr"
@@ -6865,7 +6684,10 @@ export default function App() {
                           <div style={{ display: 'flex', gap: 6 }}>
                             {(hasPermission('editAllBulkOrders') || g.createdBy === currentUser?.name) && (
                               <button
-                                onClick={() => setSelectedBulkGroup({ ...g })}
+                                onClick={() => {
+                                  setBulkDraft({});
+                                  setSelectedBulkGroup({ ...g });
+                                }}
                                 style={{
                                   background: '#2563EB',
                                   color: '#fff',
@@ -6935,52 +6757,24 @@ export default function App() {
                     ))}
                   </tbody>
                 </table>
-                {(() => {
-                  const filtered = bulkGroups.filter(
-                    (g) =>
-                      (bulkMonthFilter === 'All' || g.month === bulkMonthFilter) &&
-                      (bulkCreatedByFilter === 'All' || g.createdBy === bulkCreatedByFilter),
-                  );
-                  const totalPages = Math.max(1, Math.ceil(filtered.length / bulkOrderPageSize));
-                  return (
-                    <div
-                      style={{
-                        padding: '12px 16px',
-                        borderTop: '1px solid #F0F2F5',
-                        display: 'flex',
-                        justifyContent: 'space-between',
-                        alignItems: 'center',
-                        background: '#FCFCFD',
-                      }}
-                    >
-                      <span style={{ fontSize: 12, color: '#94A3B8' }}>
-                        Showing {Math.min(bulkOrderPage * bulkOrderPageSize + 1, filtered.length)}–
-                        {Math.min((bulkOrderPage + 1) * bulkOrderPageSize, filtered.length)} of {filtered.length}
-                      </span>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                        <button
-                          className="bs"
-                          style={{ padding: '6px 10px', fontSize: 12 }}
-                          disabled={bulkOrderPage === 0}
-                          onClick={() => setBulkOrderPage((p) => p - 1)}
-                        >
-                          <ChevronLeft size={14} />
-                        </button>
-                        <span style={{ fontSize: 12, color: '#64748B' }}>
-                          Page {bulkOrderPage + 1}/{totalPages}
-                        </span>
-                        <button
-                          className="bs"
-                          style={{ padding: '6px 10px', fontSize: 12 }}
-                          disabled={(bulkOrderPage + 1) * bulkOrderPageSize >= filtered.length}
-                          onClick={() => setBulkOrderPage((p) => p + 1)}
-                        >
-                          <ChevronRight size={14} />
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })()}
+                <div
+                  style={{
+                    padding: '4px 16px 8px',
+                    borderTop: '1px solid #F0F2F5',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 12,
+                    flexWrap: 'wrap',
+                    background: '#FCFCFD',
+                  }}
+                >
+                  <Pagination {...bulkPg} unit="groups" style={{ flex: 1, minWidth: 260 }} />
+                  {selectionNote(selBulk, bulkPg.pageItems) && (
+                    <span style={{ fontSize: 11.5, color: '#5B21B6', fontWeight: 600 }}>
+                      {selectionNote(selBulk, bulkPg.pageItems)}
+                    </span>
+                  )}
+                </div>
               </div>
               {/* Orders grouped by bulk group */}
               <div className="card" style={{ padding: '20px 24px', marginTop: 16 }}>
@@ -7050,7 +6844,7 @@ export default function App() {
               {/* Expanded Bulk Group Orders View */}
               {expandedBulkGroup &&
                 (() => {
-                  const bgOrders = orders.filter((o) => o.bulkGroupId === expandedBulkGroup);
+                  const bgOrders = expandedBulkGroupOrders;
                   const bg = bulkGroups.find((g) => g.id === expandedBulkGroup);
                   const bgLabel = `${expandedBulkGroup}${bg?.month ? ' — ' + bg.month : ''}`;
                   return (
@@ -7149,7 +6943,7 @@ export default function App() {
                           </tr>
                         </thead>
                         <tbody>
-                          {bgOrders.map((o) => (
+                          {bulkGroupOrdersPg.pageItems.map((o) => (
                             <tr
                               key={o.id}
                               className="tr"
@@ -7182,16 +6976,13 @@ export default function App() {
                               </td>
                               <td className="td mono" style={{ fontSize: 11 }}>
                                 {(() => {
-                                  const cp = catalogLookup[o.materialNo];
-                                  const price = cp ? cp.sg || cp.tp || cp.dist || 0 : o.listPrice;
+                                  const price = getEffectiveUnitPrice(o, catalogLookup);
                                   return price > 0 ? fmt(price) : '—';
                                 })()}
                               </td>
                               <td className="td mono" style={{ fontSize: 11, fontWeight: 600 }}>
                                 {(() => {
-                                  const cp = catalogLookup[o.materialNo];
-                                  const price = cp ? cp.sg || cp.tp || cp.dist || 0 : o.listPrice;
-                                  const total = price > 0 ? price * o.quantity : o.totalCost;
+                                  const total = getEffectiveTotal(o, catalogLookup);
                                   return total > 0 ? fmt(total) : '—';
                                 })()}
                               </td>
@@ -7284,17 +7075,19 @@ export default function App() {
                           ))}
                         </tbody>
                       </table>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+                        <Pagination {...bulkGroupOrdersPg} unit="orders" style={{ flex: 1, minWidth: 260 }} />
+                        {selectionNote(selOrders, bulkGroupOrdersPg.pageItems) && (
+                          <span style={{ fontSize: 11.5, color: '#0B7A3E', fontWeight: 600 }}>
+                            {selectionNote(selOrders, bulkGroupOrdersPg.pageItems)}
+                          </span>
+                        )}
+                      </div>
                       <div style={{ marginTop: 12, padding: 12, background: '#F8FAFB', borderRadius: 8, fontSize: 12 }}>
                         <strong>Summary:</strong> {bgOrders.length} orders | Total Qty:{' '}
                         {bgOrders.reduce((s, o) => s + o.quantity, 0)} | Total Cost:{' '}
                         <strong className="mono pv">
-                          {fmt(
-                            bgOrders.reduce((s, o) => {
-                              const cp = catalogLookup[o.materialNo];
-                              const price = cp ? cp.sg || cp.tp || cp.dist || 0 : o.listPrice;
-                              return s + (price > 0 ? price * o.quantity : o.totalCost);
-                            }, 0),
-                          )}
+                          {fmt(bgOrders.reduce((s, o) => s + getEffectiveTotal(o, catalogLookup), 0))}
                         </strong>
                       </div>
                     </div>
@@ -7308,9 +7101,11 @@ export default function App() {
             <div>
               {/* Summary Cards */}
               {(() => {
-                const avgOrderVal = stats.total > 0 ? stats.totalCost / stats.total : 0;
+                const avgOrderVal = headlineStats.total > 0 ? headlineStats.totalCost / headlineStats.total : 0;
                 const approvalRate =
-                  stats.total > 0 ? (((stats.received + stats.approved) / stats.total) * 100).toFixed(1) : 0;
+                  headlineStats.total > 0
+                    ? (((headlineStats.received + headlineStats.approved) / headlineStats.total) * 100).toFixed(1)
+                    : 0;
                 const avgLead =
                   leadTimeData.length > 0
                     ? Math.round(leadTimeData.reduce((s, d) => s + d.avgDays, 0) / leadTimeData.length)
@@ -7320,29 +7115,29 @@ export default function App() {
                     {[
                       {
                         l: 'Total Orders',
-                        v: fmtNum(stats.total),
-                        sub: `${stats.received} received`,
+                        v: fmtNum(headlineStats.total),
+                        sub: `${headlineStats.received} received`,
                         bg: 'linear-gradient(135deg,#006837,#0B9A4E)',
                         i: Package,
                       },
                       {
                         l: 'Total Spend',
-                        v: <span className="pv">{fmt(stats.totalCost)}</span>,
+                        v: <span className="pv">{fmt(headlineStats.totalCost)}</span>,
                         sub: <span className="pv">{`Avg ${fmt(avgOrderVal)}/order`}</span>,
                         bg: 'linear-gradient(135deg,#1E40AF,#3B82F6)',
                         i: DollarSign,
                       },
                       {
                         l: 'Fulfillment',
-                        v: `${stats.fulfillmentRate}%`,
-                        sub: `${stats.backOrder} back orders`,
+                        v: `${headlineStats.fulfillmentRate}%`,
+                        sub: `${headlineStats.backOrder} back orders`,
                         bg: 'linear-gradient(135deg,#5B21B6,#7C3AED)',
                         i: TrendingUp,
                       },
                       {
                         l: 'Approval Rate',
                         v: `${approvalRate}%`,
-                        sub: `${stats.pendingApproval} pending`,
+                        sub: `${headlineStats.pendingApproval} pending`,
                         bg: 'linear-gradient(135deg,#047857,#10B981)',
                         i: CheckCircle,
                       },
@@ -7653,11 +7448,7 @@ export default function App() {
                 <div className="grid-2" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
                   {[...new Set(orders.flatMap((o) => [o.orderBy, o.engineer]).filter(Boolean))].map((eng) => {
                     const eo = orders.filter((o) => o.orderBy === eng || o.engineer === eng);
-                    const engValue = eo.reduce((s, o) => {
-                      const cp = catalogLookup[o.materialNo];
-                      const price = cp ? cp.sg || cp.tp || cp.dist || 0 : Number(o.listPrice) || 0;
-                      return s + (price > 0 ? price * (Number(o.quantity) || 0) : Number(o.totalCost) || 0);
-                    }, 0);
+                    const engValue = eo.reduce((s, o) => s + getEffectiveTotal(o, catalogLookup), 0);
                     const rcvd = eo.filter((o) => o.status === 'Received').length;
                     return (
                       <div key={eng} style={{ padding: 16, borderRadius: 12, background: '#F8FAFB' }}>
@@ -7876,29 +7667,61 @@ export default function App() {
                   <div className="card" style={{ padding: '18px 20px', marginBottom: 12 }}>
                     <h4 style={{ fontSize: 13, fontWeight: 600, marginBottom: 12 }}>Quick Compose</h4>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                      <select style={{ width: '100%' }}>
+                      <select
+                        style={{ width: '100%' }}
+                        value={quickCompose.subject}
+                        onChange={(e) => setQuickCompose((prev) => ({ ...prev, subject: e.target.value }))}
+                      >
                         <option>Monthly Full Received</option>
                         <option>Back Order Alert</option>
                         <option>Delivery Confirmation</option>
                         <option>Price List Update</option>
                       </select>
-                      <input type="email" placeholder="Recipients" style={{ width: '100%' }} />
-                      <textarea placeholder="Notes..." rows={3} style={{ width: '100%', resize: 'vertical' }} />
+                      <input
+                        type="email"
+                        placeholder="Recipients (comma-separated)"
+                        style={{ width: '100%' }}
+                        value={quickCompose.to}
+                        onChange={(e) => setQuickCompose((prev) => ({ ...prev, to: e.target.value }))}
+                      />
+                      <textarea
+                        placeholder="Notes..."
+                        rows={3}
+                        style={{ width: '100%', resize: 'vertical' }}
+                        value={quickCompose.message}
+                        onChange={(e) => setQuickCompose((prev) => ({ ...prev, message: e.target.value }))}
+                      />
                       <button
                         className="be"
-                        onClick={() => {
-                          notify('Email Sent', 'Dispatched', 'success');
-                          setNotifLog((p) => [
-                            {
-                              id: `N-${String(p.length + 1).padStart(3, '0')}`,
-                              type: 'email',
-                              to: 'service-sg@miltenyibiotec.com',
-                              subject: 'Update',
-                              date: new Date().toISOString().slice(0, 10),
-                              status: 'Sent',
-                            },
-                            ...p,
-                          ]);
+                        disabled={quickSending}
+                        onClick={async () => {
+                          const to = quickCompose.to.trim();
+                          if (!to) {
+                            notify('Recipient Required', 'Enter at least one email address', 'warning');
+                            return;
+                          }
+                          if (!emailConfig.smtpHost) {
+                            notify('SMTP Not Configured', 'Set up SMTP in Settings before sending email', 'warning');
+                            return;
+                          }
+                          setQuickSending(true);
+                          const html = `<p>${escapeHtml(quickCompose.message || '').replace(/\n/g, '<br/>')}</p>`;
+                          const ok = await trySendHtmlEmail(to, quickCompose.subject, html);
+                          setQuickSending(false);
+                          addNotifEntry({
+                            id: `N-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+                            type: 'email',
+                            to,
+                            subject: quickCompose.subject,
+                            date: todayLocal(),
+                            status: ok ? 'Sent' : 'Failed',
+                          });
+                          if (ok) {
+                            notify('Email Sent', `Sent to ${to}`, 'success');
+                            setQuickCompose((prev) => ({ ...prev, message: '' }));
+                          } else {
+                            notify('Email Failed', `Could not send to ${to}`, 'error');
+                          }
                         }}
                       >
                         <Send size={14} /> Send
@@ -7951,14 +7774,7 @@ export default function App() {
                 </BatchBar>
               )}
               {(() => {
-                const fn = notifLog.filter(
-                  (n) =>
-                    !notifSearch ||
-                    [n.id, n.type, n.to, n.subject, n.status]
-                      .join(' ')
-                      .toLowerCase()
-                      .includes(notifSearch.toLowerCase()),
-                );
+                const fn = filteredNotifLog;
                 return (
                   <div className="card" style={{ overflow: 'hidden' }}>
                     <div
@@ -7983,9 +7799,6 @@ export default function App() {
                             style={{ paddingLeft: 32, width: 200, height: 36 }}
                           />
                         </div>
-                        <span style={{ fontSize: 11, color: '#94A3B8' }}>
-                          {fn.length} records{selNotifs.size > 0 && ` • ${selNotifs.size} selected`}
-                        </span>
                       </div>
                     </div>
                     <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5 }}>
@@ -8033,7 +7846,7 @@ export default function App() {
                             </td>
                           </tr>
                         ) : (
-                          fn.map((n) => (
+                          notifsPg.pageItems.map((n) => (
                             <tr
                               key={n.id}
                               className="tr"
@@ -8113,6 +7926,23 @@ export default function App() {
                         )}
                       </tbody>
                     </table>
+                    <div
+                      style={{
+                        padding: '4px 20px 8px',
+                        borderTop: '1px solid #F0F2F5',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 12,
+                        flexWrap: 'wrap',
+                      }}
+                    >
+                      <Pagination {...notifsPg} unit="notifications" style={{ flex: 1, minWidth: 260 }} />
+                      {selectionNote(selNotifs, notifsPg.pageItems) && (
+                        <span style={{ fontSize: 11.5, color: '#5B21B6', fontWeight: 600 }}>
+                          {selectionNote(selNotifs, notifsPg.pageItems)}
+                        </span>
+                      )}
+                    </div>
                   </div>
                 );
               })()}
@@ -8136,22 +7966,7 @@ export default function App() {
               const actions = ['All', ...new Set(auditLog.map((a) => a.action))];
               const entityTypes = ['All', ...new Set(auditLog.map((a) => a.entityType).filter(Boolean))];
               const auditUsers = ['All', ...new Set(auditLog.map((a) => a.userName).filter(Boolean))];
-              const filtered = auditLog.filter((a) => {
-                if (auditFilter.action !== 'All' && a.action !== auditFilter.action) return false;
-                if (auditFilter.user !== 'All' && a.userName !== auditFilter.user) return false;
-                if (auditFilter.entityType !== 'All' && a.entityType !== auditFilter.entityType) return false;
-                if (auditSearch) {
-                  const q = auditSearch.toLowerCase();
-                  if (
-                    ![a.userName, a.action, a.entityType, a.entityId, a.details ? JSON.stringify(a.details) : '']
-                      .join(' ')
-                      .toLowerCase()
-                      .includes(q)
-                  )
-                    return false;
-                }
-                return true;
-              });
+              const filtered = filteredAuditLog;
               return (
                 <div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 24 }}>
@@ -8303,7 +8118,6 @@ export default function App() {
                       filename="audit-trail"
                       title="Audit Trail Export"
                     />
-                    <span style={{ fontSize: 12, color: '#94A3B8' }}>{filtered.length} events</span>
                   </div>
 
                   <div className="card" style={{ overflow: 'hidden' }}>
@@ -8329,7 +8143,7 @@ export default function App() {
                               </td>
                             </tr>
                           ) : (
-                            filtered.slice(0, 200).map((a, i) => (
+                            auditPg.pageItems.map((a, i) => (
                               <tr
                                 key={a.id || i}
                                 className="tr"
@@ -8379,29 +8193,21 @@ export default function App() {
                         </tbody>
                       </table>
                     </div>
-                    {filtered.length > 200 && (
-                      <div
-                        style={{
-                          padding: '12px 16px',
-                          borderTop: '1px solid #F0F2F5',
-                          textAlign: 'center',
-                          fontSize: 11,
-                          color: '#94A3B8',
-                        }}
-                      >
-                        Showing first 200 of {filtered.length} events. Use export to see all.
-                      </div>
-                    )}
+                    <Pagination
+                      {...auditPg}
+                      unit="events"
+                      style={{ padding: '10px 16px', borderTop: '1px solid #F0F2F5' }}
+                    />
                   </div>
                 </div>
               );
             })()}
 
           {/* ═══════════ USER MANAGEMENT (ADMIN ONLY) ═══════════ */}
-          {page === 'users' && hasPermission('users') && (
+          {page === 'users' && isAdmin && hasPermission('users') && (
             <div>
               {/* Pending Approvals */}
-              {pendingUsers.length > 0 && (
+              {allPendingUsers.length > 0 && (
                 <div
                   className="card"
                   style={{ padding: '20px 24px', marginBottom: 24, border: '2px solid #FDE68A', background: '#FFFBEB' }}
@@ -8409,10 +8215,10 @@ export default function App() {
                   <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
                     <AlertTriangle size={18} color="#D97706" />
                     <h3 style={{ fontSize: 15, fontWeight: 600, color: '#92400E' }}>
-                      Pending Approvals ({pendingUsers.length})
+                      Pending Approvals ({allPendingUsers.length})
                     </h3>
                   </div>
-                  {pendingUsers.map((u) => (
+                  {approvalsPg.pageItems.map((u) => (
                     <div
                       key={u.id}
                       style={{
@@ -8441,7 +8247,7 @@ export default function App() {
                             fontWeight: 700,
                           }}
                         >
-                          {u.name
+                          {(u.name || u.username || '?')
                             .split(' ')
                             .map((w) => w[0])
                             .join('')}
@@ -8449,7 +8255,7 @@ export default function App() {
                         <div>
                           <div style={{ fontWeight: 600, fontSize: 14 }}>{u.name}</div>
                           <div style={{ fontSize: 11, color: '#94A3B8' }}>
-                            {u.email} • {u.username} • Requested: {fmtDate(u.requestDate)}
+                            {u.email} • {u.username} • Requested: {fmtDate(u.requestDate || u.created)}
                           </div>
                         </div>
                       </div>
@@ -8463,6 +8269,7 @@ export default function App() {
                       </div>
                     </div>
                   ))}
+                  <Pagination {...approvalsPg} unit="approvals" />
                 </div>
               )}
 
@@ -8527,12 +8334,12 @@ export default function App() {
                     <tr style={{ background: '#F8FAFB' }}>
                       <th className="th" style={{ width: 36 }}>
                         <SelBox
-                          checked={selUsers.size === users.length && users.length > 0}
+                          checked={selUsers.size === visibleUsers.length && visibleUsers.length > 0}
                           onChange={() =>
                             toggleAll(
                               selUsers,
                               setSelUsers,
-                              users.map((u) => u.id),
+                              visibleUsers.map((u) => u.id),
                             )
                           }
                         />
@@ -8546,15 +8353,8 @@ export default function App() {
                   </thead>
                   <tbody>
                     {(() => {
-                      const fu = users.filter(
-                        (u) =>
-                          !userSearch ||
-                          [u.name, u.username, u.email, u.role, u.phone || '']
-                            .join(' ')
-                            .toLowerCase()
-                            .includes(userSearch.toLowerCase()),
-                      );
-                      return fu.length === 0 ? (
+                      const fu = usersPg.pageItems;
+                      return visibleUsers.length === 0 ? (
                         <tr>
                           <td colSpan={10} style={{ padding: 24, textAlign: 'center', color: '#94A3B8', fontSize: 13 }}>
                             {users.length === 0 ? 'No users found' : 'No users match your search.'}
@@ -8598,7 +8398,7 @@ export default function App() {
                                     fontWeight: 700,
                                   }}
                                 >
-                                  {u.name
+                                  {(u.name || u.username || '?')
                                     .split(' ')
                                     .map((w) => w[0])
                                     .join('')}
@@ -8681,6 +8481,23 @@ export default function App() {
                     })()}
                   </tbody>
                 </table>
+                <div
+                  style={{
+                    padding: '4px 16px 8px',
+                    borderTop: '1px solid #F0F2F5',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 12,
+                    flexWrap: 'wrap',
+                  }}
+                >
+                  <Pagination {...usersPg} unit="users" style={{ flex: 1, minWidth: 260 }} />
+                  {selectionNote(selUsers, usersPg.pageItems) && (
+                    <span style={{ fontSize: 11.5, color: '#1E40AF', fontWeight: 600 }}>
+                      {selectionNote(selUsers, usersPg.pageItems)}
+                    </span>
+                  )}
+                </div>
               </div>
             </div>
           )}
@@ -9066,18 +8883,22 @@ export default function App() {
                       Cancel
                     </button>
                     <button
-                      onClick={() => {
+                      onClick={async () => {
                         if (selectedUser._newPassword && selectedUser._newPassword.length < 6) {
                           notify('Error', 'Password must be at least 6 characters', 'error');
                           return;
                         }
-                        const payload = { ...selectedUser };
-                        if (payload._newPassword) {
-                          payload.password = payload._newPassword;
+                        // Never keep plaintext password fields in state / localStorage
+                        const { _newPassword, password: _oldPw, ...safeUser } = selectedUser;
+                        const payload = { ...safeUser };
+                        if (_newPassword) payload.password = _newPassword;
+                        const updated = await api.updateUser(selectedUser.id, payload);
+                        if (!updated) {
+                          notify('Save Failed', 'User not saved', 'error');
+                          return;
                         }
-                        delete payload._newPassword;
-                        setUsers((prev) => prev.map((u) => (u.id === selectedUser.id ? selectedUser : u)));
-                        api.updateUser(selectedUser.id, payload);
+                        const { password: _pw, ...savedUser } = { ...safeUser, ...updated };
+                        setUsers((prev) => prev.map((u) => (u.id === selectedUser.id ? savedUser : u)));
                         setSelectedUser(null);
                         notify(
                           'User Updated',
@@ -9108,9 +8929,23 @@ export default function App() {
           {/* Edit Bulk Order Modal */}
           {selectedBulkGroup &&
             (() => {
-              const bgOrders = orders.filter((o) => o.bulkGroupId === selectedBulkGroup.id);
+              // Displayed rows = persisted orders + unsaved draft edits (flushed once on Save)
+              const bgOrders = orders
+                .filter((o) => o.bulkGroupId === selectedBulkGroup.id)
+                .map((o) => (bulkDraft[o.id] ? { ...o, ...bulkDraft[o.id] } : o));
               const actualItems = bgOrders.length;
               const actualCost = bgOrders.reduce((s, o) => s + (o.totalCost || 0), 0);
+              const persistedGroup = bulkGroups.find((g) => g.id === selectedBulkGroup.id);
+              // Approved groups are locked for non-admins without the editAllBulkOrders permission
+              const bulkLocked =
+                (persistedGroup?.status === ORDER_STATUS.APPROVED ||
+                  selectedBulkGroup.status === ORDER_STATUS.APPROVED) &&
+                !isAdmin &&
+                !hasPermission('editAllBulkOrders');
+              const closeBulkModal = () => {
+                setBulkDraft({});
+                setSelectedBulkGroup(null);
+              };
               return (
                 <div
                   style={{
@@ -9122,7 +8957,7 @@ export default function App() {
                     justifyContent: 'center',
                     zIndex: 9999,
                   }}
-                  onClick={() => setSelectedBulkGroup(null)}
+                  onClick={closeBulkModal}
                 >
                   <div
                     className="modal-box"
@@ -9150,7 +8985,7 @@ export default function App() {
                         <Layers size={18} color="#4338CA" /> Edit Bulk Order
                       </h3>
                       <button
-                        onClick={() => setSelectedBulkGroup(null)}
+                        onClick={closeBulkModal}
                         style={{ background: 'none', border: 'none', cursor: 'pointer' }}
                       >
                         <X size={20} color="#64748B" />
@@ -9337,6 +9172,11 @@ export default function App() {
                             }}
                           >
                             <Package size={14} /> Items in This Group ({bgOrders.length})
+                            {bulkLocked && (
+                              <span style={{ fontSize: 10, fontWeight: 600, color: '#92400E', marginLeft: 'auto' }}>
+                                <Lock size={10} style={{ verticalAlign: 'middle' }} /> Approved — editing locked
+                              </span>
+                            )}
                           </div>
                           <div
                             style={{
@@ -9368,18 +9208,17 @@ export default function App() {
                                 e.target.style.borderColor = '#E2E8F0';
                                 e.target.style.boxShadow = 'none';
                               };
+                              // Edits go to the local draft only; Save Changes flushes one PUT per changed order
                               const updateOrderField = (field, value) => {
-                                const updated = { ...o, [field]: value };
-                                if (field === 'quantity' || field === 'listPrice') {
-                                  updated.totalCost =
-                                    (Number(updated.listPrice) || 0) * (Number(updated.quantity) || 0);
-                                }
-                                setOrders((prev) => prev.map((ord) => (ord.id === o.id ? updated : ord)));
-                                const dbFields = { [field]: value };
-                                if (field === 'quantity' || field === 'listPrice') {
-                                  dbFields.totalCost = updated.totalCost;
-                                }
-                                dbSync(api.updateOrder(o.id, dbFields), 'Order update failed');
+                                if (bulkLocked) return;
+                                setBulkDraft((prev) => {
+                                  const entry = { ...(prev[o.id] || {}), [field]: value };
+                                  if (field === 'quantity' || field === 'listPrice') {
+                                    const merged = { ...o, ...entry };
+                                    entry.totalCost = (Number(merged.listPrice) || 0) * (Number(merged.quantity) || 0);
+                                  }
+                                  return { ...prev, [o.id]: entry };
+                                });
                               };
                               return (
                                 <div
@@ -9422,40 +9261,48 @@ export default function App() {
                                     >
                                       {o.id}
                                     </span>
-                                    <button
-                                      title="Remove from group"
-                                      onClick={() => {
-                                        if (!window.confirm(`Remove ${o.id} from this bulk group?`)) return;
-                                        const updatedOrders = orders.map((ord) =>
-                                          ord.id === o.id ? { ...ord, bulkGroupId: null } : ord,
-                                        );
-                                        setOrders(updatedOrders);
-                                        recalcBulkGroupForMonths([selectedBulkGroup.id], updatedOrders);
-                                        dbSync(
-                                          api.updateOrder(o.id, { bulkGroupId: null }),
-                                          'Remove from group failed',
-                                        );
-                                        notify('Item Removed', `${o.id} removed from group`, 'info');
-                                      }}
-                                      style={{
-                                        background: '#FEE2E2',
-                                        border: 'none',
-                                        borderRadius: 6,
-                                        cursor: 'pointer',
-                                        color: '#DC2626',
-                                        padding: '4px 8px',
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        gap: 4,
-                                        fontSize: 10,
-                                        fontWeight: 600,
-                                        transition: 'background 0.15s',
-                                      }}
-                                      onMouseEnter={(e) => (e.currentTarget.style.background = '#FECACA')}
-                                      onMouseLeave={(e) => (e.currentTarget.style.background = '#FEE2E2')}
-                                    >
-                                      <X size={12} /> Remove
-                                    </button>
+                                    {!bulkLocked && (
+                                      <button
+                                        title="Remove from group"
+                                        onClick={() => {
+                                          if (bulkLocked) return;
+                                          if (!window.confirm(`Remove ${o.id} from this bulk group?`)) return;
+                                          const updatedOrders = orders.map((ord) =>
+                                            ord.id === o.id ? { ...ord, bulkGroupId: null } : ord,
+                                          );
+                                          setOrders(updatedOrders);
+                                          setBulkDraft((prev) => {
+                                            const next = { ...prev };
+                                            delete next[o.id];
+                                            return next;
+                                          });
+                                          recalcBulkGroupForMonths([selectedBulkGroup.id], updatedOrders);
+                                          dbSync(
+                                            api.updateOrder(o.id, { bulkGroupId: null }),
+                                            'Remove from group failed',
+                                          );
+                                          notify('Item Removed', `${o.id} removed from group`, 'info');
+                                        }}
+                                        style={{
+                                          background: '#FEE2E2',
+                                          border: 'none',
+                                          borderRadius: 6,
+                                          cursor: 'pointer',
+                                          color: '#DC2626',
+                                          padding: '4px 8px',
+                                          display: 'flex',
+                                          alignItems: 'center',
+                                          gap: 4,
+                                          fontSize: 10,
+                                          fontWeight: 600,
+                                          transition: 'background 0.15s',
+                                        }}
+                                        onMouseEnter={(e) => (e.currentTarget.style.background = '#FECACA')}
+                                        onMouseLeave={(e) => (e.currentTarget.style.background = '#FEE2E2')}
+                                      >
+                                        <X size={12} /> Remove
+                                      </button>
+                                    )}
                                   </div>
                                   {/* Material No. + Description */}
                                   <div
@@ -9473,6 +9320,7 @@ export default function App() {
                                       <input
                                         style={cardInput({ fontFamily: 'Consolas,monospace', width: '100%' })}
                                         value={o.materialNo || ''}
+                                        readOnly={bulkLocked}
                                         onChange={(e) => updateOrderField('materialNo', e.target.value)}
                                         onFocus={focusStyle}
                                         onBlur={blurStyle}
@@ -9485,6 +9333,7 @@ export default function App() {
                                       <input
                                         style={cardInput({ width: '100%' })}
                                         value={o.description || ''}
+                                        readOnly={bulkLocked}
                                         onChange={(e) => updateOrderField('description', e.target.value)}
                                         onFocus={focusStyle}
                                         onBlur={blurStyle}
@@ -9502,6 +9351,7 @@ export default function App() {
                                         min={1}
                                         style={cardInput({ width: '100%', textAlign: 'center' })}
                                         value={o.quantity || 0}
+                                        readOnly={bulkLocked}
                                         onChange={(e) =>
                                           updateOrderField('quantity', Math.max(1, parseInt(e.target.value) || 1))
                                         }
@@ -9528,6 +9378,7 @@ export default function App() {
                                         step="0.01"
                                         style={cardInput({ width: '100%', textAlign: 'right' })}
                                         value={o.listPrice || 0}
+                                        readOnly={bulkLocked}
                                         onChange={(e) => updateOrderField('listPrice', parseFloat(e.target.value) || 0)}
                                         onFocus={focusStyle}
                                         onBlur={blurStyle}
@@ -9567,7 +9418,7 @@ export default function App() {
                       )}
 
                       {/* Add Item to Bulk Group */}
-                      {selectedBulkGroup.status !== 'Completed' && (
+                      {selectedBulkGroup.status !== 'Completed' && !bulkLocked && (
                         <div
                           style={{
                             padding: 12,
@@ -9597,7 +9448,7 @@ export default function App() {
                                   const p = catalogLookup[val];
                                   if (p) {
                                     updated.description = p.d;
-                                    updated.listPrice = p.sg || p.tp || p.dist || 0;
+                                    updated.listPrice = getCatalogPrice(p);
                                   }
                                 }
                                 setAddToBulkItem(updated);
@@ -9675,7 +9526,7 @@ export default function App() {
                                   quantity: addToBulkItem.quantity,
                                   listPrice: addToBulkItem.listPrice,
                                   totalCost,
-                                  orderDate: new Date().toISOString().slice(0, 10),
+                                  orderDate: todayLocal(),
                                   orderBy: selectedBulkGroup.createdBy || currentUser?.name || '',
                                   remark: '',
                                   arrivalDate: null,
@@ -9684,8 +9535,9 @@ export default function App() {
                                   engineer: '',
                                   emailFull: '',
                                   emailBack: '',
-                                  status: selectedBulkGroup.status === 'Approved' ? 'Approved' : 'Pending Approval',
-                                  approvalStatus: selectedBulkGroup.status === 'Approved' ? 'approved' : undefined,
+                                  // Items added later always go through approval, even on an Approved group
+                                  status: ORDER_STATUS.PENDING_APPROVAL,
+                                  approvalStatus: 'pending',
                                   month: selectedBulkGroup.month,
                                   year: String(new Date().getFullYear()),
                                   bulkGroupId: selectedBulkGroup.id,
@@ -9741,6 +9593,7 @@ export default function App() {
                           </label>
                           <select
                             value={selectedBulkGroup.status}
+                            disabled={bulkLocked}
                             onChange={(e) => setSelectedBulkGroup((prev) => ({ ...prev, status: e.target.value }))}
                             style={{
                               width: '100%',
@@ -9786,7 +9639,7 @@ export default function App() {
                       </div>
                       <div style={{ display: 'flex', gap: 10, marginTop: 8 }}>
                         <button
-                          onClick={() => setSelectedBulkGroup(null)}
+                          onClick={closeBulkModal}
                           style={{
                             flex: 1,
                             padding: '10px',
@@ -9802,14 +9655,32 @@ export default function App() {
                           Cancel
                         </button>
                         <button
+                          disabled={bulkLocked}
                           onClick={() => {
+                            if (bulkLocked) return;
                             const origGroup = bulkGroups.find((g) => g.id === selectedBulkGroup.id);
                             const oldMonth = origGroup?.month || '';
                             const newMonth = selectedBulkGroup.month;
                             const oldStatus = origGroup?.status || '';
                             const newStatus = selectedBulkGroup.status;
+                            // Apply the local draft to a working copy (flushed below, after confirmations)
+                            const draftIds = Object.keys(bulkDraft);
+                            const ordersWithDraft = draftIds.length
+                              ? orders.map((o) => {
+                                  const changes = bulkDraft[o.id];
+                                  if (!changes) return o;
+                                  const merged = { ...o, ...changes };
+                                  if ('quantity' in changes || 'listPrice' in changes) {
+                                    merged.totalCost = (Number(merged.listPrice) || 0) * (Number(merged.quantity) || 0);
+                                    merged.backOrder = computeArrival(merged, merged.qtyReceived).backOrder;
+                                  }
+                                  return merged;
+                                })
+                              : orders;
                             // Auto-sync items count and totalCost from actual orders (immutable)
-                            const currentBgOrders = orders.filter((o) => o.bulkGroupId === selectedBulkGroup.id);
+                            const currentBgOrders = ordersWithDraft.filter(
+                              (o) => o.bulkGroupId === selectedBulkGroup.id,
+                            );
                             const syncedItems = currentBgOrders.length;
                             const syncedCost = currentBgOrders.reduce((s, o) => s + (o.totalCost || 0), 0);
                             const syncedGroup = { ...selectedBulkGroup, items: syncedItems, totalCost: syncedCost };
@@ -9837,6 +9708,19 @@ export default function App() {
                                 return;
                             }
 
+                            // Flush the draft: ONE PUT per changed order
+                            draftIds.forEach((id) => {
+                              const merged = ordersWithDraft.find((o) => o.id === id);
+                              if (!merged) return;
+                              const changes = { ...bulkDraft[id] };
+                              if ('quantity' in changes || 'listPrice' in changes) {
+                                changes.totalCost = merged.totalCost;
+                                changes.backOrder = merged.backOrder;
+                              }
+                              dbSync(api.updateOrder(id, changes), `Order ${id} update failed`);
+                            });
+                            if (draftIds.length) setOrders(ordersWithDraft);
+                            setBulkDraft({});
                             setBulkGroups((prev) => prev.map((g) => (g.id === syncedGroup.id ? syncedGroup : g)));
                             dbSync(api.updateBulkGroup(syncedGroup.id, syncedGroup), 'Bulk group edit not saved');
                             // If month changed, update orders linked to this bulk group
@@ -9849,23 +9733,21 @@ export default function App() {
                               );
                             }
                             // If status changed to Approved/Rejected, cascade to all linked orders
-                            if (oldStatus !== newStatus && (newStatus === 'Approved' || newStatus === 'Rejected')) {
-                              const approvalStatus = newStatus === 'Approved' ? 'approved' : 'rejected';
+                            if (
+                              oldStatus !== newStatus &&
+                              (newStatus === ORDER_STATUS.APPROVED || newStatus === ORDER_STATUS.REJECTED)
+                            ) {
+                              const transition = approvalTransition(newStatus);
                               currentBgOrders.forEach((o) =>
-                                dbSync(
-                                  api.updateOrder(o.id, { status: newStatus, approvalStatus }),
-                                  'Order approval cascade failed',
-                                ),
+                                dbSync(api.updateOrder(o.id, transition), 'Order approval cascade failed'),
                               );
                               setOrders((prev) =>
-                                prev.map((o) =>
-                                  o.bulkGroupId === syncedGroup.id ? { ...o, status: newStatus, approvalStatus } : o,
-                                ),
+                                prev.map((o) => (o.bulkGroupId === syncedGroup.id ? { ...o, ...transition } : o)),
                               );
                             }
                             // If manually set to Completed, mark all linked orders as Received with full arrival data
                             if (oldStatus !== newStatus && newStatus === 'Completed') {
-                              const today = new Date().toISOString().slice(0, 10);
+                              const today = todayLocal();
                               currentBgOrders.forEach((o) =>
                                 dbSync(
                                   api.updateOrder(o.id, {
@@ -9901,11 +9783,11 @@ export default function App() {
                             padding: '10px',
                             borderRadius: 8,
                             border: 'none',
-                            background: 'linear-gradient(135deg,#4338CA,#6366F1)',
+                            background: bulkLocked ? '#CBD5E1' : 'linear-gradient(135deg,#4338CA,#6366F1)',
                             color: '#fff',
                             fontWeight: 600,
                             fontSize: 13,
-                            cursor: 'pointer',
+                            cursor: bulkLocked ? 'not-allowed' : 'pointer',
                           }}
                         >
                           Save Changes
@@ -10032,7 +9914,7 @@ export default function App() {
                           if (v.length >= 10) {
                             const p = catalogLookup[v];
                             if (p) {
-                              const price = p.sg || p.tp || p.dist || 0;
+                              const price = getCatalogPrice(p);
                               setEditingOrder((prev) => ({
                                 ...prev,
                                 description: p.d,
@@ -10091,7 +9973,7 @@ export default function App() {
                             ...prev,
                             quantity: qty,
                             totalCost: qty * (prev.listPrice || 0),
-                            backOrder: (prev.qtyReceived || 0) - qty,
+                            backOrder: computeArrival({ ...prev, quantity: qty }, prev.qtyReceived).backOrder,
                           }));
                         }}
                         style={{
@@ -10333,26 +10215,30 @@ export default function App() {
                     <button
                       onClick={() => {
                         // If manually set to Received, auto-fill arrival fields so it skips Part Arrival
-                        const isManualReceived = editingOrder.status === 'Received';
+                        const isManualReceived = editingOrder.status === ORDER_STATUS.RECEIVED;
                         const finalOrder = isManualReceived
                           ? {
                               ...editingOrder,
-                              qtyReceived: editingOrder.quantity,
-                              backOrder: 0,
-                              arrivalDate: editingOrder.arrivalDate || new Date().toISOString().slice(0, 10),
+                              ...computeArrival(editingOrder, editingOrder.quantity),
+                              arrivalDate: editingOrder.arrivalDate || todayLocal(),
                               approvalStatus: 'approved',
                             }
                           : editingOrder;
                         const updatedOrders = orders.map((o) => (o.id === editingOrder.id ? finalOrder : o));
                         setOrders(updatedOrders);
                         const { qtyReceived, backOrder, arrivalDate, ...editFields } = finalOrder;
-                        // Include arrival fields when manually marking as Received
+                        const originalOrder = orders.find((o) => o.id === editingOrder.id);
+                        const qtyChanged = Number(originalOrder?.quantity) !== Number(finalOrder.quantity);
+                        // Include arrival fields when manually marking as Received.
+                        // When the quantity changed, also send the recomputed backOrder so it stays
+                        // consistent server-side (server only rejects qty_received for non-admins).
                         const payload = isManualReceived
                           ? { ...editFields, qtyReceived, backOrder, arrivalDate }
-                          : editFields;
+                          : qtyChanged
+                            ? { ...editFields, backOrder }
+                            : editFields;
                         dbSync(api.updateOrder(editingOrder.id, payload), 'Order edit not saved');
                         // Recalculate affected bulk group(s) — both old and new if re-linked
-                        const originalOrder = orders.find((o) => o.id === editingOrder.id);
                         const bgIdsToRecalc = [
                           ...new Set([originalOrder?.bulkGroupId, editingOrder.bulkGroupId].filter(Boolean)),
                         ];
@@ -10494,7 +10380,7 @@ export default function App() {
                       </tr>
                     </thead>
                     <tbody>
-                      {historyImportData.slice(0, 50).map((o, i) => (
+                      {importPreviewPg.pageItems.map((o, i) => (
                         <tr key={i} className="tr" style={{ borderBottom: '1px solid #F0F2F5' }}>
                           <td className="td mono" style={{ fontSize: 10, color: '#4338CA' }}>
                             {o.id}
@@ -10544,11 +10430,7 @@ export default function App() {
                   </table>
                 </div>
 
-                {historyImportData.length > 50 && (
-                  <div style={{ textAlign: 'center', padding: 10, fontSize: 11, color: '#64748B' }}>
-                    Showing first 50 of {historyImportData.length} records
-                  </div>
-                )}
+                <Pagination {...importPreviewPg} unit="records" />
 
                 <div
                   style={{
@@ -10680,7 +10562,6 @@ export default function App() {
                 setPage,
                 waNotifyRules,
                 scheduledNotifs,
-                LS_KEYS,
                 api,
                 blurPrices,
                 setBlurPrices,
@@ -10878,7 +10759,11 @@ export default function App() {
                     partsCount: mapped.length,
                   };
                   setCatalogUploadMeta(meta);
-                  try { localStorage.setItem('mih_catalogUploadMeta', JSON.stringify(meta)); } catch {}
+                  try {
+                    localStorage.setItem('mih_catalogUploadMeta', JSON.stringify(meta));
+                  } catch {
+                    /* ignore — localStorage may be unavailable */
+                  }
                   if (uploadResult) {
                     notify(
                       'Catalog Uploaded',
@@ -11026,7 +10911,7 @@ export default function App() {
                     </tr>
                   </thead>
                   <tbody>
-                    {priceFinderResults.map((r, i) => (
+                    {priceFinderPg.pageItems.map((r, i) => (
                       <tr
                         key={i}
                         style={{
@@ -11069,6 +10954,7 @@ export default function App() {
                     ))}
                   </tbody>
                 </table>
+                <Pagination {...priceFinderPg} unit="parts" style={{ padding: '8px 12px' }} />
               </div>
             )}
           </div>
@@ -11289,7 +11175,7 @@ export default function App() {
                           items: 0,
                           totalCost: 0,
                           status: 'Pending Approval',
-                          date: new Date().toISOString().slice(0, 10),
+                          date: todayLocal(),
                         };
                         setBulkGroups((prev) => [bg, ...prev]);
                         dbSync(api.createBulkGroup(bg), 'New bulk group not saved');
@@ -11700,7 +11586,7 @@ export default function App() {
                   </tr>
                 </thead>
                 <tbody>
-                  {wishlist.map((w) => (
+                  {wishlistPg.pageItems.map((w) => (
                     <tr key={w.id} className="tr" style={{ borderBottom: '1px solid #F0F2F5' }}>
                       <td className="td mono" style={{ fontSize: 11, color: '#0B7A3E', fontWeight: 500 }}>
                         {w.materialNo}
@@ -11773,6 +11659,7 @@ export default function App() {
                 </tbody>
               </table>
             )}
+            {wishlist.length > 0 && <Pagination {...wishlistPg} unit="items" />}
             {showWishlistPicker === 'bulk' && wishlist.length > 0 && (
               <div style={{ marginTop: 12, textAlign: 'right' }}>
                 <button
@@ -11796,347 +11683,6 @@ export default function App() {
                 </button>
               </div>
             )}
-          </div>
-        </div>
-      )}
-
-      {/* ═══ ORDER DETAIL MODAL ═══ */}
-      {selectedOrder && (
-        <div className="mo" onClick={() => setSelectedOrder(null)}>
-          <div
-            className="modal-box"
-            onClick={(e) => e.stopPropagation()}
-            style={{
-              background: '#fff',
-              borderRadius: 16,
-              padding: '28px 32px',
-              width: 560,
-              maxWidth: '94vw',
-              maxHeight: '85vh',
-              overflow: 'auto',
-              boxShadow: '0 20px 60px rgba(0,0,0,.2)',
-            }}
-          >
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
-              <div>
-                <h2 style={{ fontSize: 17, fontWeight: 700 }}>{selectedOrder.description}</h2>
-                <span className="mono" style={{ fontSize: 12, color: '#94A3B8' }}>
-                  {selectedOrder.id} • {selectedOrder.materialNo || '—'}
-                </span>
-              </div>
-              <button
-                onClick={() => setSelectedOrder(null)}
-                style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#94A3B8' }}
-              >
-                <X size={20} />
-              </button>
-            </div>
-            <Badge status={selectedOrder.status} />
-
-            {/* Ordered By & Month Badge - Prominent Display */}
-            <div style={{ display: 'flex', gap: 12, marginTop: 12, flexWrap: 'wrap' }}>
-              {selectedOrder.orderBy && (
-                <div
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 8,
-                    padding: '8px 14px',
-                    background: '#DBEAFE',
-                    borderRadius: 8,
-                  }}
-                >
-                  <User size={14} color="#2563EB" />
-                  <div>
-                    <div style={{ fontSize: 10, color: '#64748B', fontWeight: 600 }}>ORDERED BY</div>
-                    <div style={{ fontSize: 13, fontWeight: 700, color: '#2563EB' }}>{selectedOrder.orderBy}</div>
-                  </div>
-                </div>
-              )}
-              {selectedOrder.month && (
-                <div
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 8,
-                    padding: '8px 14px',
-                    background: '#E6F4ED',
-                    borderRadius: 8,
-                  }}
-                >
-                  <Calendar size={14} color="#0B7A3E" />
-                  <div>
-                    <div style={{ fontSize: 10, color: '#64748B', fontWeight: 600 }}>MONTH BATCH</div>
-                    <div style={{ fontSize: 13, fontWeight: 700, color: '#0B7A3E' }}>
-                      {String(selectedOrder.month).replace('_', ' ')}
-                    </div>
-                  </div>
-                </div>
-              )}
-              {selectedOrder.bulkGroupId && (
-                <div
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 8,
-                    padding: '8px 14px',
-                    background: '#EDE9FE',
-                    borderRadius: 8,
-                  }}
-                >
-                  <Layers size={14} color="#7C3AED" />
-                  <div>
-                    <div style={{ fontSize: 10, color: '#64748B', fontWeight: 600 }}>BULK BATCH</div>
-                    <div style={{ fontSize: 13, fontWeight: 700, color: '#7C3AED' }}>{selectedOrder.bulkGroupId}</div>
-                  </div>
-                </div>
-              )}
-              {selectedOrder.orderDate && (
-                <div
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 8,
-                    padding: '8px 14px',
-                    background: '#F8FAFB',
-                    borderRadius: 8,
-                  }}
-                >
-                  <Clock size={14} color="#64748B" />
-                  <div>
-                    <div style={{ fontSize: 10, color: '#64748B', fontWeight: 600 }}>ORDER DATE</div>
-                    <div style={{ fontSize: 13, fontWeight: 700, color: '#374151' }}>
-                      {fmtDate(selectedOrder.orderDate)}
-                    </div>
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {selectedOrder.materialNo && catalogLookup[selectedOrder.materialNo] && (
-              <div
-                style={{
-                  padding: 12,
-                  borderRadius: 8,
-                  background: '#EFF6FF',
-                  border: '1px solid #BFDBFE',
-                  marginTop: 12,
-                  fontSize: 12,
-                }}
-              >
-                <strong style={{ color: '#2563EB' }}>Catalog Price ({priceConfig.year})</strong>
-                <div
-                  className="grid-3"
-                  style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginTop: 6 }}
-                >
-                  <div>
-                    Unit Price: <strong className="mono pv">{fmt(catalogLookup[selectedOrder.materialNo].sg)}</strong>
-                  </div>
-                  <div>
-                    Dist: <strong className="mono pv">{fmt(catalogLookup[selectedOrder.materialNo].dist)}</strong>
-                  </div>
-                  <div>
-                    TP: <strong className="mono pv">{fmt(catalogLookup[selectedOrder.materialNo].tp)}</strong>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* Update Received Quantity Section */}
-            <div
-              style={{
-                padding: 16,
-                borderRadius: 10,
-                background: '#F0FDF4',
-                border: '1px solid #BBF7D0',
-                marginTop: 16,
-              }}
-            >
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-                <Package size={16} color="#059669" />
-                <span style={{ fontWeight: 600, fontSize: 13, color: '#059669' }}>Update Received Quantity</span>
-              </div>
-              <div
-                className="grid-3"
-                style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, alignItems: 'end' }}
-              >
-                <div>
-                  <label style={{ display: 'block', fontSize: 11, color: '#64748B', marginBottom: 4 }}>Ordered</label>
-                  <div className="mono" style={{ fontSize: 18, fontWeight: 700 }}>
-                    {selectedOrder.quantity}
-                  </div>
-                </div>
-                <div>
-                  <label style={{ display: 'block', fontSize: 11, color: '#64748B', marginBottom: 4 }}>Received</label>
-                  <input
-                    type="number"
-                    min="0"
-                    max={selectedOrder.quantity || 0}
-                    value={selectedOrder.qtyReceived || 0}
-                    onChange={(e) => {
-                      const val = parseInt(e.target.value) || 0;
-                      const newBackOrder = selectedOrder.quantity - val;
-                      const newStatus = val >= selectedOrder.quantity ? 'Received' : selectedOrder.status;
-                      const updatedOrder = {
-                        ...selectedOrder,
-                        qtyReceived: val,
-                        backOrder: newBackOrder,
-                        status: newStatus,
-                        arrivalDate: selectedOrder.arrivalDate || new Date().toISOString().slice(0, 10),
-                      };
-                      const updatedOrders = orders.map((o) => (o.id === selectedOrder.id ? updatedOrder : o));
-                      setOrders(updatedOrders);
-                      setSelectedOrder(updatedOrder);
-                      dbSync(
-                        api.updateOrder(selectedOrder.id, {
-                          qtyReceived: val,
-                          backOrder: newBackOrder,
-                          status: newStatus,
-                          arrivalDate: updatedOrder.arrivalDate,
-                        }),
-                        'Arrival update not saved',
-                      );
-                      if (selectedOrder.bulkGroupId) checkBulkGroupCompletion(selectedOrder.bulkGroupId, updatedOrders);
-                    }}
-                    style={{
-                      width: '100%',
-                      padding: '8px 12px',
-                      fontSize: 16,
-                      fontWeight: 600,
-                      borderRadius: 8,
-                      border: '1.5px solid #BBF7D0',
-                      textAlign: 'center',
-                    }}
-                  />
-                </div>
-                <div>
-                  <label style={{ display: 'block', fontSize: 11, color: '#64748B', marginBottom: 4 }}>
-                    Back Order
-                  </label>
-                  <div
-                    className="mono"
-                    style={{
-                      fontSize: 18,
-                      fontWeight: 700,
-                      color: selectedOrder.backOrder < 0 ? '#DC2626' : '#059669',
-                    }}
-                  >
-                    {selectedOrder.backOrder < 0 ? selectedOrder.backOrder : '✓ Full'}
-                  </div>
-                </div>
-              </div>
-              {selectedOrder.backOrder < 0 && (
-                <div
-                  style={{
-                    marginTop: 12,
-                    padding: 8,
-                    background: '#FEF2F2',
-                    borderRadius: 6,
-                    fontSize: 11,
-                    color: '#DC2626',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 6,
-                  }}
-                >
-                  <AlertCircle size={12} /> {Math.abs(selectedOrder.backOrder)} items still pending
-                </div>
-              )}
-              {selectedOrder.qtyReceived >= selectedOrder.quantity && (
-                <div
-                  style={{
-                    marginTop: 12,
-                    padding: 8,
-                    background: '#D1FAE5',
-                    borderRadius: 6,
-                    fontSize: 11,
-                    color: '#059669',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 6,
-                  }}
-                >
-                  <CheckCircle size={12} /> Order fully received
-                </div>
-              )}
-            </div>
-
-            <div className="grid-2" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginTop: 14 }}>
-              {[
-                {
-                  l: 'Price',
-                  v: <span className="pv">{selectedOrder.listPrice > 0 ? fmt(selectedOrder.listPrice) : '—'}</span>,
-                },
-                {
-                  l: 'Total',
-                  v: <span className="pv">{selectedOrder.totalCost > 0 ? fmt(selectedOrder.totalCost) : '—'}</span>,
-                },
-                { l: 'Ordered', v: fmtDate(selectedOrder.orderDate) },
-                { l: 'By', v: selectedOrder.orderBy || '—' },
-                { l: 'Arrival', v: selectedOrder.arrivalDate ? fmtDate(selectedOrder.arrivalDate) : '—' },
-                { l: 'Engineer', v: selectedOrder.engineer || '—' },
-                { l: 'Month', v: selectedOrder.month?.replace('_', ' ') || '—' },
-                { l: 'Remark', v: selectedOrder.remark || '—' },
-              ].map((f, i) => (
-                <div key={i} style={{ padding: 10, borderRadius: 8, background: '#F8FAFB' }}>
-                  <div
-                    style={{
-                      fontSize: 10,
-                      color: '#94A3B8',
-                      fontWeight: 600,
-                      textTransform: 'uppercase',
-                      letterSpacing: 0.5,
-                      marginBottom: 3,
-                    }}
-                  >
-                    {f.l}
-                  </div>
-                  <div style={{ fontSize: 13, fontWeight: 600 }}>{f.v}</div>
-                </div>
-              ))}
-            </div>
-            <div style={{ display: 'flex', gap: 10, marginTop: 18 }}>
-              <button
-                className="bp"
-                onClick={async () => {
-                  const updatedOrders = orders.map((o) => (o.id === selectedOrder.id ? selectedOrder : o));
-                  setOrders(updatedOrders);
-                  const ok = await api.updateOrder(selectedOrder.id, selectedOrder);
-                  if (ok) {
-                    notify('Order Updated', `${selectedOrder.id} saved to database`, 'success');
-                    if (selectedOrder.bulkGroupId) recalcBulkGroupForMonths([selectedOrder.bulkGroupId], updatedOrders);
-                  } else {
-                    notify('Save Failed', `${selectedOrder.id} not saved to database`, 'error');
-                  }
-                  setSelectedOrder(null);
-                }}
-              >
-                <Check size={14} /> Save & Close
-              </button>
-              <button
-                className="be"
-                onClick={() => {
-                  notify('Email Sent', 'Update sent', 'success');
-                  setSelectedOrder(null);
-                }}
-              >
-                <Mail size={14} /> Email
-              </button>
-              {waConnected && (
-                <button
-                  className="bw"
-                  onClick={() => {
-                    notify('WhatsApp Sent', 'Alert sent', 'success');
-                    setSelectedOrder(null);
-                  }}
-                >
-                  <MessageSquare size={14} /> WhatsApp
-                </button>
-              )}
-              <button className="bs" onClick={() => setSelectedOrder(null)}>
-                Cancel
-              </button>
-            </div>
           </div>
         </div>
       )}
@@ -12186,7 +11732,11 @@ export default function App() {
                 { l: 'Unit Price', v: fmt(selectedPart.singaporePrice), c: '#0B7A3E' },
                 { l: 'Dist Price', v: fmt(selectedPart.distributorPrice), c: '#2563EB' },
                 { l: 'RSP Price', v: fmt(selectedPart.transferPrice), c: '#7C3AED' },
-                { l: 'RSP (EUR)', v: selectedPart.rspEur ? `€${selectedPart.rspEur.toLocaleString()}` : '—', c: '#D97706' },
+                {
+                  l: 'RSP (EUR)',
+                  v: selectedPart.rspEur ? `€${selectedPart.rspEur.toLocaleString()}` : '—',
+                  c: '#D97706',
+                },
                 {
                   l: 'Margin',
                   v: `${selectedPart.singaporePrice > 0 ? (((selectedPart.singaporePrice - (selectedPart.distributorPrice || 0)) / selectedPart.singaporePrice) * 100).toFixed(1) : 0}%`,

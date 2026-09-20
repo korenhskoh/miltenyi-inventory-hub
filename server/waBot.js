@@ -35,9 +35,12 @@ setInterval(() => {
   }
 }, CLEANUP_INTERVAL);
 
-export async function handleBotMessage(text, jid) {
+export async function handleBotMessage(text, jid, user = null) {
   try {
     const session = getSession(jid);
+    // The account behind this number, used for permission checks on privileged
+    // commands (approve / reject / delete / status change / order creation).
+    session.user = user;
     const trimmed = text.trim();
     const lower = trimmed.toLowerCase();
 

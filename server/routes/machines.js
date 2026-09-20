@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { query } from '../db.js';
 import { snakeToCamel, camelToSnake } from '../utils.js';
-import { pickAllowed } from '../validation.js';
+import { pickAllowed, sanitizeDates } from '../validation.js';
 import { paginate, envelope } from '../pagination.js';
 import { asyncHandler } from '../middleware/errorHandler.js';
 import { requireAdmin } from '../middleware/auth.js';
@@ -42,6 +42,32 @@ const MACHINE_FIELDS = [
   'iqoq_date',
   'iqoq_price',
 ];
+
+const MACHINE_DATE_FIELDS = [
+  'install_date',
+  'last_maintenance_date',
+  'next_maintenance_date',
+  'contract_start',
+  'contract_end',
+  'delivery_date',
+  'warranty_start',
+  'warranty_end',
+  'iqoq_date',
+];
+const MACHINE_NUMERIC_FIELDS = ['price', 'iqoq_price', 'maintenance_period_months'];
+
+// '' is invalid for DATE/NUMERIC columns; on update it means "clear the value".
+function normalizeMachine(b, { update = false } = {}) {
+  sanitizeDates(b, MACHINE_DATE_FIELDS, { nullOnEmpty: update });
+  for (const f of MACHINE_NUMERIC_FIELDS) {
+    if (!(f in b)) continue;
+    if (b[f] === '' || b[f] === undefined) {
+      if (update) b[f] = null;
+      else delete b[f];
+    }
+  }
+  return b;
+}
 
 const VALID_REGIONS = new Set(['local', 'overseas']);
 function normalizeRegion(r) {
@@ -149,10 +175,11 @@ router.get(
     if (returnAll) {
       dataResult = await query(`SELECT * FROM machines${where} ORDER BY id DESC`, params);
     } else {
-      dataResult = await query(
-        `SELECT * FROM machines${where} ORDER BY id DESC LIMIT $${pi++} OFFSET $${pi++}`,
-        [...params, pageSize, offset],
-      );
+      dataResult = await query(`SELECT * FROM machines${where} ORDER BY id DESC LIMIT $${pi++} OFFSET $${pi++}`, [
+        ...params,
+        pageSize,
+        offset,
+      ]);
     }
     const rows = dataResult.rows.map(snakeToCamel);
     res.json(envelope(rows, total, returnAll ? 1 : page, returnAll ? rows.length : pageSize));
@@ -164,6 +191,7 @@ router.get(
 // so the DB ends up with exactly what the user sent, not a validated subset.
 router.post(
   '/bulk',
+  requireAdmin,
   asyncHandler(async (req, res) => {
     const { machines } = req.body;
     if (!Array.isArray(machines) || machines.length === 0)
@@ -174,7 +202,7 @@ router.post(
 
     for (const [idx, machine] of machines.entries()) {
       try {
-        const b = pickAllowed(camelToSnake(machine), MACHINE_FIELDS);
+        const b = normalizeMachine(pickAllowed(camelToSnake(machine), MACHINE_FIELDS));
         // Fill in defaults so no row is rejected just because of missing fields.
         if (!b.name) b.name = b.serial_number ? String(b.serial_number) : `Imported row ${idx + 1}`;
         if (!b.modality) b.modality = 'Unknown';
@@ -222,7 +250,7 @@ router.delete(
 router.post(
   '/',
   asyncHandler(async (req, res) => {
-    const b = pickAllowed(camelToSnake(req.body), MACHINE_FIELDS);
+    const b = normalizeMachine(pickAllowed(camelToSnake(req.body), MACHINE_FIELDS));
     b.region = normalizeRegion(b.region);
     if (!b.name) b.name = b.serial_number || 'Unnamed';
     // modality is required for local instruments; overseas instruments may omit it
@@ -244,7 +272,10 @@ router.put(
   '/:id',
   asyncHandler(async (req, res) => {
     const { id } = req.params;
-    const b = pickAllowed(camelToSnake(req.body), MACHINE_FIELDS);
+    const b = normalizeMachine(pickAllowed(camelToSnake(req.body), MACHINE_FIELDS, { keepNull: true }), {
+      update: true,
+    });
+    if ('region' in b) b.region = normalizeRegion(b.region);
     b.updated_at = new Date().toISOString();
     const keys = Object.keys(b);
     const vals = Object.values(b);
@@ -260,6 +291,7 @@ router.put(
 // DELETE /:id — delete machine
 router.delete(
   '/:id',
+  requireAdmin,
   asyncHandler(async (req, res) => {
     const { id } = req.params;
     const result = await query('DELETE FROM machines WHERE id = $1 RETURNING *', [id]);

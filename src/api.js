@@ -109,6 +109,16 @@ async function getMe() {
   }
 }
 
+// Public: is the API server reachable at all? (distinguishes "offline" from "token expired")
+async function checkServer() {
+  try {
+    await fetch(`${BASE}/api/public/logo`);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // Public: fetch logo (no auth required)
 async function getPublicLogo() {
   try {
@@ -129,6 +139,10 @@ async function getOrders(filters = {}) {
     for (const [k, v] of Object.entries(filters)) {
       if (v !== '' && v !== null && v !== undefined) params.append(k, v);
     }
+    // Only when the caller wants the whole list AND hasn't already asked:
+    // appending a second `all` makes Express parse it as an array, which the
+    // server's `wantsAll` then rejects — silently falling back to 50 rows.
+    if (!filters.page && !filters.limit && !params.has('all')) params.append('all', 'true');
     const qs = params.toString();
     const res = handleResponse(await fetch(`${BASE}/api/orders${qs ? `?${qs}` : ''}`, { headers: authHeadersGet() }));
     if (!res.ok) return null;
@@ -147,6 +161,17 @@ async function createOrder(order) {
         body: JSON.stringify(order),
       }),
     );
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
+// Server-side aggregates for the dashboard: { totals, byMonth, topMaterials } — null on failure
+async function getOrderStats() {
+  try {
+    const res = handleResponse(await fetch(`${BASE}/api/orders/stats`, { headers: authHeadersGet() }));
     if (!res.ok) return null;
     return await res.json();
   } catch {
@@ -200,7 +225,7 @@ async function bulkUpdateOrderStatus(ids, status, approvalStatus) {
 
 async function getBulkGroups() {
   try {
-    const res = handleResponse(await fetch(`${BASE}/api/bulk-groups`, { headers: authHeadersGet() }));
+    const res = handleResponse(await fetch(`${BASE}/api/bulk-groups?all=true`, { headers: authHeadersGet() }));
     if (!res.ok) return null;
     return unwrapList(await res.json());
   } catch {
@@ -255,7 +280,7 @@ async function deleteBulkGroup(id) {
 
 async function getUsers() {
   try {
-    const res = handleResponse(await fetch(`${BASE}/api/users`, { headers: authHeadersGet() }));
+    const res = handleResponse(await fetch(`${BASE}/api/users?all=true`, { headers: authHeadersGet() }));
     if (!res.ok) return null;
     return unwrapList(await res.json());
   } catch {
@@ -308,7 +333,7 @@ async function deleteUser(id) {
 
 async function getStockChecks() {
   try {
-    const res = handleResponse(await fetch(`${BASE}/api/stock-checks`, { headers: authHeadersGet() }));
+    const res = handleResponse(await fetch(`${BASE}/api/stock-checks?all=true`, { headers: authHeadersGet() }));
     if (!res.ok) return null;
     return unwrapList(await res.json());
   } catch {
@@ -352,7 +377,7 @@ async function updateStockCheck(id, updates) {
 
 async function getNotifLog() {
   try {
-    const res = handleResponse(await fetch(`${BASE}/api/notif-log`, { headers: authHeadersGet() }));
+    const res = handleResponse(await fetch(`${BASE}/api/notif-log?all=true`, { headers: authHeadersGet() }));
     if (!res.ok) return null;
     return unwrapList(await res.json());
   } catch {
@@ -380,7 +405,7 @@ async function createNotifEntry(entry) {
 
 async function getApprovals(status) {
   try {
-    const qs = status ? `?status=${encodeURIComponent(status)}` : '';
+    const qs = status ? `?all=true&status=${encodeURIComponent(status)}` : '?all=true';
     const res = handleResponse(await fetch(`${BASE}/api/pending-approvals${qs}`, { headers: authHeadersGet() }));
     if (!res.ok) return null;
     return unwrapList(await res.json());
@@ -600,6 +625,10 @@ async function getAuditLog(filters = {}) {
     for (const [k, v] of Object.entries(filters)) {
       if (v !== '' && v !== null && v !== undefined) params.append(k, v);
     }
+    // Only when the caller wants the whole list AND hasn't already asked:
+    // appending a second `all` makes Express parse it as an array, which the
+    // server's `wantsAll` then rejects — silently falling back to 50 rows.
+    if (!filters.page && !filters.limit && !params.has('all')) params.append('all', 'true');
     const qs = params.toString();
     const res = handleResponse(
       await fetch(`${BASE}/api/audit-log${qs ? `?${qs}` : ''}`, { headers: authHeadersGet() }),
@@ -761,9 +790,7 @@ async function getFcaList(filters = {}) {
       if (v !== '' && v !== null && v !== undefined && v !== 'All') params.append(k, v);
     }
     const qs = params.toString();
-    const res = handleResponse(
-      await fetch(`${BASE}/api/fca${qs ? `?${qs}` : ''}`, { headers: authHeadersGet() }),
-    );
+    const res = handleResponse(await fetch(`${BASE}/api/fca${qs ? `?${qs}` : ''}`, { headers: authHeadersGet() }));
     if (!res.ok) return null;
     return await res.json();
   } catch {
@@ -817,9 +844,7 @@ async function updateFca(id, updates) {
 
 async function deleteFca(id) {
   try {
-    const res = handleResponse(
-      await fetch(`${BASE}/api/fca/${id}`, { method: 'DELETE', headers: authHeadersGet() }),
-    );
+    const res = handleResponse(await fetch(`${BASE}/api/fca/${id}`, { method: 'DELETE', headers: authHeadersGet() }));
     return res.ok;
   } catch {
     return false;
@@ -840,9 +865,7 @@ async function fetchFcaPdfBlobUrl(id) {
 
 async function getFcaStatusesForFca(fcaId) {
   try {
-    const res = handleResponse(
-      await fetch(`${BASE}/api/fca/${fcaId}/statuses`, { headers: authHeadersGet() }),
-    );
+    const res = handleResponse(await fetch(`${BASE}/api/fca/${fcaId}/statuses`, { headers: authHeadersGet() }));
     if (!res.ok) return null;
     return await res.json();
   } catch {
@@ -896,6 +919,45 @@ async function sendEmail({ to, subject, html, smtp, attachments }) {
   }
 }
 
+// Stock-check reconciliation: applies charge in / charge out / counted balance
+// in one pass. Pass dryRun to get the preview without writing anything.
+async function reconcileInventory(items, { dryRun = false, reference = '' } = {}) {
+  try {
+    const res = handleResponse(
+      await fetch(`${BASE}/api/local-inventory/reconcile`, {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify({ items, dryRun, reference }),
+      }),
+    );
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, error: data.error || `HTTP ${res.status}` };
+    return { ok: true, ...data };
+  } catch (err) {
+    return { ok: false, error: err.message || 'Network error' };
+  }
+}
+
+// ─── Scheduled report (admin) ───
+
+async function runScheduledReport() {
+  try {
+    const res = handleResponse(
+      await fetch(`${BASE}/api/scheduled-report/run`, { method: 'POST', headers: authHeaders() }),
+    );
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      return {
+        success: false,
+        error: data.error || (res.status === 403 ? 'Admin permission required' : `HTTP ${res.status}`),
+      };
+    }
+    return { success: !!data.success, error: data.error };
+  } catch (err) {
+    return { success: false, error: err.message || 'Network error' };
+  }
+}
+
 // ─── Local Inventory ───
 
 async function getLocalInventory(filters = {}) {
@@ -904,6 +966,10 @@ async function getLocalInventory(filters = {}) {
     for (const [k, v] of Object.entries(filters)) {
       if (v !== '' && v !== null && v !== undefined && v !== 'All') params.append(k, v);
     }
+    // Only when the caller wants the whole list AND hasn't already asked:
+    // appending a second `all` makes Express parse it as an array, which the
+    // server's `wantsAll` then rejects — silently falling back to 50 rows.
+    if (!filters.page && !filters.limit && !params.has('all')) params.append('all', 'true');
     const qs = params.toString();
     const res = handleResponse(
       await fetch(`${BASE}/api/local-inventory${qs ? `?${qs}` : ''}`, { headers: authHeadersGet() }),
@@ -1106,10 +1172,12 @@ const api = {
   getToken,
   logout,
   getMe,
+  checkServer,
   getPublicLogo,
   onAuthError,
   resetAuthError,
   getOrders,
+  getOrderStats,
   createOrder,
   updateOrder,
   deleteOrder,
@@ -1166,6 +1234,8 @@ const api = {
   getFcaStatusesForMachine,
   upsertFcaStatus,
   sendEmail,
+  runScheduledReport,
+  reconcileInventory,
   getLocalInventory,
   getLocalInventorySummary,
   getInventoryTransactions,

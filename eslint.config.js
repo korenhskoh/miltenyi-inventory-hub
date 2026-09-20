@@ -44,6 +44,8 @@ export default [
         structuredClone: true,
         crypto: true,
         TextEncoder: true,
+        btoa: true,
+        atob: true,
       },
     },
     rules: {
@@ -73,6 +75,25 @@ export default [
     },
     rules: {
       'no-unused-vars': ['warn', { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }],
+    },
+  },
+  {
+    files: ['scripts/**/*.{js,mjs}'],
+    languageOptions: {
+      globals: {
+        process: true,
+        console: true,
+        fetch: true,
+        setTimeout: true,
+        clearTimeout: true,
+        Buffer: true,
+        URL: true,
+        URLSearchParams: true,
+      },
+    },
+    rules: {
+      'no-unused-vars': ['warn', { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }],
+      'no-empty': ['error', { allowEmptyCatch: true }],
     },
   },
   prettier,

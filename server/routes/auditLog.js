@@ -1,18 +1,20 @@
 import { Router } from 'express';
 import { query } from '../db.js';
 import { snakeToCamel, camelToSnake } from '../utils.js';
-import { paginate, envelope } from '../pagination.js';
+import { paginate, envelope, limitClause } from '../pagination.js';
 import { asyncHandler } from '../middleware/errorHandler.js';
 import { requireAdmin } from '../middleware/auth.js';
+import { requirePermission } from '../middleware/permissions.js';
 
 const router = Router();
 
 // GET / - list audit log entries with optional filters
 router.get(
   '/',
+  requirePermission('auditTrail'),
   asyncHandler(async (req, res) => {
     const { user, action, entityType, from, to } = req.query;
-    const { page, pageSize, offset } = paginate(req.query);
+    const { page, pageSize } = paginate(req.query);
     const conditions = [];
     const params = [];
     let idx = 1;
@@ -43,12 +45,13 @@ router.get(
     const countResult = await query(`SELECT COUNT(*) FROM audit_log${whereClause}`, params);
     const total = parseInt(countResult.rows[0].count);
 
-    const dataResult = await query(
-      `SELECT * FROM audit_log${whereClause} ORDER BY created_at DESC LIMIT $${idx++} OFFSET $${idx++}`,
-      [...params, pageSize, offset],
-    );
+    const lim = limitClause(req, idx);
+    const dataResult = await query(`SELECT * FROM audit_log${whereClause} ORDER BY created_at DESC${lim.clause}`, [
+      ...params,
+      ...lim.params,
+    ]);
     const rows = dataResult.rows.map(snakeToCamel);
-    res.json(envelope(rows, total, page, pageSize));
+    res.json(envelope(rows, total, lim.clause ? page : 1, lim.clause ? pageSize : rows.length));
   }),
 );
 
@@ -58,9 +61,11 @@ router.post('/', async (req, res) => {
     const b = camelToSnake(req.body);
     const sql = `INSERT INTO audit_log (user_id, user_name, action, entity_type, entity_id, details, ip_address)
                  VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`;
+    // Identity is taken from the authenticated session — a body-supplied
+    // userId/userName let anyone forge entries blaming another account.
     const result = await query(sql, [
-      b.user_id || null,
-      b.user_name || null,
+      req.user?.id || null,
+      req.user?.username || null,
       b.action,
       b.entity_type || null,
       b.entity_id || null,

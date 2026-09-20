@@ -1,6 +1,8 @@
-import { Package, Layers, DollarSign, Calendar, ChevronDown, ChevronLeft, ChevronRight, Eye, X } from 'lucide-react';
+import { Package, Layers, DollarSign, Calendar, ChevronDown, Eye, X } from 'lucide-react';
 import { fmt, fmtDate, fmtNum, applySortData, toggleSort } from '../utils.js';
 import { Badge, ArrivalBadge, Pill, SortTh, ExportDropdown } from '../components/ui.jsx';
+import { getEffectiveUnitPrice, getEffectiveTotal } from '../lib/pricing.js';
+import Pagination, { usePagination } from '../components/Pagination.jsx';
 
 const AllOrdersPage = ({
   orders,
@@ -25,42 +27,27 @@ const AllOrdersPage = ({
   expandedAllBulkGroup,
   setExpandedAllBulkGroup,
   openOrderInNewTab,
-  allOrdersPage,
-  setAllOrdersPage,
-  allOrdersPageSize,
-  setAllOrdersPageSize,
 }) => {
   const sorted = applySortData(allOrdersCombined, allOrdersSort);
-  const totalPages = Math.max(1, Math.ceil(sorted.length / allOrdersPageSize));
-  const pageItems = sorted.slice(allOrdersPage * allOrdersPageSize, (allOrdersPage + 1) * allOrdersPageSize);
+  const pager = usePagination(sorted, {
+    storageKey: 'allorders',
+    initialSize: 50,
+    resetKey: [
+      allOrdersTypeFilter,
+      allOrdersMonth,
+      allOrdersStatus,
+      allOrdersUserFilter,
+      allOrdersSort.key,
+      allOrdersSort.dir,
+    ].join('|'),
+  });
+  const pageItems = pager.pageItems;
 
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
         <p style={{ fontSize: 13, color: '#64748B', margin: 0 }}>Unified view of all single and bulk orders</p>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <select
-            value={allOrdersPageSize}
-            onChange={(e) => {
-              setAllOrdersPageSize(Number(e.target.value));
-              setAllOrdersPage(0);
-            }}
-            style={{
-              padding: '4px 8px',
-              borderRadius: 6,
-              border: '1px solid #E2E8F0',
-              fontSize: 11,
-              fontFamily: 'inherit',
-              cursor: 'pointer',
-              color: '#1A202C',
-            }}
-          >
-            {[20, 50, 100, 200].map((n) => (
-              <option key={n} value={n}>
-                {n} / page
-              </option>
-            ))}
-          </select>
           <ExportDropdown
             data={allOrdersCombined}
             columns={[
@@ -110,13 +97,7 @@ const AllOrdersPage = ({
           },
           {
             l: 'Total Value',
-            v: fmt(
-              allOrdersCombined.reduce((s, o) => {
-                const cp = catalogLookup[o.materialNo];
-                const price = cp ? cp.sg || cp.tp || cp.dist || 0 : Number(o.listPrice) || 0;
-                return s + (price > 0 ? price * o.quantity : Number(o.totalCost) || 0);
-              }, 0),
-            ),
+            v: fmt(allOrdersCombined.reduce((s, o) => s + (Number(getEffectiveTotal(o, catalogLookup)) || 0), 0)),
             i: DollarSign,
             c: '#D97706',
             bg: 'linear-gradient(135deg,#92400E,#D97706)',
@@ -171,7 +152,6 @@ const AllOrdersPage = ({
               key={t}
               onClick={() => {
                 setAllOrdersTypeFilter(t);
-                setAllOrdersPage(0);
               }}
               style={{
                 padding: '5px 12px',
@@ -200,7 +180,6 @@ const AllOrdersPage = ({
             value={allOrdersMonth}
             onChange={(e) => {
               setAllOrdersMonth(e.target.value);
-              setAllOrdersPage(0);
             }}
             style={{
               padding: '5px 10px',
@@ -232,7 +211,6 @@ const AllOrdersPage = ({
               key={s}
               onClick={() => {
                 setAllOrdersStatus(s);
-                setAllOrdersPage(0);
               }}
               style={{
                 padding: '5px 12px',
@@ -261,7 +239,6 @@ const AllOrdersPage = ({
             value={allOrdersUserFilter}
             onChange={(e) => {
               setAllOrdersUserFilter(e.target.value);
-              setAllOrdersPage(0);
             }}
             style={{
               padding: '5px 10px',
@@ -302,7 +279,6 @@ const AllOrdersPage = ({
           }}
         >
           <span style={{ fontWeight: 600, fontSize: 14 }}>All Orders</span>
-          <span style={{ fontSize: 11, color: '#94A3B8' }}>{allOrdersCombined.length} results</span>
         </div>
         <div className="table-wrap" style={{ overflowX: 'auto' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5 }}>
@@ -403,16 +379,13 @@ const AllOrdersPage = ({
                     </td>
                     <td className="td mono" style={{ fontSize: 11 }}>
                       {(() => {
-                        const cp = catalogLookup[o.materialNo];
-                        const price = cp ? cp.sg || cp.tp || cp.dist || 0 : o.listPrice;
+                        const price = getEffectiveUnitPrice(o, catalogLookup);
                         return price > 0 ? fmt(price) : '\u2014';
                       })()}
                     </td>
                     <td className="td mono" style={{ fontSize: 11, fontWeight: 600 }}>
                       {(() => {
-                        const cp = catalogLookup[o.materialNo];
-                        const price = cp ? cp.sg || cp.tp || cp.dist || 0 : o.listPrice;
-                        const total = price > 0 ? price * o.quantity : o.totalCost;
+                        const total = getEffectiveTotal(o, catalogLookup);
                         return total > 0 ? fmt(total) : '\u2014';
                       })()}
                     </td>
@@ -439,54 +412,15 @@ const AllOrdersPage = ({
         </div>
         <div
           style={{
-            padding: '12px 16px',
+            padding: '4px 16px 10px',
             borderTop: '1px solid #F0F2F5',
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center',
             background: '#FCFCFD',
           }}
         >
-          <span style={{ fontSize: 12, color: '#94A3B8' }}>
-            Showing {Math.min(allOrdersPage * allOrdersPageSize + 1, allOrdersCombined.length)}–
-            {Math.min((allOrdersPage + 1) * allOrdersPageSize, allOrdersCombined.length)} of {allOrdersCombined.length}
-            {allOrdersTypeFilter !== 'All' ||
-            allOrdersMonth !== 'All' ||
-            allOrdersStatus !== 'All' ||
-            allOrdersUserFilter !== 'All'
-              ? ' (filtered)'
-              : ''}
-          </span>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <span style={{ fontSize: 12, fontWeight: 500 }}>
-              {fmt(
-                allOrdersCombined.reduce((s, o) => {
-                  const cp = catalogLookup[o.materialNo];
-                  const price = cp ? cp.sg || cp.tp || cp.dist || 0 : Number(o.listPrice) || 0;
-                  return s + (price > 0 ? price * o.quantity : Number(o.totalCost) || 0);
-                }, 0),
-              )}
-            </span>
-            <div style={{ width: 1, height: 16, background: '#E2E8F0' }} />
-            <button
-              className="bs"
-              style={{ padding: '6px 10px', fontSize: 12 }}
-              disabled={allOrdersPage === 0}
-              onClick={() => setAllOrdersPage((p) => p - 1)}
-            >
-              <ChevronLeft size={14} />
-            </button>
-            <span style={{ fontSize: 12, color: '#64748B' }}>
-              Page {allOrdersPage + 1}/{totalPages}
-            </span>
-            <button
-              className="bs"
-              style={{ padding: '6px 10px', fontSize: 12 }}
-              disabled={(allOrdersPage + 1) * allOrdersPageSize >= allOrdersCombined.length}
-              onClick={() => setAllOrdersPage((p) => p + 1)}
-            >
-              <ChevronRight size={14} />
-            </button>
+          <Pagination {...pager} unit="orders" />
+          <div style={{ fontSize: 12, fontWeight: 500, textAlign: 'right', paddingBottom: 4 }}>
+            Total{' '}
+            {fmt(allOrdersCombined.reduce((s, o) => s + (Number(getEffectiveTotal(o, catalogLookup)) || 0), 0))}
           </div>
         </div>
       </div>
@@ -503,11 +437,7 @@ const AllOrdersPage = ({
             const bulkCount = orders.filter((o) => o.bulkGroupId && o.month === month).length;
             const totalCost = orders
               .filter((o) => o.month === month)
-              .reduce((s, o) => {
-                const cp = catalogLookup[o.materialNo];
-                const price = cp ? cp.sg || cp.tp || cp.dist || 0 : Number(o.listPrice) || 0;
-                return s + (price > 0 ? price * o.quantity : Number(o.totalCost) || 0);
-              }, 0);
+              .reduce((s, o) => s + (Number(getEffectiveTotal(o, catalogLookup)) || 0), 0);
             const isExpanded = expandedAllMonth === month;
             return (
               <div
@@ -623,11 +553,7 @@ const AllOrdersPage = ({
                               Cost:{' '}
                               <strong className="mono">
                                 {fmt(
-                                  bgOrds.reduce((s, o) => {
-                                    const cp = catalogLookup[o.materialNo];
-                                    const price = cp ? cp.sg || cp.tp || cp.dist || 0 : o.listPrice;
-                                    return s + (price > 0 ? price * o.quantity : o.totalCost);
-                                  }, 0),
+                                  bgOrds.reduce((s, o) => s + (Number(getEffectiveTotal(o, catalogLookup)) || 0), 0),
                                 )}
                               </strong>
                             </div>
@@ -734,16 +660,13 @@ const AllOrdersPage = ({
                                     </td>
                                     <td className="td mono" style={{ fontSize: 11 }}>
                                       {(() => {
-                                        const cp = catalogLookup[o.materialNo];
-                                        const price = cp ? cp.sg || cp.tp || cp.dist || 0 : o.listPrice;
+                                        const price = getEffectiveUnitPrice(o, catalogLookup);
                                         return price > 0 ? fmt(price) : '\u2014';
                                       })()}
                                     </td>
                                     <td className="td mono" style={{ fontSize: 11, fontWeight: 600 }}>
                                       {(() => {
-                                        const cp = catalogLookup[o.materialNo];
-                                        const price = cp ? cp.sg || cp.tp || cp.dist || 0 : o.listPrice;
-                                        const total = price > 0 ? price * o.quantity : o.totalCost;
+                                        const total = getEffectiveTotal(o, catalogLookup);
                                         return total > 0 ? fmt(total) : '\u2014';
                                       })()}
                                     </td>
@@ -770,13 +693,7 @@ const AllOrdersPage = ({
                             <strong>Summary:</strong> {bgOrds.length} orders | Qty:{' '}
                             {bgOrds.reduce((s, o) => s + o.quantity, 0)} | Cost:{' '}
                             <strong className="mono">
-                              {fmt(
-                                bgOrds.reduce((s, o) => {
-                                  const cp = catalogLookup[o.materialNo];
-                                  const price = cp ? cp.sg || cp.tp || cp.dist || 0 : o.listPrice;
-                                  return s + (price > 0 ? price * o.quantity : o.totalCost);
-                                }, 0),
-                              )}
+                              {fmt(bgOrds.reduce((s, o) => s + (Number(getEffectiveTotal(o, catalogLookup)) || 0), 0))}
                             </strong>
                           </div>
                         </div>
@@ -860,16 +777,13 @@ const AllOrdersPage = ({
                             </td>
                             <td className="td mono" style={{ fontSize: 11 }}>
                               {(() => {
-                                const cp = catalogLookup[o.materialNo];
-                                const price = cp ? cp.sg || cp.tp || cp.dist || 0 : o.listPrice;
+                                const price = getEffectiveUnitPrice(o, catalogLookup);
                                 return price > 0 ? fmt(price) : '\u2014';
                               })()}
                             </td>
                             <td className="td mono" style={{ fontSize: 11, fontWeight: 600 }}>
                               {(() => {
-                                const cp = catalogLookup[o.materialNo];
-                                const price = cp ? cp.sg || cp.tp || cp.dist || 0 : o.listPrice;
-                                const total = price > 0 ? price * o.quantity : o.totalCost;
+                                const total = getEffectiveTotal(o, catalogLookup);
                                 return total > 0 ? fmt(total) : '\u2014';
                               })()}
                             </td>
@@ -895,11 +809,7 @@ const AllOrdersPage = ({
                     {monthSingleOrders.reduce((s, o) => s + o.quantity, 0)} | Cost:{' '}
                     <strong className="mono">
                       {fmt(
-                        monthSingleOrders.reduce((s, o) => {
-                          const cp = catalogLookup[o.materialNo];
-                          const price = cp ? cp.sg || cp.tp || cp.dist || 0 : o.listPrice;
-                          return s + (price > 0 ? price * o.quantity : o.totalCost);
-                        }, 0),
+                        monthSingleOrders.reduce((s, o) => s + (Number(getEffectiveTotal(o, catalogLookup)) || 0), 0),
                       )}
                     </strong>
                   </div>

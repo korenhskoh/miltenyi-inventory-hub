@@ -1,6 +1,17 @@
 // WhatsApp Bot — Command Handlers
 import { query } from './db.js';
 import logger from './logger.js';
+import { userHasPermission } from './middleware/permissions.js';
+
+// ── Permissions ──
+// The bot speaks for whichever account owns the sender's phone number. Numbers
+// on the allow-list with no account (session.user === null) get read-only access.
+const DENIED = (what) => `🚫 You don't have permission to ${what}. Ask an admin if you need access.`;
+
+async function botCan(session, key) {
+  if (!session?.user?.id) return false;
+  return userHasPermission({ id: session.user.id, role: session.user.role }, key);
+}
 
 // ── Helpers ──
 const PAGE_SIZE = 5;
@@ -148,11 +159,12 @@ async function handleCreateOrderQty(text, session) {
 }
 
 async function executeOrderConfirm(session) {
+  if (!session?.user?.id) return DENIED('create orders');
   const d = session.data;
   const now = new Date();
   const month = currentMonth();
-  const countR = await query('SELECT COUNT(*) as c FROM orders');
-  const orderId = `ORD-${2000 + parseInt(countR.rows[0].c)}`;
+  // Timestamp-based id — COUNT(*)-based ids collide as soon as any order is deleted.
+  const orderId = `ORD-${Date.now()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
 
   await query(
     `INSERT INTO orders (id, material_no, description, quantity, list_price, total_cost, order_date, order_by, status, approval_status, month, year, remark)
@@ -165,12 +177,12 @@ async function executeOrderConfirm(session) {
       d.price,
       d.total,
       now.toISOString().slice(0, 10),
-      'WhatsApp Bot',
+      session.user.name || session.user.username, // attribute to the real person, not "the bot"
       'Pending Approval',
       'pending',
       month,
       String(now.getFullYear()),
-      'Created via WhatsApp Bot',
+      `Created via WhatsApp Bot by ${session.user.username}`,
     ],
   );
 
@@ -246,13 +258,23 @@ async function handleUpdateOrder(params, session) {
   const r = await query('SELECT * FROM orders WHERE id = $1', [orderId]);
   if (!r.rows.length) return `❌ Order *${orderId}* not found.`;
 
-  await query('UPDATE orders SET status = $1 WHERE id = $2', [matched, orderId]);
+  // Changing an order to Approved/Rejected is an approval decision; marking it
+  // Received closes it out and is only valid once it has been approved.
+  const decided = ['Approved', 'Rejected'].includes(matched);
+  if (decided && !(await botCan(session, 'approvals'))) return DENIED('approve or reject orders');
+  if (matched === 'Received' && r.rows[0].approval_status !== 'approved') {
+    return `❌ *${orderId}* must be approved before it can be marked Received.`;
+  }
+
+  const extra = decided ? ", approval_status = '" + matched.toLowerCase() + "'" : '';
+  await query(`UPDATE orders SET status = $1${extra} WHERE id = $2`, [matched, orderId]);
   await logBotAudit('update_order', 'order', orderId, { oldStatus: r.rows[0].status, newStatus: matched });
 
   return `✅ *${orderId}* status updated to *${matched}*.`;
 }
 
 async function handleDeleteOrder(params, session) {
+  if (!(await botCan(session, 'deleteOrders'))) return DENIED('delete orders');
   const { orderId } = params;
   const r = await query('SELECT * FROM orders WHERE id = $1', [orderId]);
   if (!r.rows.length) return `❌ Order *${orderId}* not found.`;
@@ -266,6 +288,8 @@ async function handleDeleteOrder(params, session) {
 
 async function executeDeleteConfirm(session) {
   const { type, id } = session.data;
+  const needed = type === 'bulk' ? 'deleteBulkOrders' : 'deleteOrders';
+  if (!(await botCan(session, needed))) return DENIED('delete records');
   if (type === 'order') {
     await query('DELETE FROM orders WHERE id = $1', [id]);
     await logBotAudit('delete_order', 'order', id, {});
@@ -343,6 +367,7 @@ async function handleListApprovals(params, session) {
 }
 
 async function handleApprove(params, session) {
+  if (!(await botCan(session, 'approvals'))) return DENIED('approve requests');
   const { approvalId } = params;
   const r = await query('SELECT * FROM pending_approvals WHERE id = $1', [approvalId]);
   if (!r.rows.length) return `❌ Approval *${approvalId}* not found.`;
@@ -357,6 +382,7 @@ async function handleApprove(params, session) {
 }
 
 async function handleReject(params, session) {
+  if (!(await botCan(session, 'approvals'))) return DENIED('reject requests');
   const { approvalId } = params;
   const r = await query('SELECT * FROM pending_approvals WHERE id = $1', [approvalId]);
   if (!r.rows.length) return `❌ Approval *${approvalId}* not found.`;
@@ -370,12 +396,37 @@ async function handleReject(params, session) {
   return `❌ *Reject ${approvalId}?*\n\nOrder: ${a.order_id}\nBy: ${a.requested_by || '—'}\n\nReply *confirm* to reject or *cancel* to abort.`;
 }
 
+// Resolve every order id covered by an approval (single, bulk or batch)
+async function approvalOrderIds(approvalId, fallbackOrderId) {
+  const r = await query('SELECT order_id, order_ids FROM pending_approvals WHERE id = $1', [approvalId]);
+  const row = r.rows[0] || {};
+  let ids = row.order_ids;
+  if (typeof ids === 'string') {
+    try {
+      ids = JSON.parse(ids);
+    } catch {
+      ids = null;
+    }
+  }
+  if (Array.isArray(ids) && ids.length) return ids;
+  const single = row.order_id || fallbackOrderId;
+  if (!single) return [];
+  return String(single)
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
 async function executeApproveConfirm(session) {
+  if (!(await botCan(session, 'approvals'))) return DENIED('approve requests');
   const { approvalId, orderId } = session.data;
   const now = new Date().toISOString().slice(0, 10);
   await query("UPDATE pending_approvals SET status = 'approved', action_date = $1 WHERE id = $2", [now, approvalId]);
-  if (orderId) {
-    await query("UPDATE orders SET approval_status = 'approved' WHERE id = $1", [orderId]);
+  const ids = await approvalOrderIds(approvalId, orderId);
+  if (ids.length) {
+    await query("UPDATE orders SET approval_status = 'approved', status = 'Approved' WHERE id = ANY($1::text[])", [
+      ids,
+    ]);
   }
   await logBotAudit('approve', 'approval', approvalId, { orderId });
   session.state = 'idle';
@@ -384,11 +435,15 @@ async function executeApproveConfirm(session) {
 }
 
 async function executeRejectConfirm(session) {
+  if (!(await botCan(session, 'approvals'))) return DENIED('reject requests');
   const { approvalId, orderId } = session.data;
   const now = new Date().toISOString().slice(0, 10);
   await query("UPDATE pending_approvals SET status = 'rejected', action_date = $1 WHERE id = $2", [now, approvalId]);
-  if (orderId) {
-    await query("UPDATE orders SET approval_status = 'rejected' WHERE id = $1", [orderId]);
+  const ids = await approvalOrderIds(approvalId, orderId);
+  if (ids.length) {
+    await query("UPDATE orders SET approval_status = 'rejected', status = 'Rejected' WHERE id = ANY($1::text[])", [
+      ids,
+    ]);
   }
   await logBotAudit('reject', 'approval', approvalId, { orderId });
   session.state = 'idle';

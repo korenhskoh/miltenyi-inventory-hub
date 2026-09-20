@@ -1,6 +1,105 @@
+import { useState } from 'react';
+import * as XLSX from 'xlsx';
 import { Upload, Check, X, Download, Search, Trash2 } from 'lucide-react';
-import { fmtDate } from '../utils.js';
+import { fmtDate, exportToFile } from '../utils.js';
+import { todayLocal } from '../lib/dates.js';
 import { Pill, BatchBar, BatchBtn, SelBox } from '../components/ui.jsx';
+import Pagination, { usePagination } from '../components/Pagination.jsx';
+
+/** Split one CSV line into cells, respecting double-quoted fields (with "" escapes). */
+const splitCsvLine = (line) => {
+  const cells = [];
+  let cur = '';
+  let inQ = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (inQ) {
+      if (ch === '"') {
+        if (line[i + 1] === '"') {
+          cur += '"';
+          i++;
+        } else inQ = false;
+      } else cur += ch;
+    } else if (ch === '"') inQ = true;
+    else if (ch === ',') {
+      cells.push(cur);
+      cur = '';
+    } else cur += ch;
+  }
+  cells.push(cur);
+  return cells.map((c) => c.trim());
+};
+
+/** Turn an uploaded file into an array of rows (array of cell strings). */
+const readRowsFromFile = (file) =>
+  new Promise((resolve, reject) => {
+    const isCsv = /\.csv$/i.test(file.name);
+    const isExcel = /\.xlsx?$/i.test(file.name);
+    if (!isCsv && !isExcel) {
+      reject(new Error('Unsupported file type. Please upload a .csv, .xlsx or .xls file.'));
+      return;
+    }
+    const reader = new FileReader();
+    reader.onerror = () => reject(reader.error || new Error('Could not read the uploaded file'));
+    if (isCsv) {
+      reader.onload = (evt) => {
+        const text = String(evt.target.result || '');
+        const lines = text.split(/\r?\n/).filter((l) => l.trim());
+        resolve(lines.map(splitCsvLine));
+      };
+      reader.readAsText(file);
+    } else {
+      reader.onload = (evt) => {
+        try {
+          const wb = XLSX.read(new Uint8Array(evt.target.result), { type: 'array' });
+          const ws = wb.Sheets[wb.SheetNames[0]];
+          const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+          resolve(rows.map((r) => r.map((c) => String(c ?? '').trim())).filter((r) => r.some((c) => c !== '')));
+        } catch (err) {
+          reject(err);
+        }
+      };
+      reader.readAsArrayBuffer(file);
+    }
+  });
+
+const exportStockCheckReport = (r) => {
+  const inv = Array.isArray(r.inventory) && r.inventory.length > 0 ? r.inventory : null;
+  if (inv) {
+    exportToFile(
+      inv.map((i) => ({
+        ...i,
+        variance: (Number(i.physicalQty) || 0) - (Number(i.systemQty) || 0),
+        checked: i.checked ? 'Yes' : 'No',
+      })),
+      [
+        { key: 'materialNo', label: 'Material No' },
+        { key: 'description', label: 'Description' },
+        { key: 'systemQty', label: 'System Qty' },
+        { key: 'physicalQty', label: 'Physical Qty' },
+        { key: 'variance', label: 'Variance' },
+        { key: 'checked', label: 'Checked' },
+      ],
+      `stock-check-${r.id}`,
+      'xlsx',
+    );
+  } else {
+    exportToFile(
+      [r],
+      [
+        { key: 'id', label: 'Check ID' },
+        { key: 'date', label: 'Date' },
+        { key: 'checkedBy', label: 'Checked By' },
+        { key: 'items', label: 'Items' },
+        { key: 'disc', label: 'Discrepancies' },
+        { key: 'status', label: 'Status' },
+        { key: 'notes', label: 'Notes' },
+      ],
+      `stock-check-${r.id}`,
+      'xlsx',
+    );
+  }
+};
 
 const StockCheckPage = ({
   stockChecks,
@@ -22,434 +121,463 @@ const StockCheckPage = ({
   toggleSel,
   toggleAll,
   hasPermission,
-}) => (
-  <div>
-    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 20 }}>
-      <p style={{ fontSize: 13, color: '#64748B' }}>Upload stock list file and perform inventory audit</p>
-    </div>
+}) => {
+  // Id of the stock check currently being performed (not necessarily index 0 of the list)
+  const [activeCheckId, setActiveCheckId] = useState(null);
 
-    {/* Stats */}
-    <div
-      className="grid-4"
-      style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 14, marginBottom: 24 }}
-    >
-      {[
-        { l: 'Total Checks', v: stockChecks.length, c: '#4338CA' },
-        { l: 'Completed', v: stockChecks.filter((s) => s.status === 'Completed').length, c: '#0B7A3E' },
-        { l: 'In Progress', v: stockChecks.filter((s) => s.status === 'In Progress').length, c: '#D97706' },
-        { l: 'Total Discrepancies', v: stockChecks.reduce((s, c) => s + c.disc, 0), c: '#DC2626' },
-      ].map((s, i) => (
-        <div key={i} className="card" style={{ padding: '18px 22px', borderLeft: `3px solid ${s.c}` }}>
-          <div
-            style={{ fontSize: 11, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 4 }}
-          >
-            {s.l}
-          </div>
-          <div className="mono" style={{ fontSize: 28, fontWeight: 700, color: s.c }}>
-            {s.v}
-          </div>
-        </div>
-      ))}
-    </div>
+  // Stock check history: filter first, then page the filtered list.
+  const filteredChecks = stockChecks.filter(
+    (r) =>
+      !stockCheckSearch ||
+      [r.id, r.checkedBy, r.notes || '', r.status].join(' ').toLowerCase().includes(stockCheckSearch.toLowerCase()),
+  );
+  const historyPager = usePagination(filteredChecks, {
+    storageKey: 'stockchecks',
+    initialSize: 50,
+    resetKey: stockCheckSearch,
+  });
+  const historyRows = historyPager.pageItems;
+  const selectionBeyondPage = selStockChecks.size > historyRows.filter((r) => selStockChecks.has(r.id)).length;
+  return (
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 20 }}>
+        <p style={{ fontSize: 13, color: '#64748B' }}>Upload stock list file and perform inventory audit</p>
+      </div>
 
-    {/* Upload Section - Show when no active check */}
-    {!stockCheckMode && (
-      <div className="card" style={{ padding: '24px', marginBottom: 20 }}>
-        <h3 style={{ fontSize: 15, fontWeight: 700, marginBottom: 8 }}>Start New Stock Check</h3>
-        <p style={{ fontSize: 12, color: '#64748B', marginBottom: 20 }}>
-          Upload an Excel (.xlsx) or CSV file with your stock list. File should contain columns: Material No,
-          Description, System Qty
-        </p>
-
-        <div className="grid-2" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20 }}>
-          {/* File Upload */}
-          <label
-            style={{
-              display: 'flex',
-              flexDirection: 'column',
-              alignItems: 'center',
-              justifyContent: 'center',
-              padding: '40px 24px',
-              border: '2px dashed #D1D5DB',
-              borderRadius: 12,
-              background: '#F9FAFB',
-              cursor: 'pointer',
-              transition: 'all 0.2s',
-            }}
-          >
-            <input
-              type="file"
-              accept=".csv,.xlsx,.xls"
-              onChange={(e) => {
-                const file = e.target.files[0];
-                if (!file) return;
-
-                const reader = new FileReader();
-                reader.onload = (evt) => {
-                  const text = evt.target.result;
-                  const lines = text.split('\n').filter((l) => l.trim());
-                  if (!lines.length) return;
-                  const headers = lines[0].split(',').map((h) => h.trim().toLowerCase());
-
-                  const matIdx = headers.findIndex(
-                    (h) => h.includes('material') || h.includes('part') || h.includes('sku'),
-                  );
-                  const descIdx = headers.findIndex(
-                    (h) => h.includes('desc') || h.includes('name') || h.includes('item'),
-                  );
-                  const qtyIdx = headers.findIndex(
-                    (h) => h.includes('qty') || h.includes('quantity') || h.includes('stock') || h.includes('system'),
-                  );
-
-                  const invList = lines
-                    .slice(1)
-                    .map((line, i) => {
-                      const cols = line.split(',').map((c) => c.trim().replace(/^"|"$/g, ''));
-                      return {
-                        id: `INV-${String(i + 1).padStart(3, '0')}`,
-                        materialNo: matIdx >= 0 ? cols[matIdx] : cols[0] || '',
-                        description: descIdx >= 0 ? cols[descIdx] : cols[1] || '',
-                        systemQty: parseInt(qtyIdx >= 0 ? cols[qtyIdx] : cols[2]) || 0,
-                        physicalQty: 0,
-                        checked: false,
-                      };
-                    })
-                    .filter((item) => item.materialNo);
-
-                  if (invList.length > 0) {
-                    setStockInventoryList(invList);
-                    setStockCheckMode(true);
-                    addStockCheck({
-                      id: `SC-${String(stockChecks.length + 1).padStart(3, '0')}`,
-                      date: new Date().toISOString().slice(0, 10),
-                      checkedBy: currentUser.name,
-                      items: invList.length,
-                      disc: 0,
-                      status: 'In Progress',
-                      notes: `Uploaded: ${file.name}`,
-                      inventory: invList,
-                    });
-                    notify('File Uploaded', `${invList.length} items loaded for stock check`, 'success');
-                  } else {
-                    notify('Invalid File', 'Could not parse items from file', 'warning');
-                  }
-                };
-                reader.readAsText(file);
-                e.target.value = '';
-              }}
-              style={{ display: 'none' }}
-            />
-            <Upload size={36} color="#9CA3AF" style={{ marginBottom: 12 }} />
-            <span style={{ fontSize: 14, fontWeight: 600, color: '#374151', marginBottom: 4 }}>
-              Drop file here or click to upload
-            </span>
-            <span style={{ fontSize: 12, color: '#9CA3AF' }}>CSV or Excel file (.csv, .xlsx)</span>
-          </label>
-
-          {/* File Format Guide */}
-          <div style={{ padding: '20px', background: '#F8FAFB', borderRadius: 12 }}>
-            <h4 style={{ fontSize: 13, fontWeight: 600, marginBottom: 12 }}>Expected File Format</h4>
+      {/* Stats */}
+      <div
+        className="grid-4"
+        style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 14, marginBottom: 24 }}
+      >
+        {[
+          { l: 'Total Checks', v: stockChecks.length, c: '#4338CA' },
+          { l: 'Completed', v: stockChecks.filter((s) => s.status === 'Completed').length, c: '#0B7A3E' },
+          { l: 'In Progress', v: stockChecks.filter((s) => s.status === 'In Progress').length, c: '#D97706' },
+          { l: 'Total Discrepancies', v: stockChecks.reduce((s, c) => s + c.disc, 0), c: '#DC2626' },
+        ].map((s, i) => (
+          <div key={i} className="card" style={{ padding: '18px 22px', borderLeft: `3px solid ${s.c}` }}>
             <div
               style={{
-                fontFamily: 'monospace',
                 fontSize: 11,
-                background: '#fff',
-                padding: 12,
-                borderRadius: 8,
-                border: '1px solid #E2E8F0',
+                color: '#94A3B8',
+                textTransform: 'uppercase',
+                letterSpacing: 0.5,
+                marginBottom: 4,
               }}
             >
-              <div style={{ color: '#64748B', marginBottom: 4 }}>Material No, Description, System Qty</div>
-              <div>130-095-005, MACSQuant Analyzer, 5</div>
-              <div>130-093-235, Pump Head Assembly, 3</div>
-              <div>130-042-303, Tubing Set Sterile, 10</div>
+              {s.l}
             </div>
-            <p style={{ fontSize: 11, color: '#94A3B8', marginTop: 12 }}>
-              Column headers are flexible - the system will detect: material/part/sku, description/name/item,
-              qty/quantity/stock
-            </p>
+            <div className="mono" style={{ fontSize: 28, fontWeight: 700, color: s.c }}>
+              {s.v}
+            </div>
           </div>
-        </div>
+        ))}
       </div>
-    )}
 
-    {/* Active Stock Check */}
-    {stockCheckMode && stockInventoryList.length > 0 && (
-      <div className="card" style={{ padding: '24px', marginBottom: 20, border: '2px solid #0B7A3E' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
-          <div>
-            <h3 style={{ fontSize: 16, fontWeight: 700 }}>Active Stock Check</h3>
-            <p style={{ fontSize: 12, color: '#64748B' }}>
-              Enter physical count for each item • {stockInventoryList.filter((i) => i.checked).length}/
-              {stockInventoryList.length} checked
-            </p>
-          </div>
-          <div style={{ display: 'flex', gap: 8 }}>
-            <button
-              className="bp"
-              onClick={() => {
-                const discrepancies = stockInventoryList.filter(
-                  (i) => i.checked && i.physicalQty !== i.systemQty,
-                ).length;
-                const scUpdates = {
-                  status: 'Completed',
-                  disc: discrepancies,
-                  notes: `Completed by ${currentUser.name}. ${discrepancies} discrepancies found.`,
-                };
-                setStockChecks((prev) => prev.map((s, idx) => (idx === 0 ? { ...s, ...scUpdates } : s)));
-                if (stockChecks[0])
-                  dbSync(api.updateStockCheck(stockChecks[0].id, scUpdates), 'Stock check update not saved');
-                setStockCheckMode(false);
-                setStockInventoryList([]);
-                notify('Stock Check Completed', `${discrepancies} discrepancies found`, 'success');
+      {/* Upload Section - Show when no active check */}
+      {!stockCheckMode && (
+        <div className="card" style={{ padding: '24px', marginBottom: 20 }}>
+          <h3 style={{ fontSize: 15, fontWeight: 700, marginBottom: 8 }}>Start New Stock Check</h3>
+          <p style={{ fontSize: 12, color: '#64748B', marginBottom: 20 }}>
+            Upload an Excel (.xlsx) or CSV file with your stock list. File should contain columns: Material No,
+            Description, System Qty
+          </p>
+
+          <div className="grid-2" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20 }}>
+            {/* File Upload */}
+            <label
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                justifyContent: 'center',
+                padding: '40px 24px',
+                border: '2px dashed #D1D5DB',
+                borderRadius: 12,
+                background: '#F9FAFB',
+                cursor: 'pointer',
+                transition: 'all 0.2s',
               }}
             >
-              <Check size={14} /> Complete Check
-            </button>
-            <button
-              className="bs"
-              onClick={() => {
-                setStockCheckMode(false);
-                setStockInventoryList([]);
-                setStockChecks((prev) => prev.slice(1));
+              <input
+                type="file"
+                accept=".csv,.xlsx,.xls"
+                onChange={(e) => {
+                  const file = e.target.files[0];
+                  if (!file) return;
+
+                  readRowsFromFile(file)
+                    .then((lines) => {
+                      if (!lines.length) {
+                        notify('Invalid File', 'Could not parse items from file', 'warning');
+                        return;
+                      }
+                      const headers = lines[0].map((h) => String(h).trim().toLowerCase());
+
+                      const matIdx = headers.findIndex(
+                        (h) => h.includes('material') || h.includes('part') || h.includes('sku'),
+                      );
+                      const descIdx = headers.findIndex(
+                        (h) => h.includes('desc') || h.includes('name') || h.includes('item'),
+                      );
+                      const qtyIdx = headers.findIndex(
+                        (h) =>
+                          h.includes('qty') || h.includes('quantity') || h.includes('stock') || h.includes('system'),
+                      );
+
+                      const invList = lines
+                        .slice(1)
+                        .map((cols, i) => {
+                          return {
+                            id: `INV-${String(i + 1).padStart(3, '0')}`,
+                            materialNo: matIdx >= 0 ? cols[matIdx] : cols[0] || '',
+                            description: descIdx >= 0 ? cols[descIdx] : cols[1] || '',
+                            systemQty: parseInt(qtyIdx >= 0 ? cols[qtyIdx] : cols[2]) || 0,
+                            physicalQty: 0,
+                            checked: false,
+                          };
+                        })
+                        .filter((item) => item.materialNo);
+
+                      if (invList.length > 0) {
+                        const newId = `SC-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`;
+                        setActiveCheckId(newId);
+                        setStockInventoryList(invList);
+                        setStockCheckMode(true);
+                        addStockCheck({
+                          id: newId,
+                          date: todayLocal(),
+                          checkedBy: currentUser.name,
+                          items: invList.length,
+                          disc: 0,
+                          status: 'In Progress',
+                          notes: `Uploaded: ${file.name}`,
+                          inventory: invList,
+                        });
+                        notify('File Uploaded', `${invList.length} items loaded for stock check`, 'success');
+                      } else {
+                        notify('Invalid File', 'Could not parse items from file', 'warning');
+                      }
+                    })
+                    .catch((err) =>
+                      notify('Invalid File', err?.message || 'Could not read the uploaded file', 'error'),
+                    );
+                  e.target.value = '';
+                }}
+                style={{ display: 'none' }}
+              />
+              <Upload size={36} color="#9CA3AF" style={{ marginBottom: 12 }} />
+              <span style={{ fontSize: 14, fontWeight: 600, color: '#374151', marginBottom: 4 }}>
+                Drop file here or click to upload
+              </span>
+              <span style={{ fontSize: 12, color: '#9CA3AF' }}>CSV or Excel file (.csv, .xlsx)</span>
+            </label>
+
+            {/* File Format Guide */}
+            <div style={{ padding: '20px', background: '#F8FAFB', borderRadius: 12 }}>
+              <h4 style={{ fontSize: 13, fontWeight: 600, marginBottom: 12 }}>Expected File Format</h4>
+              <div
+                style={{
+                  fontFamily: 'monospace',
+                  fontSize: 11,
+                  background: '#fff',
+                  padding: 12,
+                  borderRadius: 8,
+                  border: '1px solid #E2E8F0',
+                }}
+              >
+                <div style={{ color: '#64748B', marginBottom: 4 }}>Material No, Description, System Qty</div>
+                <div>130-095-005, MACSQuant Analyzer, 5</div>
+                <div>130-093-235, Pump Head Assembly, 3</div>
+                <div>130-042-303, Tubing Set Sterile, 10</div>
+              </div>
+              <p style={{ fontSize: 11, color: '#94A3B8', marginTop: 12 }}>
+                Column headers are flexible - the system will detect: material/part/sku, description/name/item,
+                qty/quantity/stock
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Active Stock Check */}
+      {stockCheckMode && stockInventoryList.length > 0 && (
+        <div className="card" style={{ padding: '24px', marginBottom: 20, border: '2px solid #0B7A3E' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+            <div>
+              <h3 style={{ fontSize: 16, fontWeight: 700 }}>Active Stock Check</h3>
+              <p style={{ fontSize: 12, color: '#64748B' }}>
+                Enter physical count for each item • {stockInventoryList.filter((i) => i.checked).length}/
+                {stockInventoryList.length} checked
+              </p>
+            </div>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button
+                className="bp"
+                onClick={() => {
+                  const discrepancies = stockInventoryList.filter(
+                    (i) => i.checked && i.physicalQty !== i.systemQty,
+                  ).length;
+                  const scUpdates = {
+                    status: 'Completed',
+                    disc: discrepancies,
+                    notes: `Completed by ${currentUser.name}. ${discrepancies} discrepancies found.`,
+                  };
+                  const targetId = activeCheckId ?? stockChecks.find((s) => s.status === 'In Progress')?.id;
+                  if (targetId) {
+                    setStockChecks((prev) => prev.map((s) => (s.id === targetId ? { ...s, ...scUpdates } : s)));
+                    dbSync(api.updateStockCheck(targetId, scUpdates), 'Stock check update not saved');
+                  }
+                  setActiveCheckId(null);
+                  setStockCheckMode(false);
+                  setStockInventoryList([]);
+                  notify('Stock Check Completed', `${discrepancies} discrepancies found`, 'success');
+                }}
+              >
+                <Check size={14} /> Complete Check
+              </button>
+              <button
+                className="bs"
+                onClick={() => {
+                  const targetId = activeCheckId ?? stockChecks.find((s) => s.status === 'In Progress')?.id;
+                  if (targetId) {
+                    setStockChecks((prev) => prev.filter((s) => s.id !== targetId));
+                    dbSync(api.deleteStockCheck(targetId), 'Stock check cancel not saved');
+                  }
+                  setActiveCheckId(null);
+                  setStockCheckMode(false);
+                  setStockInventoryList([]);
+                }}
+              >
+                <X size={14} /> Cancel
+              </button>
+            </div>
+          </div>
+
+          {/* Progress Bar */}
+          <div style={{ height: 8, background: '#E2E8F0', borderRadius: 4, marginBottom: 20, overflow: 'hidden' }}>
+            <div
+              style={{
+                height: '100%',
+                width: `${(stockInventoryList.filter((i) => i.checked).length / stockInventoryList.length) * 100}%`,
+                background: 'linear-gradient(90deg,#006837,#00A550)',
+                borderRadius: 4,
+                transition: 'width 0.3s',
               }}
-            >
-              <X size={14} /> Cancel
-            </button>
-          </div>
-        </div>
-
-        {/* Progress Bar */}
-        <div style={{ height: 8, background: '#E2E8F0', borderRadius: 4, marginBottom: 20, overflow: 'hidden' }}>
-          <div
-            style={{
-              height: '100%',
-              width: `${(stockInventoryList.filter((i) => i.checked).length / stockInventoryList.length) * 100}%`,
-              background: 'linear-gradient(90deg,#006837,#00A550)',
-              borderRadius: 4,
-              transition: 'width 0.3s',
-            }}
-          />
-        </div>
-
-        <div style={{ maxHeight: 400, overflow: 'auto' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
-            <thead style={{ position: 'sticky', top: 0, background: '#F8FAFB', zIndex: 10 }}>
-              <tr>
-                <th className="th">Material No.</th>
-                <th className="th">Description</th>
-                <th className="th" style={{ width: 100 }}>
-                  System Qty
-                </th>
-                <th className="th" style={{ width: 120 }}>
-                  Physical Count
-                </th>
-                <th className="th" style={{ width: 100 }}>
-                  Variance
-                </th>
-                <th className="th" style={{ width: 80 }}>
-                  Status
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {stockInventoryList.map((item, idx) => {
-                const variance = item.checked ? item.physicalQty - item.systemQty : null;
-                return (
-                  <tr
-                    key={item.id}
-                    style={{
-                      borderBottom: '1px solid #F0F2F5',
-                      background: item.checked ? (variance !== 0 ? '#FEF2F2' : '#F0FDF4') : '#fff',
-                    }}
-                  >
-                    <td className="td mono" style={{ fontSize: 11, color: '#0B7A3E', fontWeight: 600 }}>
-                      {item.materialNo}
-                    </td>
-                    <td
-                      className="td"
-                      style={{ maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-                    >
-                      {item.description}
-                    </td>
-                    <td className="td" style={{ textAlign: 'center', fontWeight: 600 }}>
-                      {item.systemQty}
-                    </td>
-                    <td className="td" style={{ textAlign: 'center' }}>
-                      <input
-                        type="number"
-                        min="0"
-                        value={item.physicalQty || ''}
-                        placeholder="0"
-                        onChange={(e) => {
-                          const val = parseInt(e.target.value) || 0;
-                          setStockInventoryList((prev) =>
-                            prev.map((x, i) => (i === idx ? { ...x, physicalQty: val, checked: true } : x)),
-                          );
-                        }}
-                        style={{
-                          width: 70,
-                          padding: '6px 8px',
-                          textAlign: 'center',
-                          borderRadius: 6,
-                          border: '1px solid #E2E8F0',
-                          fontSize: 12,
-                        }}
-                      />
-                    </td>
-                    <td
-                      className="td"
-                      style={{
-                        textAlign: 'center',
-                        fontWeight: 700,
-                        color:
-                          variance === null
-                            ? '#94A3B8'
-                            : variance === 0
-                              ? '#059669'
-                              : variance > 0
-                                ? '#2563EB'
-                                : '#DC2626',
-                      }}
-                    >
-                      {variance === null
-                        ? '\u2014'
-                        : variance === 0
-                          ? 'Match'
-                          : variance > 0
-                            ? `+${variance}`
-                            : variance}
-                    </td>
-                    <td className="td">
-                      {item.checked ? (
-                        variance === 0 ? (
-                          <Pill bg="#D1FAE5" color="#059669">
-                            {'\u2713'} OK
-                          </Pill>
-                        ) : (
-                          <Pill bg="#FEE2E2" color="#DC2626">
-                            Disc.
-                          </Pill>
-                        )
-                      ) : (
-                        <Pill bg="#F3F4F6" color="#9CA3AF">
-                          Pending
-                        </Pill>
-                      )}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-
-        {/* Summary */}
-        <div
-          style={{
-            marginTop: 20,
-            padding: 16,
-            background: '#F8FAFB',
-            borderRadius: 10,
-            display: 'flex',
-            justifyContent: 'space-between',
-          }}
-        >
-          <div>
-            <span style={{ fontSize: 12, color: '#64748B' }}>Checked: </span>
-            <strong>{stockInventoryList.filter((i) => i.checked).length}</strong>
-          </div>
-          <div>
-            <span style={{ fontSize: 12, color: '#64748B' }}>Matches: </span>
-            <strong style={{ color: '#059669' }}>
-              {stockInventoryList.filter((i) => i.checked && i.physicalQty === i.systemQty).length}
-            </strong>
-          </div>
-          <div>
-            <span style={{ fontSize: 12, color: '#64748B' }}>Discrepancies: </span>
-            <strong style={{ color: '#DC2626' }}>
-              {stockInventoryList.filter((i) => i.checked && i.physicalQty !== i.systemQty).length}
-            </strong>
-          </div>
-          <div>
-            <span style={{ fontSize: 12, color: '#64748B' }}>Pending: </span>
-            <strong style={{ color: '#D97706' }}>{stockInventoryList.filter((i) => !i.checked).length}</strong>
-          </div>
-        </div>
-      </div>
-    )}
-
-    {/* Stock Check History */}
-    {hasPermission('deleteStockChecks') && (
-      <BatchBar count={selStockChecks.size} onClear={() => setSelStockChecks(new Set())}>
-        <BatchBtn onClick={batchDeleteStockChecks} bg="#DC2626" icon={Trash2}>
-          Delete Selected
-        </BatchBtn>
-      </BatchBar>
-    )}
-    <div className="card" style={{ overflow: 'hidden' }}>
-      <div
-        style={{
-          padding: '16px 20px',
-          borderBottom: '1px solid #E8ECF0',
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-        }}
-      >
-        <span style={{ fontWeight: 600, fontSize: 14 }}>Stock Check History</span>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <div style={{ position: 'relative' }}>
-            <Search size={15} style={{ position: 'absolute', left: 10, top: 10, color: '#94A3B8' }} />
-            <input
-              className="header-search"
-              type="text"
-              placeholder="Search..."
-              value={stockCheckSearch}
-              onChange={(e) => setStockCheckSearch(e.target.value)}
-              style={{ paddingLeft: 32, width: 180, height: 36 }}
             />
           </div>
-          {selStockChecks.size > 0 && (
-            <span style={{ fontSize: 11, color: '#DC2626', fontWeight: 600 }}>{selStockChecks.size} selected</span>
-          )}
+
+          <div style={{ maxHeight: 400, overflow: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+              <thead style={{ position: 'sticky', top: 0, background: '#F8FAFB', zIndex: 10 }}>
+                <tr>
+                  <th className="th">Material No.</th>
+                  <th className="th">Description</th>
+                  <th className="th" style={{ width: 100 }}>
+                    System Qty
+                  </th>
+                  <th className="th" style={{ width: 120 }}>
+                    Physical Count
+                  </th>
+                  <th className="th" style={{ width: 100 }}>
+                    Variance
+                  </th>
+                  <th className="th" style={{ width: 80 }}>
+                    Status
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {stockInventoryList.map((item, idx) => {
+                  const variance = item.checked ? item.physicalQty - item.systemQty : null;
+                  return (
+                    <tr
+                      key={item.id}
+                      style={{
+                        borderBottom: '1px solid #F0F2F5',
+                        background: item.checked ? (variance !== 0 ? '#FEF2F2' : '#F0FDF4') : '#fff',
+                      }}
+                    >
+                      <td className="td mono" style={{ fontSize: 11, color: '#0B7A3E', fontWeight: 600 }}>
+                        {item.materialNo}
+                      </td>
+                      <td
+                        className="td"
+                        style={{ maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                      >
+                        {item.description}
+                      </td>
+                      <td className="td" style={{ textAlign: 'center', fontWeight: 600 }}>
+                        {item.systemQty}
+                      </td>
+                      <td className="td" style={{ textAlign: 'center' }}>
+                        <input
+                          type="number"
+                          min="0"
+                          value={item.physicalQty || ''}
+                          placeholder="0"
+                          onChange={(e) => {
+                            const val = parseInt(e.target.value) || 0;
+                            setStockInventoryList((prev) =>
+                              prev.map((x, i) => (i === idx ? { ...x, physicalQty: val, checked: true } : x)),
+                            );
+                          }}
+                          style={{
+                            width: 70,
+                            padding: '6px 8px',
+                            textAlign: 'center',
+                            borderRadius: 6,
+                            border: '1px solid #E2E8F0',
+                            fontSize: 12,
+                          }}
+                        />
+                      </td>
+                      <td
+                        className="td"
+                        style={{
+                          textAlign: 'center',
+                          fontWeight: 700,
+                          color:
+                            variance === null
+                              ? '#94A3B8'
+                              : variance === 0
+                                ? '#059669'
+                                : variance > 0
+                                  ? '#2563EB'
+                                  : '#DC2626',
+                        }}
+                      >
+                        {variance === null
+                          ? '\u2014'
+                          : variance === 0
+                            ? 'Match'
+                            : variance > 0
+                              ? `+${variance}`
+                              : variance}
+                      </td>
+                      <td className="td">
+                        {item.checked ? (
+                          variance === 0 ? (
+                            <Pill bg="#D1FAE5" color="#059669">
+                              {'\u2713'} OK
+                            </Pill>
+                          ) : (
+                            <Pill bg="#FEE2E2" color="#DC2626">
+                              Disc.
+                            </Pill>
+                          )
+                        ) : (
+                          <Pill bg="#F3F4F6" color="#9CA3AF">
+                            Pending
+                          </Pill>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Summary */}
+          <div
+            style={{
+              marginTop: 20,
+              padding: 16,
+              background: '#F8FAFB',
+              borderRadius: 10,
+              display: 'flex',
+              justifyContent: 'space-between',
+            }}
+          >
+            <div>
+              <span style={{ fontSize: 12, color: '#64748B' }}>Checked: </span>
+              <strong>{stockInventoryList.filter((i) => i.checked).length}</strong>
+            </div>
+            <div>
+              <span style={{ fontSize: 12, color: '#64748B' }}>Matches: </span>
+              <strong style={{ color: '#059669' }}>
+                {stockInventoryList.filter((i) => i.checked && i.physicalQty === i.systemQty).length}
+              </strong>
+            </div>
+            <div>
+              <span style={{ fontSize: 12, color: '#64748B' }}>Discrepancies: </span>
+              <strong style={{ color: '#DC2626' }}>
+                {stockInventoryList.filter((i) => i.checked && i.physicalQty !== i.systemQty).length}
+              </strong>
+            </div>
+            <div>
+              <span style={{ fontSize: 12, color: '#64748B' }}>Pending: </span>
+              <strong style={{ color: '#D97706' }}>{stockInventoryList.filter((i) => !i.checked).length}</strong>
+            </div>
+          </div>
         </div>
-      </div>
-      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5 }}>
-        <thead>
-          <tr style={{ background: '#F8FAFB' }}>
-            {hasPermission('deleteStockChecks') && (
-              <th className="th" style={{ width: 36 }}>
-                <SelBox
-                  checked={selStockChecks.size === stockChecks.length && stockChecks.length > 0}
-                  onChange={() =>
-                    toggleAll(
-                      selStockChecks,
-                      setSelStockChecks,
-                      stockChecks.map((r) => r.id),
-                    )
-                  }
-                />
-              </th>
+      )}
+
+      {/* Stock Check History */}
+      {hasPermission('deleteStockChecks') && (
+        <BatchBar count={selStockChecks.size} onClear={() => setSelStockChecks(new Set())}>
+          <BatchBtn onClick={batchDeleteStockChecks} bg="#DC2626" icon={Trash2}>
+            Delete Selected
+          </BatchBtn>
+        </BatchBar>
+      )}
+      <div className="card" style={{ overflow: 'hidden' }}>
+        <div
+          style={{
+            padding: '16px 20px',
+            borderBottom: '1px solid #E8ECF0',
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+          }}
+        >
+          <span style={{ fontWeight: 600, fontSize: 14 }}>Stock Check History</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <div style={{ position: 'relative' }}>
+              <Search size={15} style={{ position: 'absolute', left: 10, top: 10, color: '#94A3B8' }} />
+              <input
+                className="header-search"
+                type="text"
+                placeholder="Search..."
+                value={stockCheckSearch}
+                onChange={(e) => setStockCheckSearch(e.target.value)}
+                style={{ paddingLeft: 32, width: 180, height: 36 }}
+              />
+            </div>
+            {selStockChecks.size > 0 && (
+              <span style={{ fontSize: 11, color: '#DC2626', fontWeight: 600 }}>
+                {selStockChecks.size} selected{selectionBeyondPage ? ' across all pages' : ''}
+              </span>
             )}
-            {['ID', 'Date', 'Checked By', 'Items', 'Discrepancies', 'Status', 'Notes', 'Action'].map((h) => (
-              <th key={h} className="th">
-                {h}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {(() => {
-            const fs = stockChecks.filter(
-              (r) =>
-                !stockCheckSearch ||
-                [r.id, r.checkedBy, r.notes || '', r.status]
-                  .join(' ')
-                  .toLowerCase()
-                  .includes(stockCheckSearch.toLowerCase()),
-            );
-            return fs.length === 0 ? (
+          </div>
+        </div>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5 }}>
+          <thead>
+            <tr style={{ background: '#F8FAFB' }}>
+              {hasPermission('deleteStockChecks') && (
+                <th className="th" style={{ width: 36 }}>
+                  <SelBox
+                    checked={selStockChecks.size === stockChecks.length && stockChecks.length > 0}
+                    onChange={() =>
+                      toggleAll(
+                        selStockChecks,
+                        setSelStockChecks,
+                        stockChecks.map((r) => r.id),
+                      )
+                    }
+                  />
+                </th>
+              )}
+              {['ID', 'Date', 'Checked By', 'Items', 'Discrepancies', 'Status', 'Notes', 'Action'].map((h) => (
+                <th key={h} className="th">
+                  {h}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {filteredChecks.length === 0 ? (
               <tr>
                 <td
                   colSpan={hasPermission('deleteStockChecks') ? 9 : 8}
@@ -459,7 +587,7 @@ const StockCheckPage = ({
                 </td>
               </tr>
             ) : (
-              fs.map((r) => (
+              historyRows.map((r) => (
                 <tr
                   key={r.id}
                   className="tr"
@@ -517,7 +645,12 @@ const StockCheckPage = ({
                           className="bs"
                           style={{ padding: '4px 8px', fontSize: 11 }}
                           onClick={() => {
-                            notify('Report Downloaded', `${r.id} exported`, 'success');
+                            try {
+                              exportStockCheckReport(r);
+                              notify('Report Downloaded', `${r.id} exported`, 'success');
+                            } catch {
+                              notify('Export Failed', `Could not export ${r.id}`, 'error');
+                            }
                           }}
                         >
                           <Download size={12} />
@@ -549,12 +682,15 @@ const StockCheckPage = ({
                   </td>
                 </tr>
               ))
-            );
-          })()}
-        </tbody>
-      </table>
+            )}
+          </tbody>
+        </table>
+        <div style={{ padding: '4px 20px 10px' }}>
+          <Pagination {...historyPager} unit="stock checks" />
+        </div>
+      </div>
     </div>
-  </div>
-);
+  );
+};
 
 export default StockCheckPage;

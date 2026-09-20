@@ -20,6 +20,7 @@ import {
 import * as XLSX from 'xlsx';
 import { fmt } from '../utils.js';
 import { Pill, Toggle, SelBox } from '../components/ui.jsx';
+import Pagination, { usePagination } from '../components/Pagination.jsx';
 
 export default function SettingsPage({
   customLogo,
@@ -68,11 +69,15 @@ export default function SettingsPage({
   setPage,
   waNotifyRules,
   scheduledNotifs,
-  LS_KEYS,
   api,
   blurPrices,
   setBlurPrices,
 }) {
+  const openApprovals = (Array.isArray(pendingApprovals) ? pendingApprovals : []).filter((a) => a.status === 'pending');
+  const approvalPager = usePagination(openApprovals, { storageKey: 'settings-approvals', initialSize: 50 });
+  const approvalSelectionBeyondPage =
+    selApprovals.size > approvalPager.pageItems.filter((a) => selApprovals.has(a.id)).length;
+
   return (
     <div style={{ maxWidth: 700 }}>
       {/* Logo Settings - Admin Only */}
@@ -222,7 +227,10 @@ export default function SettingsPage({
                 type="number"
                 step={f.s}
                 value={priceConfig[f.k]}
-                onChange={(e) => setPriceConfig((p) => ({ ...p, [f.k]: parseFloat(e.target.value) }))}
+                onChange={(e) => {
+                  const v = parseFloat(e.target.value);
+                  setPriceConfig((p) => ({ ...p, [f.k]: Number.isFinite(v) ? v : 0 }));
+                }}
                 style={{ width: '100%' }}
               />
             </div>
@@ -626,9 +634,11 @@ export default function SettingsPage({
             {pendingApprovals.length > 0 && (
               <div style={{ marginTop: 8 }}>
                 <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#4A5568', marginBottom: 8 }}>
-                  Pending Approvals ({pendingApprovals.filter((a) => a.status === 'pending').length})
+                  Pending Approvals ({openApprovals.length})
                   {selApprovals.size > 0 && (
-                    <span style={{ color: '#2563EB', marginLeft: 8 }}>{selApprovals.size} selected</span>
+                    <span style={{ color: '#2563EB', marginLeft: 8 }}>
+                      {selApprovals.size} selected{approvalSelectionBeyondPage ? ' across all pages' : ''}
+                    </span>
                   )}
                 </label>
                 {selApprovals.size > 0 && (
@@ -687,69 +697,68 @@ export default function SettingsPage({
                   </div>
                 )}
                 <div style={{ maxHeight: 250, overflow: 'auto', border: '1px solid #E8ECF0', borderRadius: 8 }}>
-                  {pendingApprovals
-                    .filter((a) => a.status === 'pending')
-                    .map((a) => (
-                      <div
-                        key={a.id}
-                        style={{
-                          padding: 12,
-                          borderBottom: '1px solid #F1F5F9',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'space-between',
-                          background: selApprovals.has(a.id) ? '#EDE9FE' : '#fff',
-                        }}
-                      >
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                          <SelBox
-                            checked={selApprovals.has(a.id)}
-                            onChange={() => toggleSel(selApprovals, setSelApprovals, a.id)}
-                          />
-                          <div>
-                            <div style={{ fontSize: 12, fontWeight: 600 }}>
-                              {a.orderId} - {a.description}
-                            </div>
-                            <div style={{ fontSize: 11, color: '#64748B' }}>
-                              By: {a.requestedBy} | Qty: {a.quantity} | S${a.totalCost?.toFixed(2) || '0.00'}
-                            </div>
+                  {approvalPager.pageItems.map((a) => (
+                    <div
+                      key={a.id}
+                      style={{
+                        padding: 12,
+                        borderBottom: '1px solid #F1F5F9',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        background: selApprovals.has(a.id) ? '#EDE9FE' : '#fff',
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                        <SelBox
+                          checked={selApprovals.has(a.id)}
+                          onChange={() => toggleSel(selApprovals, setSelApprovals, a.id)}
+                        />
+                        <div>
+                          <div style={{ fontSize: 12, fontWeight: 600 }}>
+                            {a.orderId} - {a.description}
+                          </div>
+                          <div style={{ fontSize: 11, color: '#64748B' }}>
+                            By: {a.requestedBy} | Qty: {a.quantity} | S${a.totalCost?.toFixed(2) || '0.00'}
                           </div>
                         </div>
-                        <div style={{ display: 'flex', gap: 6 }}>
-                          <button
-                            onClick={() => handleApprovalAction(a.id, 'approved')}
-                            style={{
-                              padding: '6px 12px',
-                              background: '#D1FAE5',
-                              color: '#059669',
-                              border: 'none',
-                              borderRadius: 6,
-                              fontSize: 11,
-                              fontWeight: 600,
-                              cursor: 'pointer',
-                            }}
-                          >
-                            Approve
-                          </button>
-                          <button
-                            onClick={() => handleApprovalAction(a.id, 'rejected')}
-                            style={{
-                              padding: '6px 12px',
-                              background: '#FEE2E2',
-                              color: '#DC2626',
-                              border: 'none',
-                              borderRadius: 6,
-                              fontSize: 11,
-                              fontWeight: 600,
-                              cursor: 'pointer',
-                            }}
-                          >
-                            Reject
-                          </button>
-                        </div>
                       </div>
-                    ))}
+                      <div style={{ display: 'flex', gap: 6 }}>
+                        <button
+                          onClick={() => handleApprovalAction(a.id, 'approved')}
+                          style={{
+                            padding: '6px 12px',
+                            background: '#D1FAE5',
+                            color: '#059669',
+                            border: 'none',
+                            borderRadius: 6,
+                            fontSize: 11,
+                            fontWeight: 600,
+                            cursor: 'pointer',
+                          }}
+                        >
+                          Approve
+                        </button>
+                        <button
+                          onClick={() => handleApprovalAction(a.id, 'rejected')}
+                          style={{
+                            padding: '6px 12px',
+                            background: '#FEE2E2',
+                            color: '#DC2626',
+                            border: 'none',
+                            borderRadius: 6,
+                            fontSize: 11,
+                            fontWeight: 600,
+                            cursor: 'pointer',
+                          }}
+                        >
+                          Reject
+                        </button>
+                      </div>
+                    </div>
+                  ))}
                 </div>
+                <Pagination {...approvalPager} unit="approvals" />
               </div>
             )}
             <div style={{ fontSize: 11, color: '#94A3B8', background: '#F8FAFB', padding: 12, borderRadius: 8 }}>
@@ -924,26 +933,31 @@ export default function SettingsPage({
               className="bs"
               style={{ fontSize: 12 }}
               onClick={() => {
+                // Mirrors server/defaultEmailTemplates.js — keep the two in sync.
                 setEmailTemplates({
                   orderApproval: {
-                    subject: '[APPROVAL] Batch Order Request - {orderCount} Orders (S${totalCost})',
-                    body: 'Order Approval Request\n\nRequested By: {orderBy}\nDate: {date}\nTotal Orders: {orderCount}\nTotal Quantity: {totalQty}\nTotal Cost: S${totalCost}\n\n{orderTable}\n\nReply APPROVE to approve all orders or REJECT to decline.\n\n-Miltenyi Inventory Hub SG',
+                    subject: '[APPROVAL] Order {orderId} - {description}',
+                    body: 'Dear Approver,\n\nA new order requires your approval.\n\nOrder ID: {orderId}\nDescription: {description}\nQuantity: {quantity}\nRequested By: {requestedBy}\nDate: {date}\n\nOrder Details:\n{orderDetails}\n\nPlease reply with one of the following to approve or reject this order:\n- Reply "approve" or "yes" to APPROVE this order\n- Reply "reject" or "no" to REJECT this order\n\nYou may also include comments after your decision.\n\nThank you,\nMiltenyi Inventory Hub',
                   },
                   bulkApproval: {
-                    subject: '[APPROVAL] Bulk Order Batch - {batchCount} Batches (S${totalCost})',
-                    body: 'Bulk Order Approval Request\n\nRequested By: {orderBy}\nDate: {date}\nBatches: {batchCount}\nTotal Items: {itemCount}\nTotal Cost: S${totalCost}\n\n{orderTable}\n\nReply APPROVE to approve or REJECT to decline.\n\n-Miltenyi Inventory Hub SG',
+                    subject: '[APPROVAL] Bulk Order {batchId} - {month}',
+                    body: 'Dear Approver,\n\nA bulk order requires your approval.\n\nBatch ID: {batchId}\nMonth: {month}\nTotal Items: {totalItems}\nTotal Value: {totalValue}\nRequested By: {requestedBy}\nDate: {date}\n\nBulk Order Details:\n{bulkOrderDetails}\n\nPlease reply with one of the following to approve or reject this bulk order:\n- Reply "approve" or "yes" to APPROVE this bulk order\n- Reply "reject" or "no" to REJECT this bulk order\n\nYou may also include comments after your decision.\n\nThank you,\nMiltenyi Inventory Hub',
                   },
                   orderNotification: {
                     subject: 'New Order: {orderId} - {description}',
-                    body: 'A new order has been created.\n\nOrder ID: {orderId}\nItem: {description}\nMaterial: {materialNo}\nQuantity: {quantity}\nTotal: S${totalCost}\nOrdered By: {orderBy}\nDate: {date}\n\n-Miltenyi Inventory Hub SG',
+                    body: 'Dear Team,\n\nA new order has been created.\n\nOrder ID: {orderId}\nDescription: {description}\nQuantity: {quantity}\nRequested By: {requestedBy}\nDate: {date}\nStatus: {status}\n\nOrder Details:\n{orderDetails}\n\nPlease log in to the Miltenyi Inventory Hub for more details.\n\nThank you,\nMiltenyi Inventory Hub',
                   },
                   backOrderAlert: {
                     subject: 'Back Order Alert: {description}',
-                    body: 'Back Order Alert\n\nThe following item is on back order:\n\nOrder ID: {orderId}\nItem: {description}\nOrdered: {quantity}\nReceived: {received}\nPending: {pending}\n\nPlease follow up with HQ.\n\n-Miltenyi Inventory Hub SG',
+                    body: 'Dear Team,\n\nThe following item is on back order and requires attention.\n\nItem: {description}\nCatalog Number: {catalogNumber}\nQuantity on Back Order: {quantity}\nExpected Arrival: {expectedArrival}\nSupplier: {supplier}\n\nPlease take the necessary action to follow up on this back order.\n\nThank you,\nMiltenyi Inventory Hub',
+                  },
+                  partArrivalDone: {
+                    subject: 'Part Arrival Verified - {month}',
+                    body: 'Dear Team,\n\nPart arrival has been verified for the following batch.\n\nMonth: {month}\nTotal Items: {totalItems}\nFully Received: {received}\nBack Orders: {backOrders}\nVerified By: {verifiedBy}\nDate: {date}\n\nItems Summary:\n{itemsList}\n\nPlease log in to the Miltenyi Inventory Hub for full details.\n\nThank you,\nMiltenyi Inventory Hub',
                   },
                   monthlySummary: {
                     subject: 'Monthly Summary - {month}',
-                    body: 'Monthly Inventory Summary\n\nMonth: {month}\nTotal Orders: {totalOrders}\nReceived: {received}\nPending: {pending}\nBack Orders: {backOrders}\nTotal Value: S${totalValue}\n\n-Miltenyi Inventory Hub SG',
+                    body: 'Dear Team,\n\nHere is the monthly inventory summary for {month}.\n\nTotal Orders: {totalOrders}\nPending Orders: {pendingOrders}\nCompleted Orders: {completedOrders}\nBack Orders: {backOrders}\nTotal Value: {totalValue}\n\nTop Items Ordered:\n{topItems}\n\nPlease review the summary and take any necessary actions.\n\nThank you,\nMiltenyi Inventory Hub',
                   },
                 });
                 notify('Templates Reset', 'Restored default templates', 'info');
@@ -1182,8 +1196,10 @@ export default function SettingsPage({
                           );
                           setWaAllowedSenders(newSenders);
                           try {
-                            await api.setConfigKey('waAllowedSenders', newSenders);
-                            notify('Sender Removed', `${username} removed from WhatsApp senders`, 'success');
+                            const saved = await api.setConfigKey('waAllowedSenders', newSenders);
+                            if (saved === null)
+                              notify('Save Failed', 'Could not save sender assignment to the server', 'error');
+                            else notify('Sender Removed', `${username} removed from WhatsApp senders`, 'success');
                           } catch (e) {
                             notify('Save Failed', 'Could not save sender assignment: ' + e.message, 'error');
                           }
@@ -1230,8 +1246,10 @@ export default function SettingsPage({
                     const newSenders = [...(Array.isArray(waAllowedSenders) ? waAllowedSenders : []), select.value];
                     setWaAllowedSenders(newSenders);
                     try {
-                      await api.setConfigKey('waAllowedSenders', newSenders);
-                      notify('Sender Added', `${select.value} can now connect WhatsApp`, 'success');
+                      const saved = await api.setConfigKey('waAllowedSenders', newSenders);
+                      if (saved === null)
+                        notify('Save Failed', 'Could not save sender assignment to the server', 'error');
+                      else notify('Sender Added', `${select.value} can now connect WhatsApp`, 'success');
                     } catch (e) {
                       notify('Save Failed', 'Could not save sender assignment: ' + e.message, 'error');
                     }
@@ -1350,10 +1368,10 @@ export default function SettingsPage({
                     if (
                       window.confirm('Clear ALL orders? This cannot be undone. Bulk group totals will be reset to 0.')
                     ) {
-                      setOrders([]);
-                      setBulkGroups((prev) => prev.map((bg) => ({ ...bg, items: 0, totalCost: 0 })));
                       const ok = await api.clearOrders();
                       if (ok) {
+                        setOrders([]);
+                        setBulkGroups((prev) => prev.map((bg) => ({ ...bg, items: 0, totalCost: 0 })));
                         bulkGroups.forEach((bg) =>
                           dbSync(api.updateBulkGroup(bg.id, { items: 0, totalCost: 0 }), 'Bulk group reset'),
                         );
@@ -1432,7 +1450,6 @@ export default function SettingsPage({
                         api.clearNotifLog(),
                         api.clearApprovals(),
                       ]);
-                      Object.values(LS_KEYS).forEach((k) => localStorage.removeItem(k));
                       const failed = results.filter((r) => !r).length;
                       if (failed === 0) {
                         notify('All Data Cleared', 'System reset complete', 'info');

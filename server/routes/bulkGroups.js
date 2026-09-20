@@ -2,9 +2,10 @@ import { Router } from 'express';
 import { query } from '../db.js';
 import { snakeToCamel, camelToSnake } from '../utils.js';
 import { pickAllowed, requireFields, sanitizeDates } from '../validation.js';
-import { paginate, envelope } from '../pagination.js';
+import { paginate, envelope, limitClause } from '../pagination.js';
 import { asyncHandler } from '../middleware/errorHandler.js';
 import { requireAdmin } from '../middleware/auth.js';
+import { requirePermission, userHasPermission } from '../middleware/permissions.js';
 
 const router = Router();
 
@@ -12,16 +13,21 @@ const BULK_GROUP_FIELDS = ['id', 'month', 'created_by', 'items', 'total_cost', '
 const BG_DATE_FIELDS = ['date'];
 const BULK_GROUP_REQUIRED = ['id', 'month'];
 
+// Case-insensitive: a capitalised-only check let `status: 'approved'` through.
+const DECIDED_STATUSES = new Set(['approved', 'rejected']);
+const isDecidedStatus = (v) => DECIDED_STATUSES.has(String(v ?? '').toLowerCase());
+
 // GET / - list all bulk groups
 router.get(
   '/',
   asyncHandler(async (req, res) => {
-    const { page, pageSize, offset } = paginate(req.query);
+    const { page, pageSize } = paginate(req.query);
     const countResult = await query('SELECT COUNT(*) FROM bulk_groups');
     const total = parseInt(countResult.rows[0].count);
-    const dataResult = await query('SELECT * FROM bulk_groups ORDER BY id DESC LIMIT $1 OFFSET $2', [pageSize, offset]);
+    const lim = limitClause(req, 1);
+    const dataResult = await query(`SELECT * FROM bulk_groups ORDER BY id DESC${lim.clause}`, lim.params);
     const rows = dataResult.rows.map(snakeToCamel);
-    res.json(envelope(rows, total, page, pageSize));
+    res.json(envelope(rows, total, lim.clause ? page : 1, lim.clause ? pageSize : rows.length));
   }),
 );
 
@@ -31,6 +37,11 @@ router.post('/', async (req, res) => {
     const snakeBody = sanitizeDates(pickAllowed(camelToSnake(req.body), BULK_GROUP_FIELDS), BG_DATE_FIELDS);
     const err = requireFields(snakeBody, BULK_GROUP_REQUIRED);
     if (err) return res.status(400).json({ error: err });
+
+    // A group may not be created already approved / rejected.
+    if (isDecidedStatus(snakeBody.status) && !(await userHasPermission(req.user, 'approvals'))) {
+      return res.status(403).json({ error: 'Permission required: approvals' });
+    }
 
     const keys = Object.keys(snakeBody);
     const values = Object.values(snakeBody);
@@ -49,6 +60,9 @@ router.put('/:id', async (req, res) => {
   try {
     const { id } = req.params;
     const snakeBody = sanitizeDates(pickAllowed(camelToSnake(req.body), BULK_GROUP_FIELDS), BG_DATE_FIELDS);
+    if (isDecidedStatus(snakeBody.status) && !(await userHasPermission(req.user, 'approvals'))) {
+      return res.status(403).json({ error: 'Permission required: approvals' });
+    }
     const keys = Object.keys(snakeBody);
     const values = Object.values(snakeBody);
 
@@ -81,7 +95,7 @@ router.delete('/all', requireAdmin, async (req, res) => {
 });
 
 // DELETE /:id - delete bulk group
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', requirePermission('deleteBulkOrders'), async (req, res) => {
   try {
     const { id } = req.params;
     const result = await query('DELETE FROM bulk_groups WHERE id = $1 RETURNING *', [id]);

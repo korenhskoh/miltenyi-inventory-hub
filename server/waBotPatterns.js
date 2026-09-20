@@ -4,11 +4,10 @@ const intents = [
   // ── HELP ──
   {
     name: 'help',
-    patterns: [
-      /^(help|menu|hi|hello|hey|start|\?)$/i,
-      /^help\s+(\w+)/i,
-    ],
-    extract: (m) => ({ category: m[1] && !/^(help|menu|hi|hello|hey|start|\?)$/i.test(m[0]) ? m[1].toLowerCase() : null })
+    patterns: [/^(help|menu|hi|hello|hey|start|\?)$/i, /^help\s+(\w+)/i],
+    extract: (m) => ({
+      category: m[1] && !/^(help|menu|hi|hello|hey|start|\?)$/i.test(m[0]) ? m[1].toLowerCase() : null,
+    }),
   },
 
   // ── PRICE LOOKUP ──
@@ -21,7 +20,7 @@ const intents = [
       /(\d{3}-\d{3}-\d{3})\s+price/i,
       /^(\d{3}-\d{3}-\d{3})$/i,
     ],
-    extract: (m) => ({ materialNo: m[1] })
+    extract: (m) => ({ materialNo: m[1] }),
   },
 
   // ── ORDER STATUS ──
@@ -34,7 +33,7 @@ const intents = [
       /(ord-\d+)\s+status/i,
       /check\s+(?:order\s+)?(ord-\d+)/i,
     ],
-    extract: (m) => ({ orderId: m[1].toUpperCase() })
+    extract: (m) => ({ orderId: m[1].toUpperCase() }),
   },
 
   // ── CREATE ORDER ──
@@ -54,7 +53,7 @@ const intents = [
         qty: parseInt(matFirst ? m[2] : m[1]) || 1,
         materialNo: matFirst ? m[1] : m[2],
       };
-    }
+    },
   },
 
   // ── UPDATE ORDER STATUS ──
@@ -64,36 +63,28 @@ const intents = [
       /(?:update|set|change|mark)\s+(ord-\d+)\s+(?:to|as|status)\s+(.+)/i,
       /(?:update|set|change|mark)\s+(?:order\s+)?(ord-\d+)\s+(.+)/i,
     ],
-    extract: (m) => ({ orderId: m[1].toUpperCase(), newStatus: m[2].trim() })
+    extract: (m) => ({ orderId: m[1].toUpperCase(), newStatus: m[2].trim() }),
   },
 
   // ── DELETE ORDER ──
   {
     name: 'delete_order',
-    patterns: [
-      /(?:delete|remove)\s+(?:order\s+)?(ord-\d+)/i,
-    ],
-    extract: (m) => ({ orderId: m[1].toUpperCase() })
+    patterns: [/(?:delete|remove)\s+(?:order\s+)?(ord-\d+)/i],
+    extract: (m) => ({ orderId: m[1].toUpperCase() }),
   },
 
   // ── SEARCH CATALOG (must come before search_orders) ──
   {
     name: 'search_catalog',
-    patterns: [
-      /(?:search|find|lookup)\s+(?:part|catalog|parts)\s+(.+)/i,
-      /^catalog\s+(.+)/i,
-    ],
-    extract: (m) => ({ query: m[1].trim() })
+    patterns: [/(?:search|find|lookup)\s+(?:part|catalog|parts)\s+(.+)/i, /^catalog\s+(.+)/i],
+    extract: (m) => ({ query: m[1].trim() }),
   },
 
   // ── SEARCH ORDERS ──
   {
     name: 'search_orders',
-    patterns: [
-      /^search\s+(?:orders?\s+)?(?:for\s+)?(.+)/i,
-      /^find\s+(?:orders?\s+)?(?:for\s+)?(.+)/i,
-    ],
-    extract: (m) => ({ query: m[1].trim() })
+    patterns: [/^search\s+(?:orders?\s+)?(?:for\s+)?(.+)/i, /^find\s+(?:orders?\s+)?(?:for\s+)?(.+)/i],
+    extract: (m) => ({ query: m[1].trim() }),
   },
 
   // ── LIST ORDERS ──
@@ -114,7 +105,7 @@ const intents = [
         month: monthMatch?.[0] || null,
         engineer: byMatch?.[1] || null,
       };
-    }
+    },
   },
 
   // ── LIST BULK GROUPS ──
@@ -125,7 +116,7 @@ const intents = [
       /^bulk\s+(?:groups?|list|all)/i,
       /^bulks?$/i,
     ],
-    extract: () => ({})
+    extract: () => ({}),
   },
 
   // ── BULK GROUP DETAILS ──
@@ -137,7 +128,7 @@ const intents = [
       /(blk-\d+)\s+(?:detail|info|orders)/i,
       /^(blk-\d+)$/i,
     ],
-    extract: (m) => ({ bulkId: m[1].toUpperCase() })
+    extract: (m) => ({ bulkId: m[1].toUpperCase() }),
   },
 
   // ── LIST APPROVALS ──
@@ -148,25 +139,21 @@ const intents = [
       /^approvals?$/i,
       /^(?:what|which)\s+(?:needs?|pending)\s+approval/i,
     ],
-    extract: () => ({})
+    extract: () => ({}),
   },
 
   // ── APPROVE ──
   {
     name: 'approve',
-    patterns: [
-      /^approve\s+(.+)/i,
-    ],
-    extract: (m) => ({ approvalId: m[1].trim().toUpperCase() })
+    patterns: [/^approve\s+(.+)/i],
+    extract: (m) => ({ approvalId: m[1].trim().toUpperCase() }),
   },
 
   // ── REJECT ──
   {
     name: 'reject',
-    patterns: [
-      /^reject\s+(.+)/i,
-    ],
-    extract: (m) => ({ approvalId: m[1].trim().toUpperCase() })
+    patterns: [/^reject\s+(.+)/i],
+    extract: (m) => ({ approvalId: m[1].trim().toUpperCase() }),
   },
 
   // ── STOCK ──
@@ -177,17 +164,14 @@ const intents = [
       /^(?:stock|inventory)\s+(?:check|status|summary|latest)/i,
       /^(?:latest|recent)\s+(?:stock|inventory)/i,
     ],
-    extract: () => ({})
+    extract: () => ({}),
   },
 
   // ── STOCK HISTORY ──
   {
     name: 'stock_history',
-    patterns: [
-      /stock\s+history/i,
-      /(?:all|past)\s+stock\s+checks?/i,
-    ],
-    extract: () => ({})
+    patterns: [/stock\s+history/i, /(?:all|past)\s+stock\s+checks?/i],
+    extract: () => ({}),
   },
 
   // ── REPORT MONTHLY ──
@@ -202,62 +186,50 @@ const intents = [
     extract: (_m, text) => {
       const mm = text.match(/(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\s+(\d{4})/i);
       return { month: mm ? `${mm[1]} ${mm[2]}` : null };
-    }
+    },
   },
 
   // ── TOP MATERIALS ──
   {
     name: 'report_top_materials',
-    patterns: [
-      /top\s+(?:materials?|parts?|items?)/i,
-      /most\s+ordered/i,
-      /popular\s+(?:materials?|parts?)/i,
-    ],
-    extract: () => ({})
+    patterns: [/top\s+(?:materials?|parts?|items?)/i, /most\s+ordered/i, /popular\s+(?:materials?|parts?)/i],
+    extract: () => ({}),
   },
 
   // ── SPENDING ──
   {
     name: 'report_spending',
-    patterns: [
-      /^spending$/i,
-      /total\s+(?:cost|spend|expenditure)/i,
-      /how\s+much\s+(?:spent|spend)/i,
-    ],
-    extract: () => ({})
+    patterns: [/^spending$/i, /total\s+(?:cost|spend|expenditure)/i, /how\s+much\s+(?:spent|spend)/i],
+    extract: () => ({}),
   },
 
   // ── LIST MACHINES ──
   {
     name: 'list_machines',
-    patterns: [
-      /^(?:list|show|view|get)\s+machines?/i,
-      /^machines?$/i,
-      /^machines?\s+(?:list|all)/i,
-    ],
+    patterns: [/^(?:list|show|view|get)\s+machines?/i, /^machines?$/i, /^machines?\s+(?:list|all)/i],
     extract: (_m, text) => {
       const mod = text.match(/(?:modality|type)\s+(\w+)/i);
       return { modality: mod?.[1] || null };
-    }
+    },
   },
 
   // ── CONFIRM / CANCEL (stateless fallback) ──
   {
     name: 'confirm',
     patterns: [/^(?:confirm|yes|y|ok|proceed)$/i],
-    extract: () => ({})
+    extract: () => ({}),
   },
   {
     name: 'cancel',
     patterns: [/^(?:cancel|no|n|abort|stop|exit|quit)$/i],
-    extract: () => ({})
+    extract: () => ({}),
   },
 
   // ── MORE (pagination) ──
   {
     name: 'more',
     patterns: [/^(?:more|next|continue|\.\.\.)$/i],
-    extract: () => ({})
+    extract: () => ({}),
   },
 ];
 

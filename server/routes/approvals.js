@@ -2,9 +2,10 @@ import { Router } from 'express';
 import { query } from '../db.js';
 import { snakeToCamel, camelToSnake } from '../utils.js';
 import { pickAllowed, sanitizeDates } from '../validation.js';
-import { paginate, envelope } from '../pagination.js';
+import { paginate, envelope, limitClause } from '../pagination.js';
 import { asyncHandler } from '../middleware/errorHandler.js';
 import { requireAdmin } from '../middleware/auth.js';
+import { requirePermission } from '../middleware/permissions.js';
 
 const router = Router();
 
@@ -23,12 +24,22 @@ const APPROVAL_FIELDS = [
 ];
 const APPROVAL_DATE_FIELDS = ['sent_date', 'action_date'];
 
+// order_ids is a JSONB column. node-postgres serialises a JS array as a
+// Postgres array literal ({"a","b"}), which is NOT valid JSON, so batch/bulk
+// approvals used to fail with "invalid input syntax for type json".
+function encodeOrderIds(body) {
+  if (Array.isArray(body.order_ids) || (body.order_ids && typeof body.order_ids === 'object')) {
+    body.order_ids = JSON.stringify(body.order_ids);
+  }
+  return body;
+}
+
 // GET / - list all pending approvals, optional status filter
 router.get(
   '/',
   asyncHandler(async (req, res) => {
     const { status } = req.query;
-    const { page, pageSize, offset } = paginate(req.query);
+    const { page, pageSize } = paginate(req.query);
     let whereClause = '';
     const params = [];
     let paramIndex = 1;
@@ -41,12 +52,13 @@ router.get(
     const countResult = await query(`SELECT COUNT(*) FROM pending_approvals${whereClause}`, params);
     const total = parseInt(countResult.rows[0].count);
 
-    const dataResult = await query(
-      `SELECT * FROM pending_approvals${whereClause} ORDER BY id DESC LIMIT $${paramIndex++} OFFSET $${paramIndex++}`,
-      [...params, pageSize, offset],
-    );
+    const lim = limitClause(req, paramIndex);
+    const dataResult = await query(`SELECT * FROM pending_approvals${whereClause} ORDER BY id DESC${lim.clause}`, [
+      ...params,
+      ...lim.params,
+    ]);
     const rows = dataResult.rows.map(snakeToCamel);
-    res.json(envelope(rows, total, page, pageSize));
+    res.json(envelope(rows, total, lim.clause ? page : 1, lim.clause ? pageSize : rows.length));
   }),
 );
 
@@ -54,6 +66,7 @@ router.get(
 router.post('/', async (req, res) => {
   try {
     const snakeBody = sanitizeDates(pickAllowed(camelToSnake(req.body), APPROVAL_FIELDS), APPROVAL_DATE_FIELDS);
+    encodeOrderIds(snakeBody);
     const keys = Object.keys(snakeBody);
     const values = Object.values(snakeBody);
     const placeholders = keys.map((_, i) => `$${i + 1}`);
@@ -67,10 +80,11 @@ router.post('/', async (req, res) => {
 });
 
 // PUT /:id - update approval (status, action_date)
-router.put('/:id', async (req, res) => {
+router.put('/:id', requirePermission('approvals'), async (req, res) => {
   try {
     const { id } = req.params;
     const snakeBody = sanitizeDates(pickAllowed(camelToSnake(req.body), APPROVAL_FIELDS), APPROVAL_DATE_FIELDS);
+    encodeOrderIds(snakeBody);
     const keys = Object.keys(snakeBody);
     const values = Object.values(snakeBody);
 

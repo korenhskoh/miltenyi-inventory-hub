@@ -1,12 +1,14 @@
 import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
 import logger from '../logger.js';
+import { isActiveAdmin } from './permissions.js';
 
 if (!process.env.JWT_SECRET) {
   if (process.env.NODE_ENV === 'production') {
-    logger.warn(
-      'SECURITY: JWT_SECRET is not set in production — a random secret is being generated. All issued tokens will be invalidated on every restart. Set JWT_SECRET to a stable value.',
-    );
+    // Refuse to boot: a random per-process secret logs everyone out on each
+    // restart and, with multiple instances, makes tokens unverifiable.
+    logger.fatal('JWT_SECRET is not set. Set a stable JWT_SECRET (e.g. `openssl rand -hex 32`) and restart.');
+    process.exit(1);
   } else {
     logger.warn('JWT_SECRET not set — generating random secret (tokens will not survive restarts)');
   }
@@ -38,16 +40,21 @@ export function verifyToken(req, res, next) {
     req.user = decoded;
     next();
   } catch (err) {
+    // Expired token → 401 so the client clears its session and shows the login
+    // screen. Tampered/invalid tokens stay 403.
+    if (err && err.name === 'TokenExpiredError') {
+      return res.status(401).json({ error: 'Token expired. Please log in again.' });
+    }
     return res.status(403).json({ error: 'Invalid or expired token.' });
   }
 }
 
 /**
- * Middleware: require admin role (must be used after verifyToken)
+ * Middleware: require admin role (must be used after verifyToken).
+ * Verified against the database, not the token's role claim — see
+ * isActiveAdmin() for why.
  */
-export function requireAdmin(req, res, next) {
-  if (!req.user || req.user.role !== 'admin') {
-    return res.status(403).json({ error: 'Admin access required.' });
-  }
-  next();
+export async function requireAdmin(req, res, next) {
+  if (await isActiveAdmin(req.user)) return next();
+  return res.status(403).json({ error: 'Admin access required.' });
 }

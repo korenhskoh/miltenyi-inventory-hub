@@ -14,6 +14,7 @@ import {
   CheckCircle,
 } from 'lucide-react';
 import { Pill, Toggle, QRCodeCanvas } from '../components/ui.jsx';
+import Pagination, { usePagination } from '../components/Pagination.jsx';
 
 export default function WhatsAppPage({
   waConnected,
@@ -47,6 +48,23 @@ export default function WhatsAppPage({
   sendScheduledReport,
   api,
 }) {
+  // Toggles on this page used to flip local state only — the value was never
+  // written back, so the control looked switched on, the server never learned
+  // about it, and a page reload silently reverted it. Persist on every change.
+  const persistConfig = React.useCallback(
+    async (key, value, label) => {
+      try {
+        const ok = await api.setConfigKey(key, value);
+        if (ok === false) throw new Error('rejected');
+        return true;
+      } catch (e) {
+        notify?.('Not Saved', `${label} could not be saved. Please try again.`, 'error');
+        return false;
+      }
+    },
+    [api, notify],
+  );
+  const messagePager = usePagination(waMessages, { storageKey: 'wa-log', initialSize: 50 });
   return (
     <div>
       <div className="grid-2" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24 }}>
@@ -267,7 +285,11 @@ export default function WhatsAppPage({
                 <span style={{ fontSize: 12.5 }}>{rule.label}</span>
                 <Toggle
                   active={waNotifyRules[rule.key]}
-                  onClick={() => setWaNotifyRules((prev) => ({ ...prev, [rule.key]: !prev[rule.key] }))}
+                  onClick={() => {
+                    const next = { ...waNotifyRules, [rule.key]: !waNotifyRules[rule.key] };
+                    setWaNotifyRules(next);
+                    persistConfig('waNotifyRules', next, 'Notification rule');
+                  }}
                   color="#25D366"
                 />
               </div>
@@ -570,7 +592,7 @@ export default function WhatsAppPage({
                       </div>
                     </div>
                     <button
-                      onClick={() => {
+                      onClick={async () => {
                         const recipientCount = (scheduledNotifs.recipients || []).length;
                         if (recipientCount === 0) {
                           notify('No Recipients', 'Please select at least one recipient', 'warning');
@@ -585,17 +607,31 @@ export default function WhatsAppPage({
                           notify('No Channel', 'Please enable at least one delivery channel', 'warning');
                           return;
                         }
-                        sendScheduledReport();
-                        notify(
-                          'Report Sent',
-                          'Scheduled report sent to ' +
-                            recipientCount +
-                            ' recipient(s) via ' +
-                            [scheduledNotifs.emailEnabled && 'Email', scheduledNotifs.whatsappEnabled && 'WhatsApp']
-                              .filter(Boolean)
-                              .join(' & '),
-                          'success',
-                        );
+                        const channels = [
+                          scheduledNotifs.emailEnabled && 'Email',
+                          scheduledNotifs.whatsappEnabled && 'WhatsApp',
+                        ]
+                          .filter(Boolean)
+                          .join(' & ');
+                        // Run the report server-side (admin-only) and only report success when it resolves.
+                        let ok = false;
+                        let errMsg = '';
+                        try {
+                          const r = await api.runScheduledReport();
+                          ok = !!(r && r.success);
+                          errMsg = r?.error || '';
+                        } catch (err) {
+                          errMsg = err?.message || 'Network error';
+                        }
+                        if (ok) {
+                          notify(
+                            'Report Sent',
+                            'Scheduled report sent to ' + recipientCount + ' recipient(s) via ' + channels,
+                            'success',
+                          );
+                        } else {
+                          notify('Report Failed', errMsg || 'Scheduled report could not be sent', 'error');
+                        }
                       }}
                       style={{
                         padding: '8px 16px',
@@ -667,7 +703,15 @@ export default function WhatsAppPage({
                   <p style={{ fontSize: 11, color: '#94A3B8' }}>Automatically respond to customer keywords</p>
                 </div>
               </div>
-              <Toggle active={waAutoReply} onClick={() => setWaAutoReply(!waAutoReply)} color="#0B7A3E" />
+              <Toggle
+                active={waAutoReply}
+                onClick={() => {
+                  const next = !waAutoReply;
+                  setWaAutoReply(next);
+                  persistConfig('waAutoReply', next, 'Auto-reply setting');
+                }}
+                color="#0B7A3E"
+              />
             </div>
             {waAutoReply && (
               <div style={{ background: '#F8FAFB', borderRadius: 8, padding: 12 }}>
@@ -778,7 +822,12 @@ export default function WhatsAppPage({
                 </label>
                 <textarea
                   value={waMessageText}
-                  onChange={(e) => setWaMessageText(e.target.value)}
+                  onChange={(e) => {
+                    setWaMessageText(e.target.value);
+                    // Once the user edits the text, send it as-is (custom) so template
+                    // regeneration in the send path doesn't discard their edits.
+                    if (waTemplate !== 'custom') setWaTemplate('custom');
+                  }}
                   rows={5}
                   style={{ width: '100%', resize: 'vertical', fontFamily: 'monospace', fontSize: 12 }}
                 />
@@ -798,7 +847,7 @@ export default function WhatsAppPage({
           <div className="card" style={{ padding: '18px 20px' }}>
             <h4 style={{ fontSize: 13, fontWeight: 600, marginBottom: 12 }}>Message History</h4>
             <div style={{ maxHeight: 300, overflow: 'auto' }}>
-              {waMessages.map((m) => (
+              {messagePager.pageItems.map((m) => (
                 <div key={m.id} style={{ padding: '10px 12px', borderBottom: '1px solid #F0F2F5', fontSize: 12 }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
                     <span style={{ fontWeight: 600, color: '#1A202C' }}>{m.to}</span>
@@ -817,6 +866,7 @@ export default function WhatsAppPage({
                 </div>
               ))}
             </div>
+            <Pagination {...messagePager} unit="messages" />
           </div>
         </div>
       </div>

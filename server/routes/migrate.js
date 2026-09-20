@@ -26,15 +26,7 @@ async function insertRows(table, rows) {
 // POST / - one-time migration from localStorage
 router.post('/', async (req, res) => {
   try {
-    const {
-      orders,
-      bulkGroups,
-      users,
-      stockChecks,
-      notifLog,
-      pendingApprovals,
-      config
-    } = req.body;
+    const { orders, bulkGroups, users, stockChecks, notifLog, pendingApprovals, config } = req.body;
 
     const counts = {};
 
@@ -89,9 +81,9 @@ router.post('/', async (req, res) => {
           // Array of { key, value } objects
           for (const entry of config) {
             const sql = `
-              INSERT INTO app_config (key, value, updated_at)
-              VALUES ($1, $2, NOW())
-              ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = NOW()
+              INSERT INTO app_config (key, user_id, value, updated_at)
+              VALUES ($1, '__global__', $2, NOW())
+              ON CONFLICT (key, user_id) DO UPDATE SET value = $2, updated_at = NOW()
             `;
             await query(sql, [entry.key, JSON.stringify(entry.value)]);
             configCount++;
@@ -100,9 +92,9 @@ router.post('/', async (req, res) => {
           // Object of { key: value } pairs
           for (const [key, value] of Object.entries(config)) {
             const sql = `
-              INSERT INTO app_config (key, value, updated_at)
-              VALUES ($1, $2, NOW())
-              ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = NOW()
+              INSERT INTO app_config (key, user_id, value, updated_at)
+              VALUES ($1, '__global__', $2, NOW())
+              ON CONFLICT (key, user_id) DO UPDATE SET value = $2, updated_at = NOW()
             `;
             await query(sql, [key, JSON.stringify(value)]);
             configCount++;

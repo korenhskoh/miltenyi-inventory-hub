@@ -30,7 +30,8 @@ describe('api.getOrders', () => {
     const result = await api.getOrders();
     expect(result).toEqual(mockOrders);
     // Should be called with URL and headers object
-    expect(mockFetch).toHaveBeenCalledWith('/api/orders', expect.objectContaining({ headers: expect.any(Object) }));
+    // No page/limit → the client asks for every row (the app derives totals from the full list)
+    expect(mockFetch).toHaveBeenCalledWith('/api/orders?all=true', expect.objectContaining({ headers: expect.any(Object) }));
   });
 
   it('passes filter params as query string', async () => {
@@ -41,7 +42,7 @@ describe('api.getOrders', () => {
     });
 
     await api.getOrders({ status: 'Pending', month: 'Feb 2026' });
-    expect(mockFetch).toHaveBeenCalledWith('/api/orders?status=Pending&month=Feb+2026', expect.any(Object));
+    expect(mockFetch).toHaveBeenCalledWith('/api/orders?status=Pending&month=Feb+2026&all=true', expect.any(Object));
   });
 
   it('skips empty/null filter values', async () => {
@@ -52,7 +53,7 @@ describe('api.getOrders', () => {
     });
 
     await api.getOrders({ status: 'Pending', month: '', extra: null });
-    expect(mockFetch).toHaveBeenCalledWith('/api/orders?status=Pending', expect.any(Object));
+    expect(mockFetch).toHaveBeenCalledWith('/api/orders?status=Pending&all=true', expect.any(Object));
   });
 
   it('returns null on HTTP error', async () => {
@@ -188,7 +189,7 @@ describe('api.getNotifLog', () => {
     });
 
     await api.getNotifLog();
-    expect(mockFetch).toHaveBeenCalledWith('/api/notif-log', expect.any(Object));
+    expect(mockFetch).toHaveBeenCalledWith('/api/notif-log?all=true', expect.any(Object));
   });
 });
 

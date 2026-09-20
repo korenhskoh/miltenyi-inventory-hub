@@ -124,6 +124,8 @@ ADD PRIMARY KEY (key, user_id);
 END IF;
 END IF;
 END $$;
+-- app_config.user_id must be able to hold a users.id (VARCHAR(50))
+ALTER TABLE app_config ALTER COLUMN user_id TYPE VARCHAR(50);
 -- Audit trail for tracking all user actions
 CREATE TABLE IF NOT EXISTS audit_log (
   id SERIAL PRIMARY KEY,
