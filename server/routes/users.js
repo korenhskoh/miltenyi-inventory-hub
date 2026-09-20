@@ -13,6 +13,17 @@ const router = Router();
 const USER_FIELDS = ['id', 'username', 'password_hash', 'name', 'email', 'phone', 'role', 'status', 'permissions'];
 const USER_REQUIRED = ['username'];
 
+/** Is `id` an active admin with no other active admin to fall back on? */
+async function isLastActiveAdmin(id) {
+  const target = await query('SELECT role, status FROM users WHERE id = $1', [id]);
+  const row = target.rows[0];
+  if (!row || row.role !== 'admin' || row.status !== 'active') return false;
+  const others = await query("SELECT COUNT(*) FROM users WHERE role = 'admin' AND status = 'active' AND id <> $1", [
+    id,
+  ]);
+  return parseInt(others.rows[0].count, 10) === 0;
+}
+
 // GET / - list all users (EXCLUDE password_hash)
 router.get(
   '/',
@@ -81,15 +92,10 @@ router.put('/:id', async (req, res) => {
     if (snakeBody.role && !['admin', 'user'].includes(snakeBody.role)) {
       return res.status(400).json({ error: 'role must be admin or user' });
     }
-    // Never let the last active admin demote / deactivate themselves.
-    if (
-      id === req.user.id &&
-      ((snakeBody.role && snakeBody.role !== 'admin') || (snakeBody.status && snakeBody.status !== 'active'))
-    ) {
-      const admins = await query("SELECT COUNT(*) FROM users WHERE role = 'admin' AND status = 'active' AND id <> $1", [
-        id,
-      ]);
-      if (parseInt(admins.rows[0].count) === 0) {
+    // Never let the last active admin be demoted or deactivated — by themselves
+    // or by another admin.
+    if ((snakeBody.role && snakeBody.role !== 'admin') || (snakeBody.status && snakeBody.status !== 'active')) {
+      if (await isLastActiveAdmin(id)) {
         return res.status(400).json({ error: 'Cannot demote or deactivate the only active admin' });
       }
     }
@@ -120,6 +126,9 @@ router.delete('/:id', async (req, res) => {
   try {
     const { id } = req.params;
     if (id === req.user.id) return res.status(400).json({ error: 'You cannot delete your own account' });
+    if (await isLastActiveAdmin(id)) {
+      return res.status(400).json({ error: 'Cannot delete the only active admin' });
+    }
     const result = await query('DELETE FROM users WHERE id = $1 RETURNING id', [id]);
 
     if (result.rows.length === 0) {

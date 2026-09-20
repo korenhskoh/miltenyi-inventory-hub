@@ -154,10 +154,10 @@ export async function initDatabase() {
     if (promoted.rowCount) {
       logger.info({ keys: promoted.rows.map((r) => r.key) }, 'Promoted per-user settings to global');
     }
-    // Remove stale per-user copies of global keys so they can't shadow the global row
-    await query(`DELETE FROM app_config WHERE user_id <> '__global__' AND key = ANY($1::text[])`, [
-      [...CONFIG_GLOBAL_KEYS],
-    ]);
+    // Per-user rows for global keys are left in place on purpose: GET /api/config
+    // already reads global keys only from '__global__', so they cannot shadow it,
+    // and deleting them would irreversibly discard settings other users saved
+    // back when these keys were per-user.
 
     logger.info('Database initialized successfully');
   } catch (error) {

@@ -9,8 +9,19 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
  * 4. Backend: Order approval enforcement — only approved orders allow part arrival.
  */
 
+// requireAdmin now verifies the role against the DB rather than the token's
+// claim, so the database layer is stubbed here.
+const usersTable = {
+  U001: { role: 'admin', status: 'active', permissions: {} },
+  U002: { role: 'user', status: 'active', permissions: {} },
+  U003: { role: 'user', status: 'active', permissions: {} },
+};
+vi.mock('../db.js', () => ({
+  query: vi.fn(async (_sql, params) => ({ rows: usersTable[params?.[0]] ? [usersTable[params[0]]] : [] })),
+}));
+
 // ─── Import auth middleware (real, not mocked) ───
-import { generateToken, verifyToken, requireAdmin } from '../middleware/auth.js';
+const { generateToken, verifyToken, requireAdmin } = await import('../middleware/auth.js');
 
 // ─── Helper ───
 function mockReqResNext(headers = {}) {
@@ -72,34 +83,34 @@ describe('RBAC - Authentication enforcement', () => {
 // 2. Backend: requireAdmin blocks non-admin users
 // ═══════════════════════════════════════════════════════════════════
 describe('RBAC - Admin-only route enforcement', () => {
-  it('allows admin through requireAdmin middleware', () => {
+  it('allows admin through requireAdmin middleware', async () => {
     const { req, res, next } = mockReqResNext();
     req.user = { id: 'U001', username: 'admin', role: 'admin' };
-    requireAdmin(req, res, next);
+    await requireAdmin(req, res, next);
     expect(next).toHaveBeenCalled();
   });
 
-  it('blocks regular user from admin routes (403)', () => {
+  it('blocks regular user from admin routes (403)', async () => {
     const { req, res, next } = mockReqResNext();
     req.user = { id: 'U002', username: 'alice', role: 'user' };
-    requireAdmin(req, res, next);
+    await requireAdmin(req, res, next);
     expect(res._status).toBe(403);
     expect(res._json.error).toMatch(/admin/i);
     expect(next).not.toHaveBeenCalled();
   });
 
-  it('blocks user with no role from admin routes', () => {
+  it('blocks user with no role from admin routes', async () => {
     const { req, res, next } = mockReqResNext();
     req.user = { id: 'U003', username: 'bob' }; // no role property
-    requireAdmin(req, res, next);
+    await requireAdmin(req, res, next);
     expect(res._status).toBe(403);
     expect(next).not.toHaveBeenCalled();
   });
 
-  it('blocks request with no user object from admin routes', () => {
+  it('blocks request with no user object from admin routes', async () => {
     const { req, res, next } = mockReqResNext();
     req.user = null;
-    requireAdmin(req, res, next);
+    await requireAdmin(req, res, next);
     expect(res._status).toBe(403);
     expect(next).not.toHaveBeenCalled();
   });
@@ -109,7 +120,7 @@ describe('RBAC - Admin-only route enforcement', () => {
 // 3. Backend: Full middleware chain — verifyToken + requireAdmin
 // ═══════════════════════════════════════════════════════════════════
 describe('RBAC - Full auth chain (verifyToken → requireAdmin)', () => {
-  it('admin token passes both middlewares', () => {
+  it('admin token passes both middlewares', async () => {
     const token = generateToken({ id: 'U001', username: 'admin', role: 'admin' });
     const { req, res, next } = mockReqResNext({ authorization: `Bearer ${token}` });
 
@@ -119,7 +130,7 @@ describe('RBAC - Full auth chain (verifyToken → requireAdmin)', () => {
 
     // Step 2: requireAdmin
     const next2 = vi.fn();
-    requireAdmin(
+    await requireAdmin(
       req,
       {
         ...res,
@@ -138,7 +149,7 @@ describe('RBAC - Full auth chain (verifyToken → requireAdmin)', () => {
     expect(next2).toHaveBeenCalled();
   });
 
-  it('regular user token passes verifyToken but fails requireAdmin', () => {
+  it('regular user token passes verifyToken but fails requireAdmin', async () => {
     const token = generateToken({ id: 'U002', username: 'alice', role: 'user' });
     const { req, res, next } = mockReqResNext({ authorization: `Bearer ${token}` });
 
@@ -160,7 +171,7 @@ describe('RBAC - Full auth chain (verifyToken → requireAdmin)', () => {
       },
     };
     const next2 = vi.fn();
-    requireAdmin(req, res2, next2);
+    await requireAdmin(req, res2, next2);
     expect(res2._status).toBe(403);
     expect(next2).not.toHaveBeenCalled();
   });

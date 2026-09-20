@@ -76,6 +76,41 @@ On first deploy the server runs a one-off repair (`initDb.js`): settings that Se
 - Server booted against a fresh PostgreSQL 16 and exercised with `scripts/smoke-api.mjs` (47 end-to-end checks: registration → activation → permissions, orders/approvals/JSONB, config secrets, machines date handling, inventory transactions with savepoints, stats, catalog/audit/WhatsApp guards) — **all pass**.
 - Built SPA driven in headless Chromium as admin and as a non-admin: login, module picker and all 14 pages render with **no page errors and no API 5xx**. The loader no longer requests the admin-only user list / audit log for users who lack the permission (was two harmless 403s per load).
 
+## Third round — 20 Sep: adversarial re-review of the fix branch
+
+A fresh review of the whole diff (client and server independently) found defects the earlier rounds introduced or missed. All are fixed; `scripts/smoke-api.mjs` now guards each one.
+
+**Privilege escalation (critical)**
+- **A demoted or suspended admin kept full admin rights for up to 24 h.** `userHasPermission` and `requireAdmin` trusted the `role` claim inside the JWT, so revoking someone's admin had no effect until their token expired. Both now decide from the database (30 s cache, invalidated on every user edit) and fail closed; a deleted account loses access at once.
+- **Orders could be created already approved.** `POST /api/orders` never ran the approval check, so anyone could post `status: 'Approved'` and skip the workflow entirely. Same on `POST /api/bulk-groups`.
+- **The approval gate was case-sensitive and ignored close-out.** `status: 'approved'` (lowercase) slipped past, and `status: 'Received'` with no `qtyReceived` closed an order out without it ever being approved. Both fields are now compared case-insensitively, marking Received requires the order to be approved already, and the bulk path silently restricts itself to approved orders (HTTP 207 when it skips some).
+- **The WhatsApp bot had no permission checks at all.** Any active user's phone number could approve, reject, delete or re-status orders through chat, bypassing every HTTP guard. The sender is now resolved to their account and each privileged command is checked against it; bot-created orders are attributed to the real person instead of "WhatsApp Bot".
+
+**Integrity and disclosure (high)**
+- `PUT /api/config/:key` echoed the stored `smtpPass` / `apiKey` back in its response even to non-admins.
+- Audit entries took `userId`/`userName` from the request body, so anyone could forge a log line blaming someone else. They now come from the session.
+- The startup migration **deleted** every other user's copy of the newly-global settings keys. It now leaves them in place (the read path already ignores them).
+
+**Data correctness (medium)**
+- "Add item" in Local Inventory silently overwrote an existing row's stock with no transaction record — it now refuses with a 409 pointing at Adjust Qty, and creating a genuinely new item is logged.
+- `PUT /api/local-inventory/:id` returned 200 while quietly discarding a quantity edit; it now rejects it explicitly.
+- Bulk import logged the absolute quantity as the movement, so history read as if stock had only ever been added — it now logs the difference.
+- Per-row `SAVEPOINT`s were never released, stacking one subtransaction per row (a few thousand rows degrade the whole cluster).
+- The last active admin could be demoted by *another* admin, or deleted; the guard now covers both paths.
+- Instrument bulk-import and delete, and inventory delete, were open to any authenticated user.
+- An `all=true` query that matched nothing reported `pageSize: 0`, giving clients `NaN`/`Infinity` page counts.
+
+**Client**
+- The "Approved — editing locked" notice on a bulk group was cosmetic: Remove, Add Item, the status select and Save all ignored it, and removing the last row deleted the approved group from the database.
+- The scheduled-report "already ran today" check compared a UTC date against a local one, so any report set before 08:00 SGT re-fired on every tick.
+- The Users "select all" box covered pending registrations the table hides, so a batch delete or activate silently actioned them.
+- All Orders duplicated the pricing helpers with **inverted** precedence, so the same order showed different money there than on the dashboard and in approval emails.
+- The Back Orders tile jumped when server stats arrived, because client and server counted it differently.
+- `batchConfirmArrival` dropped already-received rows that `confirmArrival` would have topped up.
+- The Users page was offered as a feature permission but the API is admin-only, so a granted non-admin got an empty table and silent 403s.
+
+**Verification:** 132 unit tests, 0 lint errors, clean build, 70 end-to-end API checks against a fresh PostgreSQL, and the built SPA driven in headless Chromium as both an admin and a non-admin with no page errors and no failed API calls.
+
 ## Still worth doing (not bugs)
 
 - `App.jsx` is still ~11k lines. The next extraction candidates are the data-loading layer (`loadAppData`/`refreshPageData`) and the approval-email builders.

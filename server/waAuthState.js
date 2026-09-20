@@ -11,15 +11,12 @@ export async function usePostgresAuthState() {
     await query(
       `INSERT INTO wa_auth (key_type, key_id, value) VALUES ($1, $2, $3)
        ON CONFLICT (key_type, key_id) DO UPDATE SET value = $3`,
-      [type, id, json]
+      [type, id, json],
     );
   };
 
   const readData = async (type, id) => {
-    const result = await query(
-      'SELECT value FROM wa_auth WHERE key_type = $1 AND key_id = $2',
-      [type, id]
-    );
+    const result = await query('SELECT value FROM wa_auth WHERE key_type = $1 AND key_id = $2', [type, id]);
     if (result.rows.length === 0) return null;
     return JSON.parse(result.rows[0].value, BufferJSON.reviver);
   };
@@ -59,11 +56,11 @@ export async function usePostgresAuthState() {
               }
             }
           }
-        }
-      }
+        },
+      },
     },
     saveCreds: async () => {
       await writeData('creds', 'main', creds);
-    }
+    },
   };
 }

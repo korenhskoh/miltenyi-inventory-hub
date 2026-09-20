@@ -21,5 +21,7 @@ export function limitClause(req, startIndex) {
 }
 
 export function envelope(rows, total, page, pageSize) {
-  return { data: rows, total, page, pageSize };
+  // pageSize 0 (an `all=true` query that matched nothing) makes clients compute
+  // total/pageSize as Infinity or NaN — report at least 1.
+  return { data: rows, total, page, pageSize: pageSize || total || 1 };
 }

@@ -30,8 +30,18 @@ describe('permissions middleware', () => {
     usersTable.U3 = { role: 'user', status: 'inactive', permissions: { approvals: true } };
   });
 
-  it('admins always pass without a DB lookup', async () => {
-    expect(await userHasPermission({ id: 'X', role: 'admin' }, 'approvals')).toBe(true);
+  it('grants an admin whose account is admin in the DB', async () => {
+    usersTable.A1 = { role: 'admin', status: 'active', permissions: {} };
+    expect(await userHasPermission({ id: 'A1', role: 'admin' }, 'approvals')).toBe(true);
+  });
+
+  it('rejects a token claiming admin when the DB says otherwise', async () => {
+    // A demoted account must lose its rights immediately, not when the 24h token expires.
+    expect(await userHasPermission({ id: 'U2', role: 'admin' }, 'approvals')).toBe(false);
+  });
+
+  it('rejects a user that no longer exists', async () => {
+    expect(await userHasPermission({ id: 'GONE', role: 'admin' }, 'orders')).toBe(false);
   });
 
   it('grants a user with the permission set in the DB', async () => {

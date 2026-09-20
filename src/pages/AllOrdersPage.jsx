@@ -1,21 +1,7 @@
 import { Package, Layers, DollarSign, Calendar, ChevronDown, ChevronLeft, ChevronRight, Eye, X } from 'lucide-react';
 import { fmt, fmtDate, fmtNum, applySortData, toggleSort } from '../utils.js';
 import { Badge, ArrivalBadge, Pill, SortTh, ExportDropdown } from '../components/ui.jsx';
-
-// Pricing helpers: prefer the price stored on the order (what was approved / costed);
-// fall back to the catalog price only when the stored value is 0 or absent.
-const orderUnitPrice = (o, catalogLookup) => {
-  const stored = Number(o.listPrice) || 0;
-  if (stored > 0) return stored;
-  const cp = catalogLookup?.[o.materialNo];
-  return cp ? Number(cp.sg || cp.tp || cp.dist) || 0 : 0;
-};
-const orderTotal = (o, catalogLookup) => {
-  const stored = Number(o.totalCost) || 0;
-  if (stored > 0) return stored;
-  const price = orderUnitPrice(o, catalogLookup);
-  return price > 0 ? price * (Number(o.quantity) || 0) : 0;
-};
+import { getEffectiveUnitPrice, getEffectiveTotal } from '../lib/pricing.js';
 
 const AllOrdersPage = ({
   orders,
@@ -125,7 +111,7 @@ const AllOrdersPage = ({
           },
           {
             l: 'Total Value',
-            v: fmt(allOrdersCombined.reduce((s, o) => s + (Number(orderTotal(o, catalogLookup)) || 0), 0)),
+            v: fmt(allOrdersCombined.reduce((s, o) => s + (Number(getEffectiveTotal(o, catalogLookup)) || 0), 0)),
             i: DollarSign,
             c: '#D97706',
             bg: 'linear-gradient(135deg,#92400E,#D97706)',
@@ -412,13 +398,13 @@ const AllOrdersPage = ({
                     </td>
                     <td className="td mono" style={{ fontSize: 11 }}>
                       {(() => {
-                        const price = orderUnitPrice(o, catalogLookup);
+                        const price = getEffectiveUnitPrice(o, catalogLookup);
                         return price > 0 ? fmt(price) : '\u2014';
                       })()}
                     </td>
                     <td className="td mono" style={{ fontSize: 11, fontWeight: 600 }}>
                       {(() => {
-                        const total = orderTotal(o, catalogLookup);
+                        const total = getEffectiveTotal(o, catalogLookup);
                         return total > 0 ? fmt(total) : '\u2014';
                       })()}
                     </td>
@@ -465,7 +451,7 @@ const AllOrdersPage = ({
           </span>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
             <span style={{ fontSize: 12, fontWeight: 500 }}>
-              {fmt(allOrdersCombined.reduce((s, o) => s + (Number(orderTotal(o, catalogLookup)) || 0), 0))}
+              {fmt(allOrdersCombined.reduce((s, o) => s + (Number(getEffectiveTotal(o, catalogLookup)) || 0), 0))}
             </span>
             <div style={{ width: 1, height: 16, background: '#E2E8F0' }} />
             <button
@@ -503,7 +489,7 @@ const AllOrdersPage = ({
             const bulkCount = orders.filter((o) => o.bulkGroupId && o.month === month).length;
             const totalCost = orders
               .filter((o) => o.month === month)
-              .reduce((s, o) => s + (Number(orderTotal(o, catalogLookup)) || 0), 0);
+              .reduce((s, o) => s + (Number(getEffectiveTotal(o, catalogLookup)) || 0), 0);
             const isExpanded = expandedAllMonth === month;
             return (
               <div
@@ -618,7 +604,9 @@ const AllOrdersPage = ({
                             <div style={{ gridColumn: 'span 2' }}>
                               Cost:{' '}
                               <strong className="mono">
-                                {fmt(bgOrds.reduce((s, o) => s + (Number(orderTotal(o, catalogLookup)) || 0), 0))}
+                                {fmt(
+                                  bgOrds.reduce((s, o) => s + (Number(getEffectiveTotal(o, catalogLookup)) || 0), 0),
+                                )}
                               </strong>
                             </div>
                           </div>
@@ -724,13 +712,13 @@ const AllOrdersPage = ({
                                     </td>
                                     <td className="td mono" style={{ fontSize: 11 }}>
                                       {(() => {
-                                        const price = orderUnitPrice(o, catalogLookup);
+                                        const price = getEffectiveUnitPrice(o, catalogLookup);
                                         return price > 0 ? fmt(price) : '\u2014';
                                       })()}
                                     </td>
                                     <td className="td mono" style={{ fontSize: 11, fontWeight: 600 }}>
                                       {(() => {
-                                        const total = orderTotal(o, catalogLookup);
+                                        const total = getEffectiveTotal(o, catalogLookup);
                                         return total > 0 ? fmt(total) : '\u2014';
                                       })()}
                                     </td>
@@ -757,7 +745,7 @@ const AllOrdersPage = ({
                             <strong>Summary:</strong> {bgOrds.length} orders | Qty:{' '}
                             {bgOrds.reduce((s, o) => s + o.quantity, 0)} | Cost:{' '}
                             <strong className="mono">
-                              {fmt(bgOrds.reduce((s, o) => s + (Number(orderTotal(o, catalogLookup)) || 0), 0))}
+                              {fmt(bgOrds.reduce((s, o) => s + (Number(getEffectiveTotal(o, catalogLookup)) || 0), 0))}
                             </strong>
                           </div>
                         </div>
@@ -841,13 +829,13 @@ const AllOrdersPage = ({
                             </td>
                             <td className="td mono" style={{ fontSize: 11 }}>
                               {(() => {
-                                const price = orderUnitPrice(o, catalogLookup);
+                                const price = getEffectiveUnitPrice(o, catalogLookup);
                                 return price > 0 ? fmt(price) : '\u2014';
                               })()}
                             </td>
                             <td className="td mono" style={{ fontSize: 11, fontWeight: 600 }}>
                               {(() => {
-                                const total = orderTotal(o, catalogLookup);
+                                const total = getEffectiveTotal(o, catalogLookup);
                                 return total > 0 ? fmt(total) : '\u2014';
                               })()}
                             </td>
@@ -872,7 +860,9 @@ const AllOrdersPage = ({
                     <strong>Summary:</strong> {monthSingleOrders.length} orders | Qty:{' '}
                     {monthSingleOrders.reduce((s, o) => s + o.quantity, 0)} | Cost:{' '}
                     <strong className="mono">
-                      {fmt(monthSingleOrders.reduce((s, o) => s + (Number(orderTotal(o, catalogLookup)) || 0), 0))}
+                      {fmt(
+                        monthSingleOrders.reduce((s, o) => s + (Number(getEffectiveTotal(o, catalogLookup)) || 0), 0),
+                      )}
                     </strong>
                   </div>
                 </div>

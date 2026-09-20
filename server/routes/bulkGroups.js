@@ -13,6 +13,10 @@ const BULK_GROUP_FIELDS = ['id', 'month', 'created_by', 'items', 'total_cost', '
 const BG_DATE_FIELDS = ['date'];
 const BULK_GROUP_REQUIRED = ['id', 'month'];
 
+// Case-insensitive: a capitalised-only check let `status: 'approved'` through.
+const DECIDED_STATUSES = new Set(['approved', 'rejected']);
+const isDecidedStatus = (v) => DECIDED_STATUSES.has(String(v ?? '').toLowerCase());
+
 // GET / - list all bulk groups
 router.get(
   '/',
@@ -34,6 +38,11 @@ router.post('/', async (req, res) => {
     const err = requireFields(snakeBody, BULK_GROUP_REQUIRED);
     if (err) return res.status(400).json({ error: err });
 
+    // A group may not be created already approved / rejected.
+    if (isDecidedStatus(snakeBody.status) && !(await userHasPermission(req.user, 'approvals'))) {
+      return res.status(403).json({ error: 'Permission required: approvals' });
+    }
+
     const keys = Object.keys(snakeBody);
     const values = Object.values(snakeBody);
     const placeholders = keys.map((_, i) => `$${i + 1}`);
@@ -51,7 +60,7 @@ router.put('/:id', async (req, res) => {
   try {
     const { id } = req.params;
     const snakeBody = sanitizeDates(pickAllowed(camelToSnake(req.body), BULK_GROUP_FIELDS), BG_DATE_FIELDS);
-    if (['Approved', 'Rejected'].includes(snakeBody.status) && !(await userHasPermission(req.user, 'approvals'))) {
+    if (isDecidedStatus(snakeBody.status) && !(await userHasPermission(req.user, 'approvals'))) {
       return res.status(403).json({ error: 'Permission required: approvals' });
     }
     const keys = Object.keys(snakeBody);

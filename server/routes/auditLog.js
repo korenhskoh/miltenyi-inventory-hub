@@ -61,9 +61,11 @@ router.post('/', async (req, res) => {
     const b = camelToSnake(req.body);
     const sql = `INSERT INTO audit_log (user_id, user_name, action, entity_type, entity_id, details, ip_address)
                  VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`;
+    // Identity is taken from the authenticated session — a body-supplied
+    // userId/userName let anyone forge entries blaming another account.
     const result = await query(sql, [
-      b.user_id || null,
-      b.user_name || null,
+      req.user?.id || null,
+      req.user?.username || null,
       b.action,
       b.entity_type || null,
       b.entity_id || null,

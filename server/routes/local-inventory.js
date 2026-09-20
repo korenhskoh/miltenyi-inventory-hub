@@ -4,6 +4,7 @@ import { snakeToCamel, camelToSnake } from '../utils.js';
 import { pickAllowed } from '../validation.js';
 import { paginate, envelope, limitClause } from '../pagination.js';
 import { asyncHandler } from '../middleware/errorHandler.js';
+import { requireAdmin } from '../middleware/auth.js';
 
 const router = Router();
 
@@ -117,18 +118,28 @@ router.post(
     if (!b.material_no) return res.status(400).json({ error: 'material_no required' });
 
     const lotsKey = b.lots_number || null;
+    const qty = parseInt(b.quantity, 10) || 0;
+    // "Add item" must not become an unlogged way to overwrite stock: refuse the
+    // conflict and point the user at Adjust Qty, which writes a transaction row.
     const result = await query(
       `INSERT INTO local_inventory (material_no, description, lots_number, category, quantity)
        VALUES ($1, $2, $3, $4, $5)
-       ON CONFLICT (material_no, COALESCE(lots_number, '__none__'))
-       DO UPDATE SET description = COALESCE(EXCLUDED.description, local_inventory.description),
-                     category = COALESCE(EXCLUDED.category, local_inventory.category),
-                     quantity = EXCLUDED.quantity,
-                     updated_at = NOW()
+       ON CONFLICT (material_no, COALESCE(lots_number, '__none__')) DO NOTHING
        RETURNING *`,
-      [b.material_no, b.description || null, lotsKey, b.category || null, b.quantity || 0],
+      [b.material_no, b.description || null, lotsKey, b.category || null, qty],
     );
-    res.status(201).json(snakeToCamel(result.rows[0]));
+    if (result.rows.length === 0) {
+      return res.status(409).json({
+        error: `${b.material_no}${lotsKey ? ` (Lot ${lotsKey})` : ''} already exists — use Adjust Qty to change the quantity.`,
+      });
+    }
+    const created = result.rows[0];
+    await query(
+      `INSERT INTO inventory_transactions (inventory_id, material_no, lots_number, quantity_change, quantity_after, type, user_id, user_name, notes)
+       VALUES ($1, $2, $3, $4, $5, 'import', $6, $7, $8)`,
+      [created.id, b.material_no, lotsKey, qty, qty, req.user?.id || null, req.user?.username || null, 'Item created'],
+    );
+    res.status(201).json(snakeToCamel(created));
   }),
 );
 
@@ -157,6 +168,17 @@ router.post(
             const lotsKey = b.lots_number || null;
             const qty = parseInt(b.quantity) || 0;
 
+            // Capture the prior quantity first: an upsert's RETURNING clause can
+            // only see the new row, and an import SETS the quantity, so the
+            // movement we log has to be the difference. (Logging the absolute
+            // figure made the history read as if stock had only ever been added.)
+            const prior = await tx.query(
+              `SELECT quantity FROM local_inventory
+               WHERE material_no = $1 AND COALESCE(lots_number, '__none__') = COALESCE($2, '__none__')`,
+              [b.material_no, lotsKey],
+            );
+            const before = prior.rows.length ? Number(prior.rows[0].quantity) || 0 : 0;
+
             const result = await tx.query(
               `INSERT INTO local_inventory (material_no, description, lots_number, category, quantity)
                VALUES ($1, $2, $3, $4, $5)
@@ -180,7 +202,7 @@ router.post(
                 row.id,
                 b.material_no,
                 lotsKey,
-                qty,
+                qty - before,
                 qty,
                 req.user?.id || null,
                 req.user?.username || null,
@@ -190,6 +212,7 @@ router.post(
 
             if (wasInsert) inserted.push(snakeToCamel(row));
             else updated.push(snakeToCamel(row));
+            await tx.query('RELEASE SAVEPOINT row_sp');
           } catch (e) {
             await tx.query('ROLLBACK TO SAVEPOINT row_sp');
             errors.push({ row: idx + 1, error: e.message });
@@ -269,6 +292,7 @@ router.post(
             );
 
             processed.push(snakeToCamel(row));
+            await tx.query('RELEASE SAVEPOINT row_sp');
           } catch (e) {
             await tx.query('ROLLBACK TO SAVEPOINT row_sp');
             errors.push({ row: idx + 1, error: e.message });
@@ -349,6 +373,7 @@ router.post(
             );
 
             processed.push(snakeToCamel(row));
+            await tx.query('RELEASE SAVEPOINT row_sp');
           } catch (e) {
             await tx.query('ROLLBACK TO SAVEPOINT row_sp');
             errors.push({ row: idx + 1, error: e.message });
@@ -368,6 +393,11 @@ router.put(
   '/:id',
   asyncHandler(async (req, res) => {
     const { id } = req.params;
+    // Quantity changes must go through /adjust so they are logged; silently
+    // dropping the field made the SPA report a successful save that did nothing.
+    if (camelToSnake(req.body).quantity !== undefined) {
+      return res.status(400).json({ error: 'Quantity cannot be changed here — use Adjust Qty.' });
+    }
     const b = pickAllowed(camelToSnake(req.body), INVENTORY_META_FIELDS, { keepNull: true });
     if (b.lots_number === '') b.lots_number = null;
     b.updated_at = new Date().toISOString();
@@ -446,9 +476,10 @@ router.post(
   }),
 );
 
-// DELETE /:id — delete inventory item
+// DELETE /:id — delete inventory item (admin only; the SPA hides it for others)
 router.delete(
   '/:id',
+  requireAdmin,
   asyncHandler(async (req, res) => {
     const { id } = req.params;
     const result = await query('DELETE FROM local_inventory WHERE id = $1 RETURNING *', [id]);

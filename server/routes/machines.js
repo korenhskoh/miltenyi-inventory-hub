@@ -191,6 +191,7 @@ router.get(
 // so the DB ends up with exactly what the user sent, not a validated subset.
 router.post(
   '/bulk',
+  requireAdmin,
   asyncHandler(async (req, res) => {
     const { machines } = req.body;
     if (!Array.isArray(machines) || machines.length === 0)
@@ -290,6 +291,7 @@ router.put(
 // DELETE /:id — delete machine
 router.delete(
   '/:id',
+  requireAdmin,
   asyncHandler(async (req, res) => {
     const { id } = req.params;
     const result = await query('DELETE FROM machines WHERE id = $1 RETURNING *', [id]);

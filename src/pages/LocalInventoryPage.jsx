@@ -212,8 +212,23 @@ export default function LocalInventoryPage({ isAdmin, currentUser: _currentUser,
       setShowAddModal(false);
       setEditingItem(null);
       loadData();
-    } else {
+    } else if (editingItem) {
       notify('Error', 'Failed to save item', 'error');
+    } else {
+      // POST /api/local-inventory returns 409 when material+lot already exists, but
+      // api.createInventoryItem collapses every non-OK response to null, so surface the
+      // most likely cause when a matching row is already in the loaded inventory.
+      const norm = (v) => (v || '').toString().trim().toLowerCase();
+      const duplicate = inventory.some(
+        (it) => norm(it.materialNo) === norm(payload.materialNo) && norm(it.lotsNumber) === norm(payload.lotsNumber),
+      );
+      notify(
+        'Error',
+        duplicate
+          ? `${payload.materialNo}${payload.lotsNumber ? ` (Lot ${payload.lotsNumber})` : ''} already exists — use Adjust Qty to change the quantity.`
+          : 'Failed to add item — it may already exist (use Adjust Qty to change the quantity).',
+        'error',
+      );
     }
   };
 

@@ -109,6 +109,12 @@ vi.mock('../db.js', () => ({
       return { rows: [] };
     }
 
+    // Permission lookups (middleware/permissions.js). These tests are about data
+    // being shared between users, so give both of them the rights they exercise.
+    if (sqlLower.startsWith('select') && sqlLower.includes('from users')) {
+      return { rows: [{ role: 'user', status: 'active', permissions: { approvals: true } }] };
+    }
+
     return { rows: [] };
   }),
 }));

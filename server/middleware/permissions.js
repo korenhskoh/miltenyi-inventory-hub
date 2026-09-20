@@ -60,17 +60,36 @@ async function loadUser(userId) {
   return entry;
 }
 
-/** Resolve whether the request's user holds a permission (admins always do). */
+/**
+ * Resolve whether the request's user holds a permission (admins always do).
+ *
+ * The decision is made from the DATABASE, never from the JWT's `role` claim:
+ * tokens live for 24h, so trusting the claim would let a demoted, suspended or
+ * deleted account keep its privileges until the token expired, with no way to
+ * revoke. Fails closed on any lookup error.
+ */
 export async function userHasPermission(reqUser, key) {
-  if (!reqUser) return false;
-  if (reqUser.role === 'admin') return true;
+  if (!reqUser?.id) return false;
   try {
     const u = await loadUser(reqUser.id);
-    if (u.status && u.status !== 'active') return false;
+    if (!u.role) return false; // account no longer exists
+    if (u.status !== 'active') return false;
     if (u.role === 'admin') return true;
     return u.perms[key] === true;
   } catch (e) {
     logger.error({ err: e, key }, 'Permission lookup failed');
+    return false;
+  }
+}
+
+/** True only for an account that is an admin AND active right now, per the DB. */
+export async function isActiveAdmin(reqUser) {
+  if (!reqUser?.id) return false;
+  try {
+    const u = await loadUser(reqUser.id);
+    return u.role === 'admin' && u.status === 'active';
+  } catch (e) {
+    logger.error({ err: e }, 'Admin check failed');
     return false;
   }
 }

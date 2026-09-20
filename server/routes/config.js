@@ -149,7 +149,12 @@ router.put('/:key', async (req, res) => {
       }
     }
 
-    res.json({ key: result.rows[0].key, value: stripSecrets(key, result.rows[0].value, true) });
+    // Echo back with the caller's own visibility — hard-coding isAdmin=true here
+    // leaked the stored smtpPass / apiKey to any non-admin allowed to save settings.
+    res.json({
+      key: result.rows[0].key,
+      value: stripSecrets(key, result.rows[0].value, req.user.role === 'admin'),
+    });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

@@ -1,5 +1,16 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
+// requireAdmin verifies the role against the DB (not the token claim), so the
+// database layer has to be stubbed here.
+const usersTable = {
+  U001: { role: 'admin', status: 'active', permissions: {} },
+  U002: { role: 'user', status: 'active', permissions: {} },
+  U004: { role: 'admin', status: 'inactive', permissions: {} },
+};
+vi.mock('../db.js', () => ({
+  query: vi.fn(async (_sql, params) => ({ rows: usersTable[params?.[0]] ? [usersTable[params[0]]] : [] })),
+}));
+
 describe('JWT auth middleware', () => {
   let verifyToken, requireAdmin, generateToken, JWT_SECRET;
 
@@ -77,19 +88,35 @@ describe('JWT auth middleware', () => {
   });
 
   // --- requireAdmin ---
-  it('requireAdmin allows admin role', () => {
+  it('requireAdmin allows an active admin', async () => {
     const { req, res, next } = mockReqResNext();
     req.user = { id: 'U001', role: 'admin' };
-    requireAdmin(req, res, next);
+    await requireAdmin(req, res, next);
     expect(next).toHaveBeenCalled();
   });
 
-  it('requireAdmin rejects non-admin role', () => {
+  it('requireAdmin rejects non-admin role', async () => {
     const { req, res, next } = mockReqResNext();
     req.user = { id: 'U002', role: 'user' };
-    requireAdmin(req, res, next);
+    await requireAdmin(req, res, next);
     expect(res._status).toBe(403);
     expect(res._json.error).toMatch(/admin/i);
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  it('requireAdmin rejects a token claiming admin for a demoted account', async () => {
+    const { req, res, next } = mockReqResNext();
+    req.user = { id: 'U002', role: 'admin' }; // stale claim, DB says 'user'
+    await requireAdmin(req, res, next);
+    expect(res._status).toBe(403);
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  it('requireAdmin rejects a suspended admin', async () => {
+    const { req, res, next } = mockReqResNext();
+    req.user = { id: 'U004', role: 'admin' };
+    await requireAdmin(req, res, next);
+    expect(res._status).toBe(403);
     expect(next).not.toHaveBeenCalled();
   });
 });

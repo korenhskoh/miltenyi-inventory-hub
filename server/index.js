@@ -304,12 +304,13 @@ async function connectWhatsApp() {
           // The bot can create/delete orders and approve requests, so only
           // known senders may talk to it: the Settings "Allowed Senders" list
           // plus the phone numbers of active users.
-          if (!(await isAllowedSender(jid))) {
+          const sender = await resolveBotSender(jid);
+          if (!sender.allowed) {
             logger.warn({ jid }, 'WhatsApp message from unknown sender ignored');
             continue;
           }
 
-          const reply = await handleBotMessage(text, jid);
+          const reply = await handleBotMessage(text, jid, sender.user);
           if (reply && sock) {
             await sock.sendMessage(jid, { text: reply });
             logger.info({ jid }, 'Bot replied');
@@ -361,29 +362,36 @@ function phoneDigits(phone) {
   return d;
 }
 
-// Cache the allowed-sender set for 60s so the bot doesn't hit the DB per message
-let allowedSenderCache = { at: 0, set: new Set() };
-async function isAllowedSender(jid) {
+// Cache the sender→account map for 60s so the bot doesn't hit the DB per message.
+// The bot can create, approve and delete orders, so a sender is resolved to the
+// user account behind the number and every privileged command is then checked
+// against that account's permissions (see waBotCommands.js).
+let allowedSenderCache = { at: 0, map: new Map() };
+async function resolveBotSender(jid) {
   const digits = (jid || '').split('@')[0].split(':')[0];
   if (Date.now() - allowedSenderCache.at > 60000) {
-    const set = new Set();
+    const map = new Map();
     try {
+      const rows = await dbQuery(
+        "SELECT id, username, name, role, phone FROM users WHERE status = 'active' AND phone IS NOT NULL AND phone <> ''",
+      );
+      for (const u of rows.rows) {
+        const d = phoneDigits(u.phone);
+        if (d) map.set(d, { id: u.id, username: u.username, name: u.name, role: u.role });
+      }
+      // Numbers on the Settings allow-list that belong to no account may still
+      // talk to the bot, but only for read-only commands (no account → no perms).
       const cfg = await getGlobalConfig('waAllowedSenders');
       for (const p of Array.isArray(cfg) ? cfg : []) {
         const d = phoneDigits(typeof p === 'string' ? p : p?.phone);
-        if (d) set.add(d);
-      }
-      const users = await dbQuery("SELECT phone FROM users WHERE status = 'active' AND phone IS NOT NULL");
-      for (const u of users.rows) {
-        const d = phoneDigits(u.phone);
-        if (d) set.add(d);
+        if (d && !map.has(d)) map.set(d, null);
       }
     } catch (e) {
       logger.error({ err: e }, 'Failed to load allowed WhatsApp senders');
     }
-    allowedSenderCache = { at: Date.now(), set };
+    allowedSenderCache = { at: Date.now(), map };
   }
-  return allowedSenderCache.set.has(digits);
+  return { allowed: allowedSenderCache.map.has(digits), user: allowedSenderCache.map.get(digits) || null };
 }
 
 // ============ API ENDPOINTS ============
@@ -766,7 +774,7 @@ const getWaContext = () => ({ sock, formatPhoneNumber });
 registerConfigHook('scheduledNotifs', () => reloadScheduler(getWaContext));
 registerConfigHook('emailConfig', () => resetTransporter());
 registerConfigHook('waAllowedSenders', () => {
-  allowedSenderCache = { at: 0, set: new Set() };
+  allowedSenderCache = { at: 0, map: new Map() };
 });
 
 // Manual trigger: run scheduled report now

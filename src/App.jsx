@@ -121,7 +121,7 @@ import {
   SelBox,
   QRCodeCanvas,
 } from './components/ui.jsx';
-import { todayLocal, toLocalYmd, normalizeDate } from './lib/dates.js';
+import { todayLocal, toLocalYmd } from './lib/dates.js';
 import { getCatalogPrice, getEffectiveUnitPrice, getEffectiveTotal } from './lib/pricing.js';
 import { computeArrival, arrivalDelta } from './lib/arrival.js';
 import { ORDER_STATUS, approvalTransition } from './lib/approvals.js';
@@ -853,7 +853,7 @@ export default function App() {
 
       // Check if already ran today
       if (scheduledNotifs.lastRun) {
-        const lastDate = normalizeDate(scheduledNotifs.lastRun);
+        const lastDate = toLocalYmd(new Date(scheduledNotifs.lastRun));
         if (lastDate === toLocalYmd(now)) return;
       }
 
@@ -939,10 +939,12 @@ export default function App() {
       const arrivalItems = [];
       orderIds.forEach((orderId) => {
         const order = updatedOrders.find((o) => o.id === orderId);
-        if (!order || order.status === ORDER_STATUS.RECEIVED) return;
+        if (!order) return;
         const pending = pendingArrival[orderId];
         const val = pending ? pending.qtyReceived : order.qtyReceived || 0;
         const delta = arrivalDelta(order, val);
+        // Mirror confirmArrival: an already-Received order may still be topped up when delta > 0
+        if (order.status === ORDER_STATUS.RECEIVED && delta <= 0) return;
         const upd = {
           ...computeArrival(order, val),
           arrivalDate: todayLocal(),
@@ -1084,11 +1086,29 @@ export default function App() {
     return items;
   }, [partsCatalog, catalogSearch, catFilter, catalogSort]);
 
+  // Users table: pending registrations are approved via the Approve button, not this table,
+  // so the header select-all must span exactly the rows the tbody renders.
+  const visibleUsers = useMemo(
+    () =>
+      users.filter(
+        (u) =>
+          u.status !== 'pending' &&
+          (!userSearch ||
+            [u.name, u.username, u.email, u.role, u.phone || '']
+              .join(' ')
+              .toLowerCase()
+              .includes(userSearch.toLowerCase())),
+      ),
+    [users, userSearch],
+  );
+
   // ── Stats ──
   const stats = useMemo(() => {
     const t = orders.length,
       r = orders.filter((o) => o.status === 'Received').length,
-      b = orders.filter((o) => o.arrivalDate && (o.qtyReceived || 0) < o.quantity).length;
+      // Match the server aggregate (/api/orders/stats counts back_order < 0) so the tile
+      // does not jump when the server numbers land.
+      b = orders.filter((o) => (o.backOrder ?? (Number(o.qtyReceived) || 0) - (Number(o.quantity) || 0)) < 0).length;
     const pa = orders.filter((o) => o.status === 'Pending Approval').length,
       ap = orders.filter((o) => o.status === 'Approved').length;
     const rej = orders.filter((o) => o.status === 'Rejected').length;
@@ -3329,11 +3349,14 @@ export default function App() {
     { id: 'notifications', label: 'Notifications', icon: Bell, perm: 'notifications', module: 'shared' },
     { id: 'audit', label: 'Audit Trail', icon: Shield, perm: 'auditTrail', module: 'shared' },
     { id: 'aibot', label: 'AI Bot Admin', icon: Bot, perm: 'aiBot', module: 'shared' },
-    { id: 'users', label: 'User Management', icon: Users, perm: 'users', module: 'shared' },
+    // /api/users is mounted behind requireAdmin server-side; keep the page admin-only so a
+    // non-admin granted the 'users' permission does not land on a page that only 403s.
+    { id: 'users', label: 'User Management', icon: Users, perm: 'users', module: 'shared', adminOnly: true },
     { id: 'settings', label: 'Settings', icon: Settings, perm: 'settings', module: 'shared' },
   ];
   const navItems = allNavItems
     .filter((n) => n.module === activeModule || n.module === 'shared')
+    .filter((n) => !n.adminOnly || isAdmin)
     .map((n) => {
       if (!n.children) return hasPermission(n.perm) ? n : null;
       const visibleChildren = n.children.filter((c) => hasPermission(c.perm));
@@ -8321,7 +8344,7 @@ export default function App() {
             })()}
 
           {/* ═══════════ USER MANAGEMENT (ADMIN ONLY) ═══════════ */}
-          {page === 'users' && hasPermission('users') && (
+          {page === 'users' && isAdmin && hasPermission('users') && (
             <div>
               {/* Pending Approvals */}
               {allPendingUsers.length > 0 && (
@@ -8450,12 +8473,12 @@ export default function App() {
                     <tr style={{ background: '#F8FAFB' }}>
                       <th className="th" style={{ width: 36 }}>
                         <SelBox
-                          checked={selUsers.size === users.length && users.length > 0}
+                          checked={selUsers.size === visibleUsers.length && visibleUsers.length > 0}
                           onChange={() =>
                             toggleAll(
                               selUsers,
                               setSelUsers,
-                              users.map((u) => u.id),
+                              visibleUsers.map((u) => u.id),
                             )
                           }
                         />
@@ -8469,15 +8492,7 @@ export default function App() {
                   </thead>
                   <tbody>
                     {(() => {
-                      const fu = users.filter(
-                        (u) =>
-                          u.status !== 'pending' &&
-                          (!userSearch ||
-                            [u.name, u.username, u.email, u.role, u.phone || '']
-                              .join(' ')
-                              .toLowerCase()
-                              .includes(userSearch.toLowerCase())),
-                      );
+                      const fu = visibleUsers;
                       return fu.length === 0 ? (
                         <tr>
                           <td colSpan={10} style={{ padding: 24, textAlign: 'center', color: '#94A3B8', fontSize: 13 }}>
@@ -9368,45 +9383,48 @@ export default function App() {
                                     >
                                       {o.id}
                                     </span>
-                                    <button
-                                      title="Remove from group"
-                                      onClick={() => {
-                                        if (!window.confirm(`Remove ${o.id} from this bulk group?`)) return;
-                                        const updatedOrders = orders.map((ord) =>
-                                          ord.id === o.id ? { ...ord, bulkGroupId: null } : ord,
-                                        );
-                                        setOrders(updatedOrders);
-                                        setBulkDraft((prev) => {
-                                          const next = { ...prev };
-                                          delete next[o.id];
-                                          return next;
-                                        });
-                                        recalcBulkGroupForMonths([selectedBulkGroup.id], updatedOrders);
-                                        dbSync(
-                                          api.updateOrder(o.id, { bulkGroupId: null }),
-                                          'Remove from group failed',
-                                        );
-                                        notify('Item Removed', `${o.id} removed from group`, 'info');
-                                      }}
-                                      style={{
-                                        background: '#FEE2E2',
-                                        border: 'none',
-                                        borderRadius: 6,
-                                        cursor: 'pointer',
-                                        color: '#DC2626',
-                                        padding: '4px 8px',
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        gap: 4,
-                                        fontSize: 10,
-                                        fontWeight: 600,
-                                        transition: 'background 0.15s',
-                                      }}
-                                      onMouseEnter={(e) => (e.currentTarget.style.background = '#FECACA')}
-                                      onMouseLeave={(e) => (e.currentTarget.style.background = '#FEE2E2')}
-                                    >
-                                      <X size={12} /> Remove
-                                    </button>
+                                    {!bulkLocked && (
+                                      <button
+                                        title="Remove from group"
+                                        onClick={() => {
+                                          if (bulkLocked) return;
+                                          if (!window.confirm(`Remove ${o.id} from this bulk group?`)) return;
+                                          const updatedOrders = orders.map((ord) =>
+                                            ord.id === o.id ? { ...ord, bulkGroupId: null } : ord,
+                                          );
+                                          setOrders(updatedOrders);
+                                          setBulkDraft((prev) => {
+                                            const next = { ...prev };
+                                            delete next[o.id];
+                                            return next;
+                                          });
+                                          recalcBulkGroupForMonths([selectedBulkGroup.id], updatedOrders);
+                                          dbSync(
+                                            api.updateOrder(o.id, { bulkGroupId: null }),
+                                            'Remove from group failed',
+                                          );
+                                          notify('Item Removed', `${o.id} removed from group`, 'info');
+                                        }}
+                                        style={{
+                                          background: '#FEE2E2',
+                                          border: 'none',
+                                          borderRadius: 6,
+                                          cursor: 'pointer',
+                                          color: '#DC2626',
+                                          padding: '4px 8px',
+                                          display: 'flex',
+                                          alignItems: 'center',
+                                          gap: 4,
+                                          fontSize: 10,
+                                          fontWeight: 600,
+                                          transition: 'background 0.15s',
+                                        }}
+                                        onMouseEnter={(e) => (e.currentTarget.style.background = '#FECACA')}
+                                        onMouseLeave={(e) => (e.currentTarget.style.background = '#FEE2E2')}
+                                      >
+                                        <X size={12} /> Remove
+                                      </button>
+                                    )}
                                   </div>
                                   {/* Material No. + Description */}
                                   <div
@@ -9522,7 +9540,7 @@ export default function App() {
                       )}
 
                       {/* Add Item to Bulk Group */}
-                      {selectedBulkGroup.status !== 'Completed' && (
+                      {selectedBulkGroup.status !== 'Completed' && !bulkLocked && (
                         <div
                           style={{
                             padding: 12,
@@ -9697,6 +9715,7 @@ export default function App() {
                           </label>
                           <select
                             value={selectedBulkGroup.status}
+                            disabled={bulkLocked}
                             onChange={(e) => setSelectedBulkGroup((prev) => ({ ...prev, status: e.target.value }))}
                             style={{
                               width: '100%',
@@ -9758,7 +9777,9 @@ export default function App() {
                           Cancel
                         </button>
                         <button
+                          disabled={bulkLocked}
                           onClick={() => {
+                            if (bulkLocked) return;
                             const origGroup = bulkGroups.find((g) => g.id === selectedBulkGroup.id);
                             const oldMonth = origGroup?.month || '';
                             const newMonth = selectedBulkGroup.month;
@@ -9884,11 +9905,11 @@ export default function App() {
                             padding: '10px',
                             borderRadius: 8,
                             border: 'none',
-                            background: 'linear-gradient(135deg,#4338CA,#6366F1)',
+                            background: bulkLocked ? '#CBD5E1' : 'linear-gradient(135deg,#4338CA,#6366F1)',
                             color: '#fff',
                             fontWeight: 600,
                             fontSize: 13,
-                            cursor: 'pointer',
+                            cursor: bulkLocked ? 'not-allowed' : 'pointer',
                           }}
                         >
                           Save Changes

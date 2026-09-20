@@ -12,7 +12,7 @@ export function camelToSnake(obj) {
   if (!obj) return obj;
   const result = {};
   for (const [key, value] of Object.entries(obj)) {
-    const snakeKey = key.replace(/[A-Z]/g, c => '_' + c.toLowerCase());
+    const snakeKey = key.replace(/[A-Z]/g, (c) => '_' + c.toLowerCase());
     result[snakeKey] = value;
   }
   return result;

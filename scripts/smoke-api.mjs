@@ -116,9 +116,12 @@ ok(m1?.quantity === 6, 'M1 quantity 10-4=6 persisted', String(m1?.quantity));
 r = await call('POST', '/api/local-inventory/arrival', { items: [{ materialNo: 'M1', quantity: 2 }, { materialNo: 'M9', description: 'new', quantity: 3 }] }, tech);
 ok(r.status === 200 && r.json.processed === 2, 'arrival upsert');
 r = await call('PUT', `/api/local-inventory/${m1.id}`, { quantity: 999, description: 'renamed' }, tech);
+ok(r.status === 400 && /adjust/i.test(r.json?.error || ''), 'PUT rejects a quantity edit instead of silently dropping it', JSON.stringify(r.json));
+r = await call('PUT', `/api/local-inventory/${m1.id}`, { description: 'renamed' }, tech);
+ok(r.status === 200, 'PUT updates metadata');
 r = await call('GET', `/api/local-inventory?all=true`, null, tech);
 const m1b = r.json.data.find((x) => x.materialNo === 'M1');
-ok(m1b.quantity === 8 && m1b.description === 'renamed', 'PUT cannot change quantity (8), metadata updated', JSON.stringify(m1b));
+ok(m1b.quantity === 8 && m1b.description === 'renamed', 'quantity untouched (8), description updated', JSON.stringify(m1b));
 r = await call('POST', '/api/local-inventory/adjust', { items: [{ materialNo: 'M1', quantity: -3 }] }, tech);
 ok(r.status === 403, 'adjust admin-only', String(r.status));
 r = await call('GET', '/api/local-inventory/transactions', null, tech);
@@ -141,6 +144,56 @@ r = await call('GET', '/api/orders', null, 'bad.token.here');
 ok(r.status === 403, 'tampered token 403');
 r = await call('GET', '/api/public/logo');
 ok(r.status === 200, 'public logo');
+
+// ── regression guards for previously-found holes ──
+r = await call('POST', '/api/local-inventory', { materialNo: 'M1', quantity: 500 }, tech);
+ok(r.status === 409 && /already exists/i.test(r.json?.error || ''), 'add refuses to silently overwrite existing stock', JSON.stringify(r.json));
+r = await call('GET', '/api/local-inventory?all=true', null, tech);
+ok(r.json.data.find((x) => x.materialNo === 'M1').quantity === 8, 'stock still 8 after refused overwrite');
+r = await call('POST', '/api/local-inventory', { materialNo: 'M-NEW', description: 'fresh', quantity: 4 }, tech);
+ok(r.status === 201, 'add creates a genuinely new item');
+r = await call('GET', '/api/local-inventory/transactions?materialNo=M-NEW', null, tech);
+ok(r.json.total === 1, 'creating an item logs a transaction', String(r.json.total));
+
+r = await call('POST', '/api/orders', { id: 'ORD-ESC1', description: 'escalate', quantity: 1, status: 'Approved', approvalStatus: 'approved' }, tech);
+ok(r.status === 403, 'cannot create an order that is already approved', String(r.status));
+r = await call('POST', '/api/orders', { id: 'ORD-ESC2', description: 'escalate', quantity: 1, status: 'Received' }, tech);
+ok(r.status === 403, 'cannot create an order that is already received', String(r.status));
+await call('POST', '/api/orders', { id: 'ORD-UNAPP', description: 'not approved', quantity: 1 }, tech);
+r = await call('PUT', '/api/orders/ORD-UNAPP', { status: 'Received' }, tech);
+ok(r.status === 403, 'cannot mark an unapproved order Received', String(r.status));
+r = await call('PUT', '/api/orders/bulk-status', { ids: ['ORD-UNAPP'], status: 'Received' }, tech);
+ok(r.status === 207 && r.json.length === 0, 'bulk close-out skips unapproved orders (207)', `${r.status} ${JSON.stringify(r.json)}`);
+r = await call('PUT', '/api/orders/ORD-T2', { approvalStatus: 'APPROVED' }, tech);
+ok(r.status === 403, 'approval check is case-insensitive (approval_status)', String(r.status));
+r = await call('PUT', '/api/orders/ORD-T2', { status: 'approved' }, tech);
+ok(r.status === 403, 'approval check is case-insensitive (status)', String(r.status));
+
+r = await call('POST', '/api/audit-log', { userId: 'U001', userName: 'System Admin', action: 'delete' }, tech);
+ok(r.status === 201 && r.json.userName !== 'System Admin', 'audit entries cannot forge another identity', JSON.stringify(r.json));
+
+r = await call('PUT', '/api/config/emailConfig', { value: { smtpHost: 'smtp.x.com', smtpPass: '' } }, admin);
+ok(r.status === 200 && r.json.value.smtpPass === 'SECRET', 'admin PUT echoes the kept secret');
+r = await call('PUT', '/api/users/U001', { role: 'user' }, admin);
+ok(r.status === 400, 'the only active admin cannot be demoted', String(r.status));
+r = await call('DELETE', '/api/machines/1', null, tech);
+ok(r.status === 403, 'deleting an instrument is admin-only', String(r.status));
+r = await call('POST', '/api/machines/bulk', { machines: [{ name: 'x', modality: 'y' }] }, tech);
+ok(r.status === 403, 'bulk instrument import is admin-only', String(r.status));
+r = await call('DELETE', '/api/local-inventory/999999', null, tech);
+ok(r.status === 403, 'deleting inventory is admin-only', String(r.status));
+
+// A demoted account must lose its rights immediately, not when its token expires.
+r = await call('POST', '/api/users', { username: 'admin2', password: 'pw12345', name: 'Admin Two', role: 'admin', status: 'active' }, admin);
+ok(r.status === 201, 'create second admin');
+const admin2Id = r.json.id;
+r = await call('POST', '/api/auth/login', { username: 'admin2', password: 'pw12345' });
+const admin2 = r.json.token;
+r = await call('GET', '/api/users?all=true', null, admin2);
+ok(r.status === 200, 'second admin can read users');
+await call('PUT', `/api/users/${admin2Id}`, { role: 'user' }, admin);
+r = await call('GET', '/api/users?all=true', null, admin2);
+ok(r.status === 403, 'demoted admin loses access immediately with the same token', String(r.status));
 
 console.log(`\n${fails === 0 ? 'ALL PASSED' : fails + ' FAILED'}`);
 process.exit(fails ? 1 : 0);

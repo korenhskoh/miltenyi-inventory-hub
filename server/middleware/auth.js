@@ -1,6 +1,7 @@
 import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
 import logger from '../logger.js';
+import { isActiveAdmin } from './permissions.js';
 
 if (!process.env.JWT_SECRET) {
   if (process.env.NODE_ENV === 'production') {
@@ -49,11 +50,11 @@ export function verifyToken(req, res, next) {
 }
 
 /**
- * Middleware: require admin role (must be used after verifyToken)
+ * Middleware: require admin role (must be used after verifyToken).
+ * Verified against the database, not the token's role claim — see
+ * isActiveAdmin() for why.
  */
-export function requireAdmin(req, res, next) {
-  if (!req.user || req.user.role !== 'admin') {
-    return res.status(403).json({ error: 'Admin access required.' });
-  }
-  next();
+export async function requireAdmin(req, res, next) {
+  if (await isActiveAdmin(req.user)) return next();
+  return res.status(403).json({ error: 'Admin access required.' });
 }

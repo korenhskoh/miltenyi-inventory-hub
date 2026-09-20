@@ -5,6 +5,7 @@ import { pickAllowed, requireFields, sanitizeDates } from '../validation.js';
 import { paginate, envelope, limitClause } from '../pagination.js';
 import { asyncHandler } from '../middleware/errorHandler.js';
 import { requireAdmin } from '../middleware/auth.js';
+import logger from '../logger.js';
 import { requirePermission, userHasPermission } from '../middleware/permissions.js';
 
 const router = Router();
@@ -42,14 +43,19 @@ const ORDER_DATE_FIELDS = ['order_date', 'arrival_date', 'approval_sent_date'];
 const ALLOWED_ORDER_COLUMNS = new Set([...ORDER_FIELDS, 'created_at']);
 
 const APPROVAL_STATUSES = new Set(['approved', 'rejected']);
-const APPROVAL_ORDER_STATUSES = new Set(['Approved', 'Rejected']);
-// Does this update change the approval decision? (Only users with the
-// 'approvals' permission — or admins — may do that.)
+const lower = (v) => String(v ?? '').toLowerCase();
+
+// Does this write record an approval decision? Only users with the 'approvals'
+// permission (or admins) may do that. Both fields are compared case
+// INSENSITIVELY: a capitalised-only check let `status: 'approved'` through.
 function isApprovalDecision(body) {
-  return (
-    (body.approval_status && APPROVAL_STATUSES.has(String(body.approval_status).toLowerCase())) ||
-    (body.status && APPROVAL_ORDER_STATUSES.has(body.status))
-  );
+  return APPROVAL_STATUSES.has(lower(body.approval_status)) || APPROVAL_STATUSES.has(lower(body.status));
+}
+
+// Does this write close an order out as delivered? Allowed for anyone doing
+// part arrival, but only once the order has actually been approved.
+function isCloseOut(body) {
+  return body.qty_received !== undefined || lower(body.status) === 'received';
 }
 
 // GET /stats - server-side aggregates for the dashboard (never subject to paging)
@@ -144,6 +150,12 @@ router.post('/', async (req, res) => {
     const err = requireFields(snakeBody, ORDER_REQUIRED);
     if (err) return res.status(400).json({ error: err });
 
+    // An order may not be born already approved / rejected / received — that
+    // would skip the approval workflow entirely.
+    if ((isApprovalDecision(snakeBody) || isCloseOut(snakeBody)) && !(await userHasPermission(req.user, 'approvals'))) {
+      return res.status(403).json({ error: 'Permission required: approvals' });
+    }
+
     const keys = Object.keys(snakeBody);
     const values = Object.values(snakeBody);
     const placeholders = keys.map((_, i) => `$${i + 1}`);
@@ -166,20 +178,33 @@ router.put('/bulk-status', async (req, res) => {
     if (!status) {
       return res.status(400).json({ error: 'status is required' });
     }
-    if (
-      isApprovalDecision({ status, approval_status: approvalStatus }) &&
-      !(await userHasPermission(req.user, 'approvals'))
-    ) {
+    const bulkBody = { status, approval_status: approvalStatus };
+    const canApprove = await userHasPermission(req.user, 'approvals');
+    if (isApprovalDecision(bulkBody) && !canApprove) {
       return res.status(403).json({ error: 'Permission required: approvals' });
     }
+    // Closing orders out as received without the 'approvals' permission is fine
+    // for part-arrival work, but it must not become a way around the approval
+    // gate: restrict the update to orders that are already approved.
+    const approvedOnly = isCloseOut(bulkBody) && !canApprove;
 
-    const placeholders = ids.map((_, i) => `$${i + (approvalStatus ? 3 : 2)}`).join(', ');
-    const sql = approvalStatus
-      ? `UPDATE orders SET status = $1, approval_status = $2 WHERE id IN (${placeholders}) RETURNING *`
-      : `UPDATE orders SET status = $1 WHERE id IN (${placeholders}) RETURNING *`;
-    const params = approvalStatus ? [status, approvalStatus, ...ids] : [status, ...ids];
-    const result = await query(sql, params);
+    const params = approvalStatus ? [status, approvalStatus] : [status];
+    const placeholders = ids.map((_, i) => `$${i + params.length + 1}`).join(', ');
+    const setClause = approvalStatus ? 'status = $1, approval_status = $2' : 'status = $1';
+    const sql = `UPDATE orders SET ${setClause} WHERE id IN (${placeholders})${
+      approvedOnly ? " AND approval_status = 'approved'" : ''
+    } RETURNING *`;
+    const result = await query(sql, [...params, ...ids]);
     const rows = result.rows.map(snakeToCamel);
+    // Keep the array response contract; 207 signals that some ids were skipped
+    // because they had not been approved.
+    if (approvedOnly && rows.length < ids.length) {
+      logger.warn(
+        { userId: req.user?.id, requested: ids.length, updated: rows.length },
+        'Bulk close-out skipped unapproved orders',
+      );
+      return res.status(207).json(rows);
+    }
     res.json(rows);
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -196,9 +221,9 @@ router.put('/:id', async (req, res) => {
       return res.status(403).json({ error: 'Permission required: approvals' });
     }
 
-    // Enforce approval before allowing part arrival updates
-    // Skip check if this request is also setting approval_status to 'approved'
-    if (snakeBody.qty_received !== undefined && snakeBody.approval_status !== 'approved') {
+    // Enforce approval before allowing part arrival / close-out.
+    // Skip check if this request is also setting approval_status to 'approved'.
+    if (isCloseOut(snakeBody) && lower(snakeBody.approval_status) !== 'approved') {
       const check = await query('SELECT approval_status FROM orders WHERE id = $1', [id]);
       if (check.rows.length && check.rows[0].approval_status !== 'approved') {
         return res.status(403).json({ error: 'Order must be approved before recording part arrival' });

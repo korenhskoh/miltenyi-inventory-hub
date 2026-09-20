@@ -7,11 +7,13 @@ describe('snakeToCamel', () => {
   });
 
   it('converts multiple snake_case keys', () => {
-    expect(snakeToCamel({
-      material_no: '130-001',
-      total_cost: 100,
-      order_by: 'Admin',
-    })).toEqual({
+    expect(
+      snakeToCamel({
+        material_no: '130-001',
+        total_cost: 100,
+        order_by: 'Admin',
+      }),
+    ).toEqual({
       materialNo: '130-001',
       totalCost: 100,
       orderBy: 'Admin',
@@ -39,13 +41,15 @@ describe('snakeToCamel', () => {
   });
 
   it('preserves values of all types', () => {
-    expect(snakeToCamel({
-      num_val: 42,
-      bool_val: true,
-      null_val: null,
-      arr_val: [1, 2],
-      obj_val: { nested: true },
-    })).toEqual({
+    expect(
+      snakeToCamel({
+        num_val: 42,
+        bool_val: true,
+        null_val: null,
+        arr_val: [1, 2],
+        obj_val: { nested: true },
+      }),
+    ).toEqual({
       numVal: 42,
       boolVal: true,
       nullVal: null,
@@ -61,11 +65,13 @@ describe('camelToSnake', () => {
   });
 
   it('converts multiple camelCase keys', () => {
-    expect(camelToSnake({
-      materialNo: '130-001',
-      totalCost: 100,
-      orderBy: 'Admin',
-    })).toEqual({
+    expect(
+      camelToSnake({
+        materialNo: '130-001',
+        totalCost: 100,
+        orderBy: 'Admin',
+      }),
+    ).toEqual({
       material_no: '130-001',
       total_cost: 100,
       order_by: 'Admin',
