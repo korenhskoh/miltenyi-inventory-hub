@@ -17,6 +17,7 @@ import { verifyToken, requireAdmin } from './middleware/auth.js';
 import { requirePermission } from './middleware/permissions.js';
 import { buildSenderMap, jidDigits } from './waSenders.js';
 import { extractText, isDirectChat } from './waMessage.js';
+import { setWaContext as setNotifyWaContext } from './notify.js';
 import { errorHandler } from './middleware/errorHandler.js';
 import { startScheduler, reloadScheduler, runScheduledReport, resetTransporter } from './scheduler.js';
 
@@ -854,6 +855,8 @@ app.get('/api/health', async (req, res) => {
 // ── Scheduled Reports API ──
 // Provides WhatsApp context (sock + formatPhoneNumber) to scheduler
 const getWaContext = () => ({ sock, formatPhoneNumber, sendText: sendWaText });
+// Event-driven notifications need the same WhatsApp context the scheduler uses.
+setNotifyWaContext(getWaContext);
 
 // Auto-reload scheduler & reset SMTP transporter when config changes via Settings
 registerConfigHook('scheduledNotifs', () => reloadScheduler(getWaContext));
