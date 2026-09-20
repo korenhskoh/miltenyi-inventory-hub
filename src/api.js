@@ -109,6 +109,28 @@ async function getMe() {
   }
 }
 
+/** Change the signed-in user's own password. */
+async function changePassword(currentPassword, newPassword) {
+  try {
+    // Deliberately NOT routed through handleResponse. A 401 from this endpoint
+    // means "that is not your current password", not "your session expired" —
+    // and handleResponse clears the token and fires the auth-error handler, so
+    // a single typo logged the user straight out of the app.
+    const res = await fetch(`${BASE}/api/auth/change-password`, {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({ currentPassword, newPassword }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      return { ok: false, error: typeof data.error === 'string' ? data.error : 'Could not change the password' };
+    }
+    return { ok: true };
+  } catch {
+    return { ok: false, error: 'Could not reach the server' };
+  }
+}
+
 // Public: is the API server reachable at all? (distinguishes "offline" from "token expired")
 async function checkServer() {
   try {
@@ -1206,6 +1228,7 @@ const api = {
   logout,
   getMe,
   checkServer,
+  changePassword,
   getPublicLogo,
   onAuthError,
   resetAuthError,
