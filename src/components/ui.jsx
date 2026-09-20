@@ -18,7 +18,17 @@ export const Pill = ({ bg, color, children }) => <span className="pill" style={{
 
 export const Toggle = ({ active, onClick, color }) => <div onClick={onClick} style={{ width:40,height:22,borderRadius:11,background:active?(color||'#0B7A3E'):'#E2E8F0',cursor:'pointer',position:'relative',transition:'background 0.2s' }}><div style={{ width:18,height:18,borderRadius:'50%',background:'#fff',position:'absolute',top:2,left:active?20:2,transition:'left 0.2s',boxShadow:'0 1px 3px rgba(0,0,0,0.15)' }}/></div>;
 
-export const Toast = ({ items, onDismiss }) => <div style={{ position:'fixed',top:80,right:24,zIndex:9999,display:'flex',flexDirection:'column',gap:8,maxWidth:380 }}>{items.map((n,i) => <div key={i} style={{ background:n.type==='success'?'#0B7A3E':n.type==='warning'?'#D97706':'#2563EB',color:'#fff',padding:'12px 16px',borderRadius:10,boxShadow:'0 8px 24px rgba(0,0,0,0.18)',display:'flex',alignItems:'center',gap:10,animation:'slideIn 0.3s' }}>{n.type==='success'?<CheckCircle size={18}/>:n.type==='warning'?<AlertTriangle size={18}/>:<Bell size={18}/>}<div style={{flex:1}}><div style={{fontWeight:600,fontSize:13}}>{n.title}</div><div style={{fontSize:11,opacity:0.9}}>{n.message}</div></div><button onClick={()=>onDismiss(i)} style={{background:'none',border:'none',color:'#fff',cursor:'pointer'}}><X size={14}/></button></div>)}</div>;
+// Toast text comes from API error payloads, which are not always strings.
+// Rendering a raw object throws "Objects are not valid as a React child" and
+// takes the whole app down with it, so coerce here as a last line of defence.
+const toastText = (v) => {
+  if (v === null || v === undefined) return '';
+  if (typeof v === 'string') return v;
+  if (typeof v === 'object') return v.message || v.error || JSON.stringify(v);
+  return String(v);
+};
+
+export const Toast = ({ items, onDismiss }) => <div style={{ position:'fixed',top:80,right:24,zIndex:9999,display:'flex',flexDirection:'column',gap:8,maxWidth:380 }}>{items.map((n,i) => <div key={i} style={{ background:n.type==='success'?'#0B7A3E':n.type==='warning'?'#D97706':'#2563EB',color:'#fff',padding:'12px 16px',borderRadius:10,boxShadow:'0 8px 24px rgba(0,0,0,0.18)',display:'flex',alignItems:'center',gap:10,animation:'slideIn 0.3s' }}>{n.type==='success'?<CheckCircle size={18}/>:n.type==='warning'?<AlertTriangle size={18}/>:<Bell size={18}/>}<div style={{flex:1}}><div style={{fontWeight:600,fontSize:13}}>{toastText(n.title)}</div><div style={{fontSize:11,opacity:0.9}}>{toastText(n.message)}</div></div><button onClick={()=>onDismiss(i)} style={{background:'none',border:'none',color:'#fff',cursor:'pointer'}}><X size={14}/></button></div>)}</div>;
 
 // ════════════════════════════ BATCH ACTION BAR ══════════════════════
 export const BatchBar = ({ count, onClear, children }) => count > 0 ? (

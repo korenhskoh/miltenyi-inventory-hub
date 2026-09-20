@@ -215,7 +215,17 @@ async function bulkUpdateOrderStatus(ids, status, approvalStatus) {
         body: JSON.stringify({ ids, status, ...(approvalStatus ? { approvalStatus } : {}) }),
       }),
     );
-    return res.ok;
+    if (!res.ok) return false;
+    // The server answers 207 when it deliberately skipped rows that were not
+    // approved. `res.ok` is true for 207, so returning it alone reported a
+    // partial update as a complete one and the UI showed every selected order
+    // as changed. Surface the shortfall instead.
+    if (res.status === 207) {
+      const rows = await res.json().catch(() => []);
+      const updatedIds = Array.isArray(rows) ? rows.map((r) => r.id) : [];
+      return { ok: true, partial: true, updatedIds, skipped: ids.length - updatedIds.length };
+    }
+    return true;
   } catch {
     return false;
   }

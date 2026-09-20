@@ -162,3 +162,24 @@ export function toNumber(v) {
 export function isBlank(v) {
   return v === null || v === undefined || String(v).trim() === '';
 }
+
+/**
+ * Parse a cell that must be a real number, or return null.
+ *
+ * toNumber() returns 0 for anything it cannot parse, which is right for a
+ * movement column (no movement = 0) but catastrophic for a physical count:
+ * stock sheets conventionally put '-', 'n/a' or 'N.A.' in the count column for
+ * rows nobody counted, and reading those as a counted zero sets that item's
+ * stock to zero. "Not a number" and "counted nothing" must stay distinct.
+ */
+export function toNumberOrNull(v) {
+  if (isBlank(v)) return null;
+  if (typeof v === 'number') return Number.isFinite(v) ? v : null;
+  const s = String(v).trim();
+  const neg = /^\(.*\)$/.test(s);
+  const cleaned = s.replace(/[(),\s]/g, '').replace(/[^\d.-]/g, '');
+  if (!/\d/.test(cleaned)) return null; // '-', 'n/a', 'N.A.', 'TBC', …
+  const n = parseFloat(cleaned);
+  if (!Number.isFinite(n)) return null;
+  return neg ? -Math.abs(n) : n;
+}

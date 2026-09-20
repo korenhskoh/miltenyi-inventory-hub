@@ -52,6 +52,14 @@ function isApprovalDecision(body) {
   return APPROVAL_STATUSES.has(lower(body.approval_status)) || APPROVAL_STATUSES.has(lower(body.status));
 }
 
+// Does this write PULL BACK an existing approval? Kept separate from
+// isApprovalDecision because a new order is legitimately born 'pending' — it is
+// only un-approving something that needs the permission. Without this, anyone
+// could send an approved order back to Pending Approval.
+function isApprovalReset(body) {
+  return lower(body.approval_status) === 'pending' || lower(body.status) === 'pending approval';
+}
+
 // Does this write close an order out as delivered? Allowed for anyone doing
 // part arrival, but only once the order has actually been approved.
 function isCloseOut(body) {
@@ -180,7 +188,7 @@ router.put('/bulk-status', async (req, res) => {
     }
     const bulkBody = { status, approval_status: approvalStatus };
     const canApprove = await userHasPermission(req.user, 'approvals');
-    if (isApprovalDecision(bulkBody) && !canApprove) {
+    if ((isApprovalDecision(bulkBody) || isApprovalReset(bulkBody)) && !canApprove) {
       return res.status(403).json({ error: 'Permission required: approvals' });
     }
     // Closing orders out as received without the 'approvals' permission is fine
@@ -217,8 +225,35 @@ router.put('/:id', async (req, res) => {
     const { id } = req.params;
     const snakeBody = sanitizeDates(pickAllowed(camelToSnake(req.body), ORDER_FIELDS), ORDER_DATE_FIELDS);
 
-    if (isApprovalDecision(snakeBody) && !(await userHasPermission(req.user, 'approvals'))) {
+    if (
+      (isApprovalDecision(snakeBody) || isApprovalReset(snakeBody)) &&
+      !(await userHasPermission(req.user, 'approvals'))
+    ) {
       return res.status(403).json({ error: 'Permission required: approvals' });
+    }
+
+    // The SPA only lets you edit your own orders unless you hold editAllOrders,
+    // but the server enforced nothing: any authenticated user could rewrite any
+    // order's quantity and price, including one already approved by someone
+    // else. Mirror the client rule here.
+    if (!(await userHasPermission(req.user, 'editAllOrders'))) {
+      // orders.order_by holds the user's DISPLAY NAME, while the token carries
+      // only id/username — so the owner check has to resolve the name from the
+      // users table rather than comparing against the token.
+      const owner = await query(
+        `SELECT o.order_by, u.name AS my_name, u.username AS my_username
+         FROM orders o LEFT JOIN users u ON u.id = $2
+         WHERE o.id = $1`,
+        [id, req.user?.id || null],
+      );
+      if (owner.rows.length) {
+        const { order_by: orderBy, my_name: myName, my_username: myUsername } = owner.rows[0];
+        const norm = (v) => String(v ?? '').trim().toLowerCase();
+        const mine = orderBy && (norm(orderBy) === norm(myName) || norm(orderBy) === norm(myUsername));
+        if (orderBy && !mine) {
+          return res.status(403).json({ error: 'You can only edit your own orders' });
+        }
+      }
     }
 
     // Enforce approval before allowing part arrival / close-out.

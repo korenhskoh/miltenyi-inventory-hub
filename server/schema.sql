@@ -317,3 +317,22 @@ CREATE TABLE IF NOT EXISTS wishlist (
   created_at TIMESTAMP DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_wishlist_user ON wishlist(user_id);
+
+-- Migration: pending_approvals.order_id held a comma-joined list of order ids.
+-- Each id is 22 characters, so three orders overflowed VARCHAR(50) and the
+-- INSERT failed with 22001 — the approval was emailed and shown in the UI but
+-- never stored, so it vanished on the next refresh and the approver never saw
+-- it. order_ids (JSONB) already carries the same list properly.
+ALTER TABLE pending_approvals
+ALTER COLUMN order_id TYPE TEXT;
+
+-- Migration: stock_checks had nowhere to keep the per-material counts, so the
+-- physical count for every line was dropped by the field allow-list and the
+-- detail behind a completed check could not be re-derived or re-exported.
+ALTER TABLE stock_checks
+ADD COLUMN IF NOT EXISTS inventory JSONB;
+
+-- local_inventory.material_no was VARCHAR(30); catalog codes can be longer, and
+-- an over-length code aborted the whole arrival batch.
+ALTER TABLE local_inventory
+ALTER COLUMN material_no TYPE TEXT;

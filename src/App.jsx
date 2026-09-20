@@ -329,8 +329,20 @@ export default function App() {
     (promise, msg) => {
       Promise.resolve(promise)
         .then((r) => {
-          if (r === null || r === false)
+          if (r === null || r === false) {
             notify('Save Failed', msg || 'Failed to save to database. Please retry.', 'error');
+            return;
+          }
+          // A partial result (HTTP 207) is not a failure, but it is not the
+          // success the user was shown either — some rows were deliberately
+          // skipped. Say so rather than letting it pass as a clean save.
+          if (r && typeof r === 'object' && r.partial) {
+            notify(
+              'Partly Saved',
+              `${r.skipped} item(s) were skipped because they are not approved. Refresh to see the current state.`,
+              'warning',
+            );
+          }
         })
         .catch(() => notify('Save Failed', msg || 'Failed to save to database. Please retry.', 'error'));
     },
@@ -2106,7 +2118,18 @@ export default function App() {
     if (!selOrders.size) return;
     const ids = [...selOrders];
     const idSet = new Set(ids);
-    const approvalStatus = status === 'Approved' ? 'approved' : status === 'Rejected' ? 'rejected' : undefined;
+    // Sending an order back to 'Pending Approval' used to leave approval_status
+    // at 'approved', so the Part Arrival page still let it be received and the
+    // server's close-out guard still passed — an order pulled back from
+    // approval could be delivered and paid for.
+    const approvalStatus =
+      status === 'Approved'
+        ? 'approved'
+        : status === 'Rejected'
+          ? 'rejected'
+          : status === 'Pending Approval'
+            ? 'pending'
+            : undefined;
     const updatedOrders = orders.map((o) =>
       idSet.has(o.id) ? { ...o, status, ...(approvalStatus ? { approvalStatus } : {}) } : o,
     );

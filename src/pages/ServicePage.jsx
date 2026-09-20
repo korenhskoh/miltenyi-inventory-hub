@@ -87,11 +87,17 @@ const normMachineDates = (m) => {
 // Days between today and a warranty/expiry date (positive = days remaining, negative = expired)
 function daysLeftFromToday(dateStr) {
   if (!dateStr) return null;
-  const d = new Date(dateStr);
-  if (Number.isNaN(d.getTime())) return null;
-  const now = new Date();
+  const ymd = normalizeDate(dateStr);
+  if (!ymd) return null;
+  // Compare calendar day to calendar day. Subtracting `new Date()` (a local
+  // instant) from 'YYYY-MM-DD' (parsed as UTC midnight) drifted by a day every
+  // evening in UTC+8: the same warranty read 102 days at 15:00 and 101 at
+  // 21:00, and an instrument expiring today showed -1. Everything else in this
+  // module compares plain YYYY-MM-DD strings; now this does too.
+  const [ty, tm, td] = todayLocal().split('-').map(Number);
+  const [dy, dm, dd] = ymd.split('-').map(Number);
   const oneDay = 24 * 60 * 60 * 1000;
-  return Math.round((d - now) / oneDay);
+  return Math.round((Date.UTC(dy, dm - 1, dd) - Date.UTC(ty, tm - 1, td)) / oneDay);
 }
 
 function fmtMoney(v) {
@@ -894,7 +900,11 @@ function ImportModal({ isAdmin, region = 'local', onImport, onClose }) {
       setImporting(false);
       // Always show the result screen so the user sees inserted/errors feedback
       setStep('done');
-      if (res.inserted > 0) onImport(res.machines || []);
+      // onImport refreshes the registry behind this modal. It must NOT close the
+      // modal, or the result screen this just switched to — including the failed
+      // rows and the skipped duplicates — is destroyed in the same commit and
+      // the user never learns which instruments did not import.
+      if (res.inserted > 0) onImport(res.machines || [], { keepOpen: true });
     } catch (err) {
       setImporting(false);
       setErrorMsg(`Import failed: ${err.message || 'unknown error'}`);
@@ -2605,9 +2615,11 @@ export default function ServicePage({ isAdmin = false, notify, machines, setMach
     if (sRes) setSummary(sRes);
   };
 
-  const handleImportDone = (newMachines) => {
+  const handleImportDone = (newMachines, { keepOpen = false } = {}) => {
     setMachines((prev) => [...newMachines, ...prev]);
-    setShowImport(false);
+    // Leave the modal up when it is showing its own result screen; the user
+    // closes it with Done once they have read the failures and skips.
+    if (!keepOpen) setShowImport(false);
     notify?.('Import Complete', `${newMachines.length} instrument(s) imported`, 'success');
     api.getMachineSummary({ region }).then((sRes) => {
       if (sRes) setSummary(sRes);

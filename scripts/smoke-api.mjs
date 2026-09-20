@@ -316,5 +316,87 @@ ok(r.json.inserted === 1 && r.json.skipped?.length === 1, 'duplicate rows within
 r = await call('POST', '/api/machines/bulk', { machines: [{ name: 'forced', serialNumber: 'SN-A', modality: 'gM' }], allowDuplicates: true }, admin);
 ok(r.json.inserted === 1, 'allowDuplicates still permits an intentional re-add');
 
+// ── Deep-review regressions ──
+
+// Approval records for 3+ orders overflowed pending_approvals.order_id
+// (VARCHAR(50)); the row was never stored and the approval silently vanished.
+const longIds = ['ORD-1789911112865-ab12', 'ORD-1789911112866-cd34', 'ORD-1789911112867-ef56'];
+ok(longIds.join(', ').length > 50, 'three joined order ids exceed the old 50-char column', String(longIds.join(', ').length));
+r = await call('POST', '/api/pending-approvals', { id: `A-${Date.now()}`, orderId: longIds.join(', '), orderIds: longIds, orderType: 'batch', requestedBy: 'Tech One', status: 'pending' }, admin);
+ok(r.status === 201, 'a 3-order batch approval is stored', JSON.stringify(r.json).slice(0, 140));
+
+// Stock-check physical counts were dropped by the server field allow-list.
+const scId = `SC-${Date.now()}`;
+r = await call('POST', '/api/stock-checks', { id: scId, date: '2026-09-20', checkedBy: 'Tech One', items: 2, disc: 1, status: 'Completed', notes: 'deep review', inventory: [{ materialNo: 'X-1', system: 10, physical: 9 }, { materialNo: 'X-2', system: 5, physical: 5 }] }, admin);
+ok(r.status === 201, 'stock check saved');
+r = await call('GET', '/api/stock-checks?all=true', null, admin);
+const saved = r.json.data.find((c) => c.id === scId);
+ok(Array.isArray(saved?.inventory) && saved.inventory.length === 2, 'per-material counts survive a round trip', JSON.stringify(saved?.inventory));
+ok(saved.inventory[0].physical === 9, 'the physical count itself is preserved', JSON.stringify(saved.inventory[0]));
+
+// /adjust must be admin-only and must log the change that actually happened.
+r = await call('POST', '/api/local-inventory', { materialNo: 'ADJ-1', description: 'clamp test', quantity: 2 }, admin);
+ok(r.status === 201 || r.status === 409, 'adjust fixture created', String(r.status));
+r = await call('POST', '/api/local-inventory/adjust', { items: [{ materialNo: 'ADJ-1', quantity: -5 }] }, admin);
+ok(r.status === 200, 'admin can adjust', String(r.status));
+r = await call('GET', '/api/local-inventory/transactions?materialNo=ADJ-1', null, admin);
+const adj = r.json.data.find((t) => t.type === 'adjustment');
+ok(adj && adj.quantityAfter === 0, 'stock clamped at zero', JSON.stringify(adj));
+// The requested -5 was logged even though only -2 could happen, so replaying
+// the ledger drifted permanently below the stored quantity.
+ok(adj.quantityChange === -2, 'ledger records the clamped change, not the requested one', String(adj.quantityChange));
+
+// Stock-raising endpoints must not be open to every logged-in user.
+r = await call('POST', '/api/local-inventory/adjust', { items: [{ materialNo: 'ADJ-1', quantity: 99 }] }, tech);
+ok(r.status === 403, 'adjust refuses a non-admin', String(r.status));
+r = await call('PUT', `/api/users/${techId}`, { permissions: { orders: true, delivery: false } }, admin);
+r = await call('POST', '/api/auth/login', { username: 'tech1', password: 'pw12345' });
+const techNoDelivery = r.json.token;
+r = await call('POST', '/api/local-inventory/arrival', { items: [{ materialNo: 'ADJ-1', quantity: 999 }] }, techNoDelivery);
+ok(r.status === 403, 'arrival refuses a user without the delivery permission', String(r.status));
+
+// Order edits: the server enforced nothing, so anyone could rewrite any order.
+r = await call('PUT', `/api/users/${techId}`, { permissions: { orders: true, delivery: true, editAllOrders: false, approvals: false } }, admin);
+r = await call('POST', '/api/auth/login', { username: 'tech1', password: 'pw12345' });
+const techPlain = r.json.token;
+const foreignId = `ORD-${Date.now()}-zz99`;
+r = await call('POST', '/api/orders', { id: foreignId, materialNo: 'M-1', description: 'someone elses order', quantity: 2, listPrice: 100, totalCost: 200, orderBy: 'System Admin', status: 'Pending Approval', approvalStatus: 'pending' }, admin);
+ok(r.status === 201, 'order created by admin', JSON.stringify(r.json).slice(0, 120));
+r = await call('PUT', `/api/orders/${foreignId}`, { quantity: 500, listPrice: 0.01, totalCost: 5 }, techPlain);
+ok(r.status === 403, "a user without editAllOrders cannot rewrite someone else's order", String(r.status));
+const fetchOrder = async () => {
+  const res = await call('GET', '/api/orders?all=true', null, admin);
+  return (res.json.data || []).find((o) => o.id === foreignId);
+};
+let fo = await fetchOrder();
+ok(Number(fo?.quantity) === 2, 'the order was left untouched', String(fo?.quantity));
+
+// Pulling an approval back is an approval action.
+r = await call('PUT', '/api/orders/bulk-status', { ids: [foreignId], status: 'Pending Approval', approvalStatus: 'pending' }, techPlain);
+ok(r.status === 403, 'un-approving requires the approvals permission', String(r.status));
+r = await call('PUT', `/api/orders/${foreignId}`, { approvalStatus: 'approved', status: 'Approved' }, admin);
+ok(r.status === 200, 'admin approves the order');
+r = await call('PUT', '/api/orders/bulk-status', { ids: [foreignId], status: 'Pending Approval', approvalStatus: 'pending' }, admin);
+ok(r.status === 200, 'admin can pull the approval back');
+fo = await fetchOrder();
+// Reverting used to leave approval_status='approved', so the order could still
+// be received and paid for after being pulled back.
+ok(fo?.approvalStatus === 'pending', 'reverting clears the approval decision', String(fo?.approvalStatus));
+r = await call('PUT', `/api/orders/${foreignId}`, { qtyReceived: 2, status: 'Received' }, admin);
+ok(r.status === 403, 'a pulled-back order can no longer be received', String(r.status));
+
+// A non-numeric count must not be read as a counted zero.
+await call('POST', '/api/local-inventory', { materialNo: 'CNT-1', description: 'count marker', quantity: 40 }, admin);
+r = await call('POST', '/api/local-inventory/reconcile', { items: [{ materialNo: 'CNT-1', countedQty: '-' }], dryRun: true }, admin);
+ok(r.json.rows[0].counted === null && r.json.rows[0].target === 40, "'-' in the count column leaves stock alone", JSON.stringify(r.json.rows[0]));
+r = await call('POST', '/api/local-inventory/reconcile', { items: [{ materialNo: 'CNT-1', countedQty: 'n/a' }], dryRun: true }, admin);
+ok(r.json.rows[0].target === 40, "'n/a' in the count column leaves stock alone", JSON.stringify(r.json.rows[0]));
+r = await call('POST', '/api/local-inventory/reconcile', { items: [{ materialNo: 'CNT-1', countedQty: 0 }], dryRun: true }, admin);
+ok(r.json.rows[0].counted === 0 && r.json.rows[0].target === 0, 'a real counted zero still zeroes the item', JSON.stringify(r.json.rows[0]));
+
+// Unhandled errors must return a string error, not an object the SPA renders.
+r = await call('GET', '/api/machines/summary?region=' + encodeURIComponent('x'.repeat(200)), null, admin);
+ok(typeof (r.json.error ?? '') === 'string', 'error payloads are strings, never objects', JSON.stringify(r.json).slice(0, 120));
+
 console.log(`\n${fails === 0 ? 'ALL PASSED' : fails + ' FAILED'}`);
 process.exit(fails ? 1 : 0);
