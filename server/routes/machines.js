@@ -2,7 +2,8 @@ import { Router } from 'express';
 import { query } from '../db.js';
 import { snakeToCamel, camelToSnake } from '../utils.js';
 import { pickAllowed, sanitizeDates } from '../validation.js';
-import { paginate, envelope } from '../pagination.js';
+import { paginate, envelope, wantsAll } from '../pagination.js';
+import { todayInTz, daysFromNowInTz } from '../appDates.js';
 import { asyncHandler } from '../middleware/errorHandler.js';
 import { requireAdmin } from '../middleware/auth.js';
 import logger from '../logger.js';
@@ -78,8 +79,9 @@ function normalizeRegion(r) {
 router.get(
   '/summary',
   asyncHandler(async (req, res) => {
-    const today = new Date().toISOString().slice(0, 10);
-    const in30 = new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10);
+    // Business-timezone, not UTC — see server/appDates.js.
+    const today = todayInTz();
+    const in30 = daysFromNowInTz(30);
     const params = [today, in30];
     let regionClause = '';
     if (req.query.region && VALID_REGIONS.has(req.query.region)) {
@@ -93,7 +95,10 @@ router.get(
         COUNT(*) AS total,
         COUNT(*) FILTER (WHERE next_maintenance_date IS NOT NULL AND next_maintenance_date <= $2 AND next_maintenance_date >= $1) AS upcoming_maintenance,
         COUNT(*) FILTER (WHERE next_maintenance_date IS NOT NULL AND next_maintenance_date < $1) AS overdue_maintenance,
-        COUNT(*) FILTER (WHERE contract_end IS NOT NULL AND contract_end >= $1) AS active_contracts,
+        -- Active means "not expiring within 30 days" so the tile agrees with the
+        -- badge in the table. It used to be contract_end >= today, which counted
+        -- every expiring contract as active too and made the tiles overlap.
+        COUNT(*) FILTER (WHERE contract_end IS NOT NULL AND contract_end > $2) AS active_contracts,
         COUNT(*) FILTER (WHERE contract_end IS NOT NULL AND contract_end BETWEEN $1 AND $2) AS expiring_contracts,
         COUNT(*) FILTER (WHERE contract_end IS NOT NULL AND contract_end < $1) AS expired_contracts
       FROM machines${regionClause}
@@ -121,8 +126,8 @@ router.get(
     const conditions = [];
     const params = [];
     let pi = 1;
-    const today = new Date().toISOString().slice(0, 10);
-    const in30 = new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10);
+    const today = todayInTz();
+    const in30 = daysFromNowInTz(30);
 
     if (region && VALID_REGIONS.has(region)) {
       conditions.push(`region = $${pi++}`);
@@ -144,8 +149,9 @@ router.get(
       pi++;
     }
     if (contractStatus === 'Active') {
-      conditions.push(`contract_end >= $${pi++}`);
-      params.push(today);
+      // Matches the Active badge: beyond the 30-day expiring window.
+      conditions.push(`contract_end > $${pi++}`);
+      params.push(in30);
     } else if (contractStatus === 'Expiring') {
       conditions.push(`contract_end BETWEEN $${pi++} AND $${pi++}`);
       params.push(today, in30);
@@ -160,8 +166,12 @@ router.get(
       conditions.push(`next_maintenance_date BETWEEN $${pi++} AND $${pi++}`);
       params.push(today, in30);
     } else if (maintenanceDue === 'OK') {
-      conditions.push(`(next_maintenance_date IS NULL OR next_maintenance_date > $${pi++})`);
+      // An instrument with no maintenance date is not "OK", it is unscheduled —
+      // lumping the two together hid instruments that had never been booked in.
+      conditions.push(`next_maintenance_date IS NOT NULL AND next_maintenance_date > $${pi++}`);
       params.push(in30);
+    } else if (maintenanceDue === 'None') {
+      conditions.push(`next_maintenance_date IS NULL`);
     }
 
     const where = conditions.length ? ` WHERE ${conditions.join(' AND ')}` : '';
@@ -170,7 +180,9 @@ router.get(
 
     // Opt-in: return all rows without pagination. The registry needs every
     // instrument to filter/search client-side; 50-row pages silently drop data.
-    const returnAll = req.query.all === 'true' || req.query.all === '1';
+    // Uses the shared helper: a repeated ?all=true arrives as an array, which an
+    // === 'true' check silently rejects and pages the caller down to 50 rows.
+    const returnAll = wantsAll(req.query);
     let dataResult;
     if (returnAll) {
       dataResult = await query(`SELECT * FROM machines${where} ORDER BY id DESC`, params);
@@ -199,6 +211,19 @@ router.post(
 
     const inserted = [];
     const errors = [];
+    const skipped = [];
+
+    // There is no unique constraint on serial_number, so importing the same
+    // spreadsheet twice used to silently double the registry. Serials already
+    // on file are skipped unless the caller explicitly opts in.
+    const allowDuplicates = req.body.allowDuplicates === true;
+    const existingSerials = new Set();
+    if (!allowDuplicates) {
+      const known = await query(
+        "SELECT DISTINCT serial_number FROM machines WHERE serial_number IS NOT NULL AND serial_number <> ''",
+      );
+      for (const row of known.rows) existingSerials.add(String(row.serial_number).trim().toLowerCase());
+    }
 
     for (const [idx, machine] of machines.entries()) {
       try {
@@ -207,6 +232,17 @@ router.post(
         if (!b.name) b.name = b.serial_number ? String(b.serial_number) : `Imported row ${idx + 1}`;
         if (!b.modality) b.modality = 'Unknown';
         b.region = normalizeRegion(b.region);
+
+        const serialKey = b.serial_number ? String(b.serial_number).trim().toLowerCase() : '';
+        if (!allowDuplicates && serialKey) {
+          if (existingSerials.has(serialKey)) {
+            // Covers both rows already in the database and repeats within this
+            // same upload.
+            skipped.push({ row: idx + 1, serialNumber: b.serial_number, reason: 'duplicate serial number' });
+            continue;
+          }
+          existingSerials.add(serialKey);
+        }
         const keys = Object.keys(b);
         const vals = Object.values(b);
         const ph = keys.map((_, i) => `$${i + 1}`);
@@ -220,10 +256,10 @@ router.post(
     }
 
     logger.info(
-      { requested: machines.length, inserted: inserted.length, failed: errors.length },
+      { requested: machines.length, inserted: inserted.length, skipped: skipped.length, failed: errors.length },
       'Bulk machine import complete',
     );
-    res.status(201).json({ inserted: inserted.length, errors, machines: inserted });
+    res.status(201).json({ inserted: inserted.length, skipped, errors, machines: inserted });
   }),
 );
 

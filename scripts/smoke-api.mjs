@@ -253,5 +253,68 @@ ok(r.status === 400 && /Too many recipients/.test(r.json.error || ''), 'broadcas
 r = await call('POST', '/api/whatsapp/broadcast', { phones: [], data: { message: 'hi' } }, admin);
 ok(r.status === 400 && /At least one/.test(r.json.error || ''), 'broadcast rejects an empty recipient list', JSON.stringify(r.json).slice(0, 120));
 
+// ── Service module: instrument registry, summary tiles, duplicate import ──
+const dayOffset = (n) => new Date(Date.now() + n * 86400000).toISOString().slice(0, 10);
+await call('DELETE', '/api/machines/all', null, admin);
+
+const fleet = [
+  // contract well in the future -> Active, maintenance far off -> OK
+  { name: 'gM-A', serialNumber: 'SN-A', modality: 'gM', contractEnd: dayOffset(200), nextMaintenanceDate: dayOffset(200) },
+  // contract inside the 30-day window -> Expiring (must NOT also count Active)
+  { name: 'gM-B', serialNumber: 'SN-B', modality: 'gM', contractEnd: dayOffset(10), nextMaintenanceDate: dayOffset(200) },
+  // contract past -> Expired
+  { name: 'gM-C', serialNumber: 'SN-C', modality: 'gM', contractEnd: dayOffset(-10), nextMaintenanceDate: dayOffset(200) },
+  // maintenance past -> Overdue
+  { name: 'gM-D', serialNumber: 'SN-D', modality: 'gM', contractEnd: dayOffset(200), nextMaintenanceDate: dayOffset(-5) },
+  // maintenance soon -> Upcoming
+  { name: 'gM-E', serialNumber: 'SN-E', modality: 'gM', contractEnd: dayOffset(200), nextMaintenanceDate: dayOffset(10) },
+  // no contract, no maintenance date at all
+  { name: 'gM-F', serialNumber: 'SN-F', modality: 'gM' },
+];
+r = await call('POST', '/api/machines/bulk', { machines: fleet }, admin);
+ok(r.status === 201 && r.json.inserted === 6, 'six instruments imported', JSON.stringify(r.json).slice(0, 120));
+
+r = await call('GET', '/api/machines/summary', null, admin);
+const sum = r.json;
+ok(sum.total === 6, 'summary counts every instrument', String(sum.total));
+ok(sum.expiringContracts === 1, 'one expiring contract', String(sum.expiringContracts));
+ok(sum.expiredContracts === 1, 'one expired contract', String(sum.expiredContracts));
+// The bug: Active used to be contract_end >= today, so the expiring one was
+// counted twice and Active came back as 4 instead of 3.
+ok(sum.activeContracts === 3, 'active excludes the expiring contract', String(sum.activeContracts));
+ok(sum.activeContracts + sum.expiringContracts + sum.expiredContracts === 5, 'contract tiles do not overlap', `${sum.activeContracts}+${sum.expiringContracts}+${sum.expiredContracts}`);
+ok(sum.overdueMaintenance === 1, 'one overdue maintenance', String(sum.overdueMaintenance));
+ok(sum.upcomingMaintenance === 1, 'one upcoming maintenance', String(sum.upcomingMaintenance));
+
+// List filters must agree with the tiles.
+r = await call('GET', '/api/machines?contractStatus=Active&all=true', null, admin);
+ok(r.json.data.length === sum.activeContracts, 'Active filter matches the Active tile', `${r.json.data.length} vs ${sum.activeContracts}`);
+r = await call('GET', '/api/machines?contractStatus=Expiring&all=true', null, admin);
+ok(r.json.data.length === 1 && r.json.data[0].serialNumber === 'SN-B', 'Expiring filter returns the expiring instrument');
+r = await call('GET', '/api/machines?maintenanceDue=None&all=true', null, admin);
+ok(r.json.data.length === 1 && r.json.data[0].serialNumber === 'SN-F', 'unscheduled maintenance is its own filter', JSON.stringify(r.json.data.map((m) => m.serialNumber)));
+r = await call('GET', '/api/machines?maintenanceDue=OK&all=true', null, admin);
+ok(!r.json.data.some((m) => m.serialNumber === 'SN-F'), 'OK no longer includes never-scheduled instruments');
+
+// A repeated ?all=true arrives as an array — it must still return everything.
+r = await call('GET', '/api/machines?all=true&all=true', null, admin);
+ok(r.json.data.length === 6, 'repeated all=true still returns every row', String(r.json.data.length));
+
+// Re-importing the same sheet must not double the registry.
+r = await call('POST', '/api/machines/bulk', { machines: fleet }, admin);
+ok(r.json.inserted === 0 && r.json.skipped?.length === 6, 're-import skips known serial numbers', JSON.stringify(r.json).slice(0, 140));
+r = await call('GET', '/api/machines/summary', null, admin);
+ok(r.json.total === 6, 'registry size unchanged after re-import', String(r.json.total));
+
+// Repeats inside one upload are caught too.
+r = await call('POST', '/api/machines/bulk', { machines: [
+  { name: 'dup', serialNumber: 'SN-NEW', modality: 'gM' },
+  { name: 'dup again', serialNumber: 'SN-NEW', modality: 'gM' },
+] }, admin);
+ok(r.json.inserted === 1 && r.json.skipped?.length === 1, 'duplicate rows within one upload are skipped', JSON.stringify(r.json).slice(0, 140));
+
+r = await call('POST', '/api/machines/bulk', { machines: [{ name: 'forced', serialNumber: 'SN-A', modality: 'gM' }], allowDuplicates: true }, admin);
+ok(r.json.inserted === 1, 'allowDuplicates still permits an intentional re-add');
+
 console.log(`\n${fails === 0 ? 'ALL PASSED' : fails + ' FAILED'}`);
 process.exit(fails ? 1 : 0);

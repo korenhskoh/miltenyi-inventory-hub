@@ -991,14 +991,48 @@ function ImportModal({ isAdmin, region = 'local', onImport, onClose }) {
                 ) : (
                   <AlertTriangle size={48} style={{ color: '#ef4444' }} />
                 )}
-                <h3 style={{ marginTop: 8 }}>{result.inserted > 0 ? 'Import Complete' : 'Import Failed'}</h3>
+                <h3 style={{ marginTop: 8 }}>
+                  {result.inserted > 0 ? 'Import Complete' : result.skipped?.length > 0 ? 'Nothing New to Import' : 'Import Failed'}
+                </h3>
                 <p style={{ color: 'var(--svc-text-muted)' }}>
                   ✅ {result.inserted} instrument(s) imported successfully
+                  {result.skipped?.length > 0 && (
+                    <span style={{ color: '#f59e0b' }}>
+                      , ⏭️ {result.skipped.length} already in the registry (skipped)
+                    </span>
+                  )}
                   {result.errors?.length > 0 && (
                     <span style={{ color: '#ef4444' }}>, ⚠️ {result.errors.length} row(s) failed</span>
                   )}
                 </p>
               </div>
+              {result.skipped?.length > 0 && (
+                <div
+                  style={{
+                    maxHeight: 140,
+                    overflowY: 'auto',
+                    background: 'var(--svc-surface-2)',
+                    border: '1px solid var(--svc-border)',
+                    borderRadius: 8,
+                    padding: '8px 12px',
+                    marginBottom: 8,
+                    fontSize: 12,
+                    color: 'var(--svc-text-muted)',
+                  }}
+                >
+                  <div style={{ marginBottom: 4, fontWeight: 600 }}>
+                    Skipped — these serial numbers are already registered:
+                  </div>
+                  {result.skipped.slice(0, 50).map((sk, i) => (
+                    <div key={i} style={{ marginBottom: 2 }}>
+                      Row {sk.row}: {sk.serialNumber}
+                    </div>
+                  ))}
+                  {result.skipped.length > 50 && (
+                    <div style={{ marginTop: 4, fontStyle: 'italic' }}>…and {result.skipped.length - 50} more</div>
+                  )}
+                </div>
+              )}
               {result.errors?.length > 0 && (
                 <div
                   style={{
@@ -1023,7 +1057,7 @@ function ImportModal({ isAdmin, region = 'local', onImport, onClose }) {
                 </div>
               )}
               <div style={{ display: 'flex', justifyContent: 'center', gap: 8, marginTop: 16 }}>
-                {result.inserted === 0 && (
+                {result.inserted === 0 && !result.skipped?.length && (
                   <button className="svc-btn svc-btn--ghost" onClick={() => setStep('map')}>
                     Back to Mapping
                   </button>
@@ -1292,6 +1326,7 @@ function Registry({
               <option value="Overdue">Overdue</option>
               <option value="Due">Due Soon</option>
               <option value="OK">OK</option>
+              <option value="None">Not scheduled</option>
             </select>
           )}
         </div>
@@ -2931,9 +2966,18 @@ const SERVICE_CSS = `
 .svc-dashboard { padding: 24px 20px; }
 .svc-dash-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  /* Six summary cards. auto-fill produced five columns at some widths, which
+     left the sixth card stranded on its own row beside a wide empty gap.
+     Step through counts that divide six evenly instead. */
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 16px;
   margin-bottom: 28px;
+}
+@media (max-width: 1600px) {
+  .svc-dash-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@media (max-width: 1100px) {
+  .svc-dash-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 .svc-card {
   display: flex;
