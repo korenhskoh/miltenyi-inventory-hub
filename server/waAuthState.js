@@ -1,5 +1,5 @@
 import { query } from './db.js';
-import { initAuthCreds, BufferJSON, proto } from '@whiskeysockets/baileys';
+import { initAuthCreds, BufferJSON, proto } from 'baileys';
 
 /**
  * PostgreSQL-backed auth state for Baileys WhatsApp.
@@ -21,6 +21,22 @@ export async function usePostgresAuthState() {
     return JSON.parse(result.rows[0].value, BufferJSON.reviver);
   };
 
+  // Read a whole set of keys in one round trip. Baileys asks for pre-keys and
+  // sender keys in batches of dozens; doing those one query at a time made
+  // every decrypt wait on a serial chain of round trips to Postgres.
+  const readMany = async (type, ids) => {
+    if (!ids.length) return {};
+    const result = await query('SELECT key_id, value FROM wa_auth WHERE key_type = $1 AND key_id = ANY($2::text[])', [
+      type,
+      ids,
+    ]);
+    const out = {};
+    for (const row of result.rows) {
+      out[row.key_id] = JSON.parse(row.value, BufferJSON.reviver);
+    }
+    return out;
+  };
+
   const removeData = async (type, id) => {
     await query('DELETE FROM wa_auth WHERE key_type = $1 AND key_id = $2', [type, id]);
   };
@@ -36,9 +52,11 @@ export async function usePostgresAuthState() {
       creds,
       keys: {
         get: async (type, ids) => {
+          const found = await readMany(type, ids);
           const data = {};
           for (const id of ids) {
-            let value = await readData(type, id);
+            let value = found[id];
+            if (value === undefined) continue; // Baileys expects absent, not null
             if (type === 'app-state-sync-key' && value) {
               value = proto.Message.AppStateSyncKeyData.fromObject(value);
             }
@@ -47,15 +65,13 @@ export async function usePostgresAuthState() {
           return data;
         },
         set: async (data) => {
+          const tasks = [];
           for (const [type, entries] of Object.entries(data)) {
             for (const [id, value] of Object.entries(entries)) {
-              if (value) {
-                await writeData(type, id, value);
-              } else {
-                await removeData(type, id);
-              }
+              tasks.push(value ? writeData(type, id, value) : removeData(type, id));
             }
           }
+          await Promise.all(tasks);
         },
       },
     },

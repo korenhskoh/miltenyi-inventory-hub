@@ -231,5 +231,27 @@ ok(r.json.data.some((x) => x.type === 'adjustment' && x.quantityChange === -1), 
 r = await call('POST', '/api/local-inventory/reconcile', { items: sheet, dryRun: true }, tech);
 ok(r.status === 403, 'reconcile is admin-only', String(r.status));
 
+// ── WhatsApp send/broadcast authorisation ──
+// These endpoints used to require only a valid token, so any logged-in user
+// could message any number from the company WhatsApp.
+r = await call('PUT', `/api/users/${techId}`, { permissions: { orders: true, whatsapp: false } }, admin);
+ok(r.status === 200, 'revoke whatsapp permission from tech1');
+r = await call('POST', '/api/auth/login', { username: 'tech1', password: 'pw12345' });
+const techNoWa = r.json.token;
+
+r = await call('POST', '/api/whatsapp/send', { phone: '91234567', data: { message: 'hi' } }, techNoWa);
+ok(r.status === 403, 'send is refused without the whatsapp permission', String(r.status));
+r = await call('POST', '/api/whatsapp/broadcast', { phones: ['91234567'], data: { message: 'hi' } }, techNoWa);
+ok(r.status === 403, 'broadcast is refused without the whatsapp permission', String(r.status));
+r = await call('POST', '/api/whatsapp/send', { phone: '91234567', data: { message: 'hi' } }, null);
+ok(r.status === 401, 'send is refused without a token', String(r.status));
+
+// Broadcast size cap — an unbounded list sleeps 1s per recipient.
+const many = Array.from({ length: 101 }, (_, i) => `9${String(i).padStart(7, '0')}`);
+r = await call('POST', '/api/whatsapp/broadcast', { phones: many, data: { message: 'hi' } }, admin);
+ok(r.status === 400 && /Too many recipients/.test(r.json.error || ''), 'broadcast caps the recipient list', JSON.stringify(r.json).slice(0, 120));
+r = await call('POST', '/api/whatsapp/broadcast', { phones: [], data: { message: 'hi' } }, admin);
+ok(r.status === 400 && /At least one/.test(r.json.error || ''), 'broadcast rejects an empty recipient list', JSON.stringify(r.json).slice(0, 120));
+
 console.log(`\n${fails === 0 ? 'ALL PASSED' : fails + ' FAILED'}`);
 process.exit(fails ? 1 : 0);

@@ -5,7 +5,11 @@ import rateLimit from 'express-rate-limit';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import makeWASocket, { DisconnectReason, fetchLatestBaileysVersion } from '@whiskeysockets/baileys';
+import makeWASocket, {
+  DisconnectReason,
+  fetchLatestBaileysVersion,
+  makeCacheableSignalKeyStore,
+} from 'baileys';
 import { usePostgresAuthState } from './waAuthState.js';
 import QRCode from 'qrcode';
 import pinoHttp from 'pino-http';
@@ -14,6 +18,9 @@ import { initDatabase } from './initDb.js';
 import { query as dbQuery } from './db.js';
 import nodemailer from 'nodemailer';
 import { verifyToken, requireAdmin } from './middleware/auth.js';
+import { requirePermission } from './middleware/permissions.js';
+import { buildSenderMap, jidDigits } from './waSenders.js';
+import { extractText, isDirectChat } from './waMessage.js';
 import { errorHandler } from './middleware/errorHandler.js';
 import { startScheduler, reloadScheduler, runScheduledReport, resetTransporter } from './scheduler.js';
 
@@ -163,11 +170,24 @@ async function connectWhatsApp() {
     destroySocket(); // clean up any previous socket
 
     const { state, saveCreds } = await usePostgresAuthState();
-    const { version } = await fetchLatestBaileysVersion();
+
+    // A failed version fetch used to throw and drop straight into the reconnect
+    // loop. The bundled version works fine — carry on with it.
+    let version;
+    try {
+      ({ version } = await fetchLatestBaileysVersion());
+    } catch (e) {
+      logger.warn({ err: e }, 'Could not fetch latest WhatsApp version — using the bundled one');
+    }
 
     sock = makeWASocket({
-      version,
-      auth: state,
+      ...(version ? { version } : {}),
+      auth: {
+        creds: state.creds,
+        // Without this every signal key read goes to Postgres. Caching them in
+        // memory is what Baileys expects and keeps decryption off the DB path.
+        keys: makeCacheableSignalKeyStore(state.keys, baileysLogger),
+      },
       logger: baileysLogger,
       // QR is handled via connection.update event — no terminal printing needed
       browser: ['Miltenyi Inventory Hub', 'Chrome', '120.0.0'],
@@ -176,6 +196,17 @@ async function connectWhatsApp() {
       retryRequestDelayMs: 2000, // delay between retried requests
       defaultQueryTimeoutMs: 30000, // timeout for individual queries
       emitOwnEvents: false, // skip own-message events to reduce noise
+      // Leaving this at its default kept the number permanently "online", which
+      // suppresses push notifications on the actual phone — bad for a shared
+      // business number that people also read by hand.
+      markOnlineOnConnect: false,
+      // WhatsApp asks the sender to re-encrypt a message it could not decrypt.
+      // With no getMessage, Baileys cannot honour that and the recipient is
+      // left staring at "Waiting for this message" while we log nothing.
+      getMessage: async (key) => {
+        const cached = sentMessageCache.get(key?.id);
+        return cached || undefined;
+      },
     });
 
     // Handle connection updates
@@ -233,6 +264,13 @@ async function connectWhatsApp() {
           // Only retry after a long delay to avoid a reconnect loop.
           waReconnectAttempts = 3; // start with higher backoff
           scheduleReconnect('connection_replaced');
+        } else if (statusCode === DisconnectReason.restartRequired) {
+          // 515 always follows a successful pairing. It is not a failure and
+          // must not burn a backoff slot — reconnect straight away or the user
+          // sits watching the QR screen after a scan that actually worked.
+          logger.info('WhatsApp asked for a restart (expected after pairing) — reconnecting now');
+          waReconnectAttempts = 0;
+          setTimeout(() => connectWhatsApp().catch((e) => logger.error({ err: e }, "Restart reconnect failed")), 250);
         } else {
           // All other disconnect reasons → auto-reconnect
           logger.info({ statusCode, error: lastDisconnect?.error?.message }, 'WhatsApp disconnected');
@@ -287,10 +325,14 @@ async function connectWhatsApp() {
       for (const msg of messages || []) {
         if (msg.key?.fromMe || !msg.message) continue;
         const jid = msg.key.remoteJid || '';
-        // Only respond to direct chats — never inside groups/broadcasts/status
-        if (!jid.endsWith('@s.whatsapp.net')) continue;
-        const text = msg.message.conversation || msg.message.extendedTextMessage?.text || '';
-        if (!text.trim()) continue;
+        // Only respond to direct chats — never inside groups/broadcasts/status.
+        // Accepts @lid as well as @s.whatsapp.net; newer WhatsApp builds deliver
+        // ordinary one-to-one chats with LID addressing.
+        if (!isDirectChat(jid)) continue;
+        // Unwraps disappearing-message and view-once envelopes and reads
+        // captions and button replies, all of which used to be dropped.
+        const text = extractText(msg.message);
+        if (!text) continue;
         logger.info({ jid }, 'Incoming WhatsApp message');
 
         try {
@@ -312,7 +354,7 @@ async function connectWhatsApp() {
 
           const reply = await handleBotMessage(text, jid, sender.user);
           if (reply && sock) {
-            await sock.sendMessage(jid, { text: reply });
+            await sendWaText(jid, reply);
             logger.info({ jid }, 'Bot replied');
           }
         } catch (e) {
@@ -332,6 +374,33 @@ async function connectWhatsApp() {
     scheduleReconnect('connect_error');
   }
 }
+
+// Recently-sent messages, kept so getMessage can answer WhatsApp's retry
+// receipts. Bounded — this is a delivery aid, not a message store.
+const SENT_CACHE_LIMIT = 300;
+const sentMessageCache = new Map();
+
+function rememberSentMessage(id, content) {
+  if (!id || !content) return;
+  sentMessageCache.set(id, content);
+  if (sentMessageCache.size > SENT_CACHE_LIMIT) {
+    // Map preserves insertion order, so the first key is the oldest.
+    sentMessageCache.delete(sentMessageCache.keys().next().value);
+  }
+}
+
+/** Send a text message and remember it for retry receipts. */
+async function sendWaText(jid, text) {
+  if (!sock) throw new Error('WhatsApp not connected');
+  const content = { text };
+  const sent = await sock.sendMessage(jid, content);
+  rememberSentMessage(sent?.key?.id, content);
+  return sent;
+}
+
+// Upper bound on a single /broadcast call. Each send sleeps 1s, so this also
+// caps how long one request can hold a connection open (~2 minutes).
+const MAX_BROADCAST_RECIPIENTS = 100;
 
 // Format phone number for WhatsApp
 function formatPhoneNumber(phone) {
@@ -355,41 +424,36 @@ function formatPhoneNumber(phone) {
 }
 
 // Digits-only form of a phone number ("+65 9111 2222" → "6591112222")
-function phoneDigits(phone) {
-  if (!phone || typeof phone !== 'string') return '';
-  let d = phone.replace(/[\s\-+()]/g, '');
-  if (d.length === 8) d = '65' + d;
-  return d;
-}
-
 // Cache the sender→account map for 60s so the bot doesn't hit the DB per message.
 // The bot can create, approve and delete orders, so a sender is resolved to the
 // user account behind the number and every privileged command is then checked
 // against that account's permissions (see waBotCommands.js).
 let allowedSenderCache = { at: 0, map: new Map() };
+
+export function invalidateSenderCache() {
+  allowedSenderCache = { at: 0, map: new Map() };
+}
+
 async function resolveBotSender(jid) {
-  const digits = (jid || '').split('@')[0].split(':')[0];
+  const digits = jidDigits(jid);
   if (Date.now() - allowedSenderCache.at > 60000) {
-    const map = new Map();
+    let map = allowedSenderCache.map;
     try {
-      const rows = await dbQuery(
-        "SELECT id, username, name, role, phone FROM users WHERE status = 'active' AND phone IS NOT NULL AND phone <> ''",
-      );
-      for (const u of rows.rows) {
-        const d = phoneDigits(u.phone);
-        if (d) map.set(d, { id: u.id, username: u.username, name: u.name, role: u.role });
-      }
-      // Numbers on the Settings allow-list that belong to no account may still
-      // talk to the bot, but only for read-only commands (no account → no perms).
+      const rows = await dbQuery("SELECT id, username, name, role, phone FROM users WHERE status = 'active'");
       const cfg = await getGlobalConfig('waAllowedSenders');
-      for (const p of Array.isArray(cfg) ? cfg : []) {
-        const d = phoneDigits(typeof p === 'string' ? p : p?.phone);
-        if (d && !map.has(d)) map.set(d, null);
-      }
+      map = buildSenderMap(rows.rows, cfg, (reason, detail) => {
+        if (reason === 'no_phone') {
+          logger.warn({ username: detail }, 'Allowed sender has no phone number on their account');
+        } else {
+          logger.warn({ entry: detail }, 'Allowed sender entry is neither a known username nor a phone number');
+        }
+      });
+      allowedSenderCache = { at: Date.now(), map };
     } catch (e) {
       logger.error({ err: e }, 'Failed to load allowed WhatsApp senders');
+      // Keep serving the previous map rather than locking everyone out on a
+      // transient DB error; retry on the next message.
     }
-    allowedSenderCache = { at: Date.now(), map };
   }
   return { allowed: allowedSenderCache.map.has(digits), user: allowedSenderCache.map.get(digits) || null };
 }
@@ -518,7 +582,7 @@ app.post('/api/whatsapp/disconnect', verifyToken, requireAdmin, async (req, res)
 });
 
 // Send message with template
-app.post('/api/whatsapp/send', verifyToken, async (req, res) => {
+app.post('/api/whatsapp/send', verifyToken, requirePermission('whatsapp'), async (req, res) => {
   const { phone, template, data } = req.body;
 
   if (connectionStatus !== 'connected' || !sock) {
@@ -548,7 +612,7 @@ app.post('/api/whatsapp/send', verifyToken, async (req, res) => {
     }
 
     // Send message
-    await sock.sendMessage(jid, { text: message });
+    await sendWaText(jid, message);
 
     logger.info({ phone, jid }, 'WhatsApp message sent successfully');
     res.json({
@@ -564,15 +628,29 @@ app.post('/api/whatsapp/send', verifyToken, async (req, res) => {
 });
 
 // Send to multiple recipients
-app.post('/api/whatsapp/broadcast', verifyToken, async (req, res) => {
+app.post('/api/whatsapp/broadcast', verifyToken, requirePermission('whatsapp'), async (req, res) => {
   const { phones, template, data } = req.body;
+
+  // Validate the request before looking at connection state, so a caller gets
+  // the actual problem with their payload rather than 'WhatsApp not connected'.
+  if (!phones || !Array.isArray(phones)) {
+    return res.status(400).json({ success: false, error: 'Phone numbers array required' });
+  }
+
+  // Each send is followed by a 1s pause, so an unbounded array holds the request
+  // open for hours and is a fast route to a WhatsApp ban. Cap it.
+  if (phones.length === 0) {
+    return res.status(400).json({ success: false, error: 'At least one phone number required' });
+  }
+  if (phones.length > MAX_BROADCAST_RECIPIENTS) {
+    return res.status(400).json({
+      success: false,
+      error: `Too many recipients: ${phones.length}. Maximum is ${MAX_BROADCAST_RECIPIENTS} per broadcast.`,
+    });
+  }
 
   if (connectionStatus !== 'connected' || !sock) {
     return res.status(400).json({ success: false, error: 'WhatsApp not connected' });
-  }
-
-  if (!phones || !Array.isArray(phones)) {
-    return res.status(400).json({ success: false, error: 'Phone numbers array required' });
   }
 
   try {
@@ -590,7 +668,7 @@ app.post('/api/whatsapp/broadcast', verifyToken, async (req, res) => {
     for (const phone of phones) {
       try {
         const jid = formatPhoneNumber(phone);
-        await sock.sendMessage(jid, { text: message });
+        await sendWaText(jid, message);
         results.push({ phone, success: true });
         successCount++;
         // Small delay between messages to avoid rate limiting
@@ -768,7 +846,7 @@ app.get('/api/health', async (req, res) => {
 
 // ── Scheduled Reports API ──
 // Provides WhatsApp context (sock + formatPhoneNumber) to scheduler
-const getWaContext = () => ({ sock, formatPhoneNumber });
+const getWaContext = () => ({ sock, formatPhoneNumber, sendText: sendWaText });
 
 // Auto-reload scheduler & reset SMTP transporter when config changes via Settings
 registerConfigHook('scheduledNotifs', () => reloadScheduler(getWaContext));

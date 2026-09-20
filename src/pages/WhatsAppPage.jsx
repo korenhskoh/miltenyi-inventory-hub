@@ -48,6 +48,22 @@ export default function WhatsAppPage({
   sendScheduledReport,
   api,
 }) {
+  // Toggles on this page used to flip local state only — the value was never
+  // written back, so the control looked switched on, the server never learned
+  // about it, and a page reload silently reverted it. Persist on every change.
+  const persistConfig = React.useCallback(
+    async (key, value, label) => {
+      try {
+        const ok = await api.setConfigKey(key, value);
+        if (ok === false) throw new Error('rejected');
+        return true;
+      } catch (e) {
+        notify?.('Not Saved', `${label} could not be saved. Please try again.`, 'error');
+        return false;
+      }
+    },
+    [api, notify],
+  );
   const messagePager = usePagination(waMessages, { storageKey: 'wa-log', initialSize: 50 });
   return (
     <div>
@@ -269,7 +285,11 @@ export default function WhatsAppPage({
                 <span style={{ fontSize: 12.5 }}>{rule.label}</span>
                 <Toggle
                   active={waNotifyRules[rule.key]}
-                  onClick={() => setWaNotifyRules((prev) => ({ ...prev, [rule.key]: !prev[rule.key] }))}
+                  onClick={() => {
+                    const next = { ...waNotifyRules, [rule.key]: !waNotifyRules[rule.key] };
+                    setWaNotifyRules(next);
+                    persistConfig('waNotifyRules', next, 'Notification rule');
+                  }}
                   color="#25D366"
                 />
               </div>
@@ -683,7 +703,15 @@ export default function WhatsAppPage({
                   <p style={{ fontSize: 11, color: '#94A3B8' }}>Automatically respond to customer keywords</p>
                 </div>
               </div>
-              <Toggle active={waAutoReply} onClick={() => setWaAutoReply(!waAutoReply)} color="#0B7A3E" />
+              <Toggle
+                active={waAutoReply}
+                onClick={() => {
+                  const next = !waAutoReply;
+                  setWaAutoReply(next);
+                  persistConfig('waAutoReply', next, 'Auto-reply setting');
+                }}
+                color="#0B7A3E"
+              />
             </div>
             {waAutoReply && (
               <div style={{ background: '#F8FAFB', borderRadius: 8, padding: 12 }}>
