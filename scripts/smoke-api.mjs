@@ -398,5 +398,64 @@ ok(r.json.rows[0].counted === 0 && r.json.rows[0].target === 0, 'a real counted 
 r = await call('GET', '/api/machines/summary?region=' + encodeURIComponent('x'.repeat(200)), null, admin);
 ok(typeof (r.json.error ?? '') === 'string', 'error payloads are strings, never objects', JSON.stringify(r.json).slice(0, 120));
 
+// ── Atomic part arrival ──
+// The old client-side sequence computed the delta from its own copy of
+// qtyReceived and fired the inventory POST without waiting for the order
+// update, so a repeat confirmation booked the stock in twice.
+const arrId = `ORD-${Date.now()}-arr1`;
+await call('POST', '/api/local-inventory', { materialNo: 'ARR-1', description: 'arrival test', quantity: 0 }, admin);
+r = await call('POST', '/api/orders', { id: arrId, materialNo: 'ARR-1', description: 'arrival test', quantity: 5, orderBy: 'System Admin', status: 'Pending Approval', approvalStatus: 'pending' }, admin);
+ok(r.status === 201, 'arrival order created', JSON.stringify(r.json).slice(0, 120));
+
+r = await call('POST', `/api/orders/${arrId}/arrival`, { qtyReceived: 5 }, admin);
+ok(r.status === 403, 'arrival refused while the order is unapproved', String(r.status));
+
+await call('PUT', `/api/orders/${arrId}`, { approvalStatus: 'approved', status: 'Approved' }, admin);
+const stockOf = async (mat) => {
+  const res = await call('GET', '/api/local-inventory?all=true', null, admin);
+  return res.json.data.find((x) => x.materialNo === mat)?.quantity;
+};
+ok((await stockOf('ARR-1')) === 0, 'stock starts at zero');
+
+r = await call('POST', `/api/orders/${arrId}/arrival`, { qtyReceived: 5 }, admin);
+ok(r.status === 200 && r.json.delta === 5, 'first confirmation books in 5', JSON.stringify(r.json).slice(0, 120));
+ok((await stockOf('ARR-1')) === 5, 'stock is 5 after one confirmation', String(await stockOf('ARR-1')));
+
+// The key regression: confirming the same figure again must change nothing.
+r = await call('POST', `/api/orders/${arrId}/arrival`, { qtyReceived: 5 }, admin);
+ok(r.status === 200 && r.json.delta === 0 && r.json.alreadyRecorded === true, 'a repeat confirmation is a no-op', JSON.stringify(r.json).slice(0, 120));
+ok((await stockOf('ARR-1')) === 5, 'stock is still 5, not doubled', String(await stockOf('ARR-1')));
+
+// Two concurrent confirmations of the same delivery must not both apply.
+const both = await Promise.all([
+  call('POST', `/api/orders/${arrId}/arrival`, { qtyReceived: 5 }, admin),
+  call('POST', `/api/orders/${arrId}/arrival`, { qtyReceived: 5 }, admin),
+]);
+ok(both.every((x) => x.status === 200), 'concurrent confirmations both answered');
+ok((await stockOf('ARR-1')) === 5, 'concurrent confirmations did not double-count', String(await stockOf('ARR-1')));
+
+// Partial then top-up books only the difference.
+const arrId2 = `ORD-${Date.now()}-arr2`;
+await call('POST', '/api/orders', { id: arrId2, materialNo: 'ARR-2', description: 'partial', quantity: 10, orderBy: 'System Admin', status: 'Pending Approval', approvalStatus: 'pending' }, admin);
+await call('PUT', `/api/orders/${arrId2}`, { approvalStatus: 'approved', status: 'Approved' }, admin);
+r = await call('POST', `/api/orders/${arrId2}/arrival`, { qtyReceived: 4 }, admin);
+ok(r.json.delta === 4 && r.json.order.status !== 'Received', 'a partial arrival does not close the order', JSON.stringify(r.json.order?.status));
+r = await call('POST', `/api/orders/${arrId2}/arrival`, { qtyReceived: 10 }, admin);
+ok(r.json.delta === 6, 'topping up books only the difference', String(r.json.delta));
+ok((await stockOf('ARR-2')) === 10, 'stock totals 10, not 14', String(await stockOf('ARR-2')));
+ok(r.json.order.status === 'Received', 'a full arrival closes the order', String(r.json.order.status));
+
+r = await call('POST', `/api/orders/${arrId2}/arrival`, { qtyReceived: 99 }, admin);
+ok(r.status === 400, 'cannot receive more than was ordered', String(r.status));
+r = await call('POST', `/api/orders/${arrId2}/arrival`, { qtyReceived: 2 }, admin);
+ok(r.status === 400, 'cannot silently reduce a recorded arrival', String(r.status));
+// tech1's permissions were changed again after techNoDelivery was minted, and
+// the permission check reads the database, so revoke it afresh here.
+await call('PUT', `/api/users/${techId}`, { permissions: { orders: true, delivery: false } }, admin);
+r = await call('POST', '/api/auth/login', { username: 'tech1', password: 'pw12345' });
+const techNoDelivery2 = r.json.token;
+r = await call('POST', `/api/orders/${arrId2}/arrival`, { qtyReceived: 1 }, techNoDelivery2);
+ok(r.status === 403, 'arrival needs the delivery permission', String(r.status));
+
 console.log(`\n${fails === 0 ? 'ALL PASSED' : fails + ' FAILED'}`);
 process.exit(fails ? 1 : 0);

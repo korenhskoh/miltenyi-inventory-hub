@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { query } from '../db.js';
+import { query, withTransaction } from '../db.js';
 import { snakeToCamel, camelToSnake } from '../utils.js';
 import { pickAllowed, requireFields, sanitizeDates } from '../validation.js';
 import { paginate, envelope, limitClause } from '../pagination.js';
@@ -218,6 +218,102 @@ router.put('/bulk-status', async (req, res) => {
     res.status(500).json({ error: e.message });
   }
 });
+
+// POST /:id/arrival — record a part arrival atomically.
+//
+// This replaces a client-side sequence that could not be made safe: the SPA
+// computed the newly-arrived quantity from ITS OWN copy of qty_received, sent
+// an absolute value to PUT /:id, and separately fired POST
+// /local-inventory/arrival without waiting for either result. Two consequences,
+// both seen in practice:
+//
+//   * Two people (or one double-click) confirming the same 5-unit delivery each
+//     computed delta = 5 - 0 and the order landed on qty_received = 5 either
+//     way, so nothing looked wrong — but stock was raised twice.
+//   * If the order update was rejected (not approved, say) the stock had
+//     already been added, leaving phantom units with no order behind them.
+//
+// Here the delta is computed from the row under lock, and the order update and
+// the stock movement share one transaction: both happen or neither does.
+router.post(
+  '/:id/arrival',
+  requirePermission('delivery'),
+  asyncHandler(async (req, res) => {
+    const { id } = req.params;
+    const requested = Math.round(Number(req.body?.qtyReceived));
+    if (!Number.isFinite(requested) || requested < 0) {
+      return res.status(400).json({ error: 'qtyReceived must be a non-negative number' });
+    }
+
+    const result = await withTransaction(async (tx) => {
+      const found = await tx.query('SELECT * FROM orders WHERE id = $1 FOR UPDATE', [id]);
+      if (found.rows.length === 0) return { status: 404, body: { error: 'Order not found' } };
+      const order = found.rows[0];
+
+      if (order.approval_status !== 'approved') {
+        return { status: 403, body: { error: 'Order must be approved before recording part arrival' } };
+      }
+
+      const ordered = Number(order.quantity) || 0;
+      if (requested > ordered) {
+        return { status: 400, body: { error: `Cannot receive ${requested}; only ${ordered} were ordered.` } };
+      }
+
+      const already = Number(order.qty_received) || 0;
+      const delta = requested - already;
+      if (delta < 0) {
+        return { status: 400, body: { error: `Already received ${already}; use an adjustment to reduce it.` } };
+      }
+      if (delta === 0) {
+        // Idempotent: a repeated confirmation of the same figure changes
+        // nothing rather than booking the stock in a second time.
+        return { status: 200, body: { order: snakeToCamel(order), delta: 0, alreadyRecorded: true } };
+      }
+
+      const status = requested >= ordered ? 'Received' : order.status;
+      const updated = await tx.query(
+        `UPDATE orders
+         SET qty_received = $1, back_order = $2, status = $3, arrival_date = $4, arrival_checked_by = $5
+         WHERE id = $6 RETURNING *`,
+        [requested, requested - ordered, status, req.body?.arrivalDate || null, req.body?.arrivalCheckedBy || null, id],
+      );
+
+      let inventory = null;
+      if (order.material_no) {
+        const existing = await tx.query(
+          `SELECT * FROM local_inventory
+           WHERE material_no = $1 AND (lots_number IS NULL OR lots_number = '')
+           FOR UPDATE`,
+          [order.material_no],
+        );
+        let row;
+        if (existing.rows.length) {
+          const bumped = await tx.query(
+            'UPDATE local_inventory SET quantity = quantity + $1, updated_at = NOW() WHERE id = $2 RETURNING *',
+            [delta, existing.rows[0].id],
+          );
+          row = bumped.rows[0];
+        } else {
+          const created = await tx.query(
+            'INSERT INTO local_inventory (material_no, description, quantity) VALUES ($1, $2, $3) RETURNING *',
+            [order.material_no, order.description || '', delta],
+          );
+          row = created.rows[0];
+        }
+        await tx.query(
+          `INSERT INTO inventory_transactions (inventory_id, material_no, quantity_change, quantity_after, type, user_id, user_name, notes)
+           VALUES ($1, $2, $3, $4, 'arrival', $5, $6, $7)`,
+          [row.id, order.material_no, delta, row.quantity, req.user?.id || null, req.user?.username || null, `Part arrival for ${id}`],
+        );
+        inventory = snakeToCamel(row);
+      }
+
+      return { status: 200, body: { order: snakeToCamel(updated.rows[0]), delta, inventory } };
+    });
+
+    res.status(result.status).json(result.body);
+  }),
+);
 
 // PUT /:id - update order by id
 router.put('/:id', async (req, res) => {
