@@ -97,5 +97,8 @@ export default [
     },
   },
   prettier,
-  { ignores: ['dist/', 'node_modules/', '*.cjs'] },
+  // Vendored from the Bklit registry (shadcn `add @bklit/...`). TypeScript
+  // sources that this project's JS-only ESLint setup cannot parse, and that we
+  // do not own — they are replaced by re-running the registry, not edited.
+  { ignores: ['dist/', 'node_modules/', '*.cjs', 'src/charts/**', 'src/lib/utils.ts'] },
 ];

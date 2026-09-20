@@ -1,6 +1,5 @@
 import { TrendingUp, Settings, ClipboardList, Search, Plus, Check, Trash2 } from 'lucide-react';
-import { ResponsiveContainer, ComposedChart, CartesianGrid, XAxis, YAxis, Tooltip, Line, Area } from 'recharts';
-import { ChartGradient, ChartTooltip, axisProps, gridProps, CHART_COLORS } from '../components/ChartKit.jsx';
+import ForecastChart from '../components/ForecastChart.jsx';
 import { fmt, fmtDate } from '../utils.js';
 import { Pill, ExportDropdown } from '../components/ui.jsx';
 import Pagination, { usePagination } from '../components/Pagination.jsx';
@@ -272,55 +271,7 @@ const ForecastingPage = ({
               </div>
             )}
             {chartData.length > 0 ? (
-              <ResponsiveContainer width="100%" height={300}>
-                <ComposedChart data={chartData} margin={{ top: 8, right: 8, bottom: 0, left: -12 }}>
-                  <defs>
-                    <ChartGradient id="fcFill" color={CHART_COLORS.accent} />
-                  </defs>
-                  <CartesianGrid {...gridProps} />
-                  <XAxis dataKey="name" {...axisProps} />
-                  <YAxis {...axisProps} width={44} allowDecimals={false} />
-                  <Tooltip
-                    content={<ChartTooltip footnote="Dashed points are forecast" />}
-                    cursor={{ stroke: CHART_COLORS.muted, strokeDasharray: '3 3', strokeOpacity: 0.5 }}
-                  />
-                  {/* The fill is decorative — it shares the line's data and carries
-                      no legend or tooltip entry of its own. */}
-                  <Area
-                    type="monotone"
-                    dataKey="qty"
-                    stroke="none"
-                    fill="url(#fcFill)"
-                    isAnimationActive={false}
-                    legendType="none"
-                    tooltipType="none"
-                  />
-                  <Line
-                    type="monotone"
-                    dataKey="qty"
-                    stroke="#D97706"
-                    strokeWidth={2.5}
-                    dot={(props) => {
-                      const { cx, cy, payload } = props;
-                      return payload.forecast ? (
-                        <circle
-                          cx={cx}
-                          cy={cy}
-                          r={5}
-                          fill="#fff"
-                          stroke="#DC2626"
-                          strokeWidth={2}
-                          strokeDasharray="3 3"
-                        />
-                      ) : (
-                        <circle cx={cx} cy={cy} r={4} fill="#D97706" />
-                      );
-                    }}
-                    name="Quantity"
-                    activeDot={{ r: 5, strokeWidth: 2, stroke: '#fff' }}
-                  />
-                </ComposedChart>
-              </ResponsiveContainer>
+              <ForecastChart rows={chartData} height={300} />
             ) : (
               <div
                 style={{
