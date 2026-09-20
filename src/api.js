@@ -913,6 +913,25 @@ async function sendEmail({ to, subject, html, smtp, attachments }) {
   }
 }
 
+// Stock-check reconciliation: applies charge in / charge out / counted balance
+// in one pass. Pass dryRun to get the preview without writing anything.
+async function reconcileInventory(items, { dryRun = false, reference = '' } = {}) {
+  try {
+    const res = handleResponse(
+      await fetch(`${BASE}/api/local-inventory/reconcile`, {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify({ items, dryRun, reference }),
+      }),
+    );
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, error: data.error || `HTTP ${res.status}` };
+    return { ok: true, ...data };
+  } catch (err) {
+    return { ok: false, error: err.message || 'Network error' };
+  }
+}
+
 // ─── Scheduled report (admin) ───
 
 async function runScheduledReport() {
@@ -1207,6 +1226,7 @@ const api = {
   upsertFcaStatus,
   sendEmail,
   runScheduledReport,
+  reconcileInventory,
   getLocalInventory,
   getLocalInventorySummary,
   getInventoryTransactions,

@@ -14,9 +14,11 @@ import {
   Filter,
   ChevronLeft,
   ChevronRight,
+  ClipboardCheck,
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import api from '../api.js';
+import { parseSheet, autoDetectColumns, toNumber, isBlank } from '../lib/sheet.js';
 import { fmtDate, fmtNum, applySortData, toggleSort, exportToFile } from '../utils.js';
 
 // ─── CSS ──────────────────────────────────────────────────────────────────────
@@ -31,6 +33,7 @@ const LI_CSS = `
 .li-btn-primary{background:#0B7A3E;color:#fff}.li-btn-primary:hover{background:#096d37}
 .li-btn-secondary{background:#F1F5F9;color:#475569;border:1px solid #E2E8F0}.li-btn-secondary:hover{background:#E2E8F0}
 .li-btn-danger{background:#FEF2F2;color:#DC2626;border:1px solid #FECACA}.li-btn-danger:hover{background:#FEE2E2}
+.li-btn-stockcheck{background:#0F766E;color:#fff;box-shadow:0 1px 3px rgba(15,118,110,.35)}.li-btn-stockcheck:hover{background:#0d6259}
 .li-btn-warn{background:#FFF7ED;color:#C2410C;border:1px solid #FED7AA}.li-btn-warn:hover{background:#FFEDD5}
 .li-badge{display:inline-block;padding:2px 8px;border-radius:9999px;font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.3px}
 .li-stat{padding:16px 20px;background:#fff;border:1px solid #E2E8F0;border-radius:12px}
@@ -62,38 +65,39 @@ const TXN_COLORS = {
   arrival: { bg: '#EFF6FF', color: '#2563EB', label: 'Arrival' },
 };
 
-const IMPORT_SYNONYMS = {
-  materialNo: [
-    'material_no',
-    'material no',
-    'materialno',
-    'mat no',
-    'part no',
-    'part_no',
-    'partno',
-    'material number',
-    'item no',
-  ],
-  description: ['description', 'desc', 'item description', 'part description', 'name', 'item name'],
-  lotsNumber: ['lots_number', 'lots number', 'lot no', 'lot_no', 'lotno', 'lot number', 'batch', 'batch no'],
-  category: ['category', 'cat', 'group', 'type'],
-  quantity: ['quantity', 'qty', 'amount', 'stock', 'count', 'on hand', 'on_hand'],
+const IMPORT_FIELDS = [
+  { key: 'materialNo', label: 'Material No', required: true },
+  { key: 'description', label: 'Description', required: false },
+  { key: 'lotsNumber', label: 'Lot Number', required: false },
+  { key: 'category', label: 'Category', required: false },
+  { key: 'quantity', label: 'Quantity (replaces current stock)', required: true },
+];
+
+const ADJUST_FIELDS = [
+  { key: 'materialNo', label: 'Material No', required: true },
+  { key: 'lotsNumber', label: 'Lot Number', required: false },
+  { key: 'quantity', label: 'Quantity (+/- added to current stock)', required: true },
+];
+
+const STOCK_CHECK_FIELDS = [
+  { key: 'materialNo', label: 'Material No', required: true },
+  { key: 'lotsNumber', label: 'Lot No', required: false },
+  { key: 'description', label: 'Description', required: false },
+  { key: 'chargeIn', label: 'Charge In', required: false },
+  { key: 'chargeOut', label: 'Charge Out', required: false },
+  { key: 'countedQty', label: 'Counted Qty', required: false },
+];
+
+const STOCK_CHECK_RULE = 'Counted balance wins where given; otherwise before + charge in \u2212 charge out.';
+
+const SC_STATUS_STYLES = {
+  ok: { bg: '#F0FDF4', color: '#15803D', label: 'OK' },
+  new: { bg: '#EFF6FF', color: '#2563EB', label: 'New item' },
+  created: { bg: '#EFF6FF', color: '#2563EB', label: 'Created' },
+  error: { bg: '#FEF2F2', color: '#DC2626', label: 'Error' },
 };
 
-function autoDetectColumns(headers) {
-  const map = {};
-  const lowerHeaders = headers.map((h) => String(h).toLowerCase().trim());
-  for (const [field, synonyms] of Object.entries(IMPORT_SYNONYMS)) {
-    for (const syn of synonyms) {
-      const idx = lowerHeaders.indexOf(syn);
-      if (idx !== -1 && !Object.values(map).includes(headers[idx])) {
-        map[field] = headers[idx];
-        break;
-      }
-    }
-  }
-  return map;
-}
+const EMPTY_SHEET_STATE = { aoa: [], rows: [], headers: [], fileName: '', headerRow: 0 };
 
 // ─── Component ────────────────────────────────────────────────────────────────
 export default function LocalInventoryPage({ isAdmin, currentUser: _currentUser, notify }) {
@@ -114,10 +118,18 @@ export default function LocalInventoryPage({ isAdmin, currentUser: _currentUser,
   const [showAdjustMapper, setShowAdjustMapper] = useState(false);
   const [showDetail, setShowDetail] = useState(null); // inventory item for detail + history
   const [detailTxns, setDetailTxns] = useState([]);
-  const [importData, setImportData] = useState({ rows: [], headers: [], fileName: '' });
+  const [importData, setImportData] = useState(EMPTY_SHEET_STATE);
   const [importColumnMap, setImportColumnMap] = useState({});
-  const [adjustData, setAdjustData] = useState({ rows: [], headers: [], fileName: '' });
+  const [adjustData, setAdjustData] = useState(EMPTY_SHEET_STATE);
   const [adjustColumnMap, setAdjustColumnMap] = useState({});
+
+  // Stock check (reconciliation) upload
+  const [showStockCheck, setShowStockCheck] = useState(false);
+  const [scSheets, setScSheets] = useState({});
+  const [scData, setScData] = useState({ ...EMPTY_SHEET_STATE, sheetNames: [], sheetName: '' });
+  const [scColumnMap, setScColumnMap] = useState({});
+  const [scPreview, setScPreview] = useState(null);
+  const [scBusy, setScBusy] = useState(false);
   const [chargeOutItems, setChargeOutItems] = useState([{ materialNo: '', lotsNumber: '', quantity: 1, notes: '' }]);
   const [showBulkSearch, setShowBulkSearch] = useState(false);
   const [bulkSearchInput, setBulkSearchInput] = useState('');
@@ -264,6 +276,10 @@ export default function LocalInventoryPage({ isAdmin, currentUser: _currentUser,
     }
   };
 
+  // Read any upload as a grid of cells: the real workbooks carry a title block
+  // above the headers, so row 1 is not the header row.
+  const sheetToAoa = (ws) => XLSX.utils.sheet_to_json(ws, { header: 1, defval: '', raw: true });
+
   const handleFileUpload = (e, mode) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -271,28 +287,73 @@ export default function LocalInventoryPage({ isAdmin, currentUser: _currentUser,
     reader.onload = (evt) => {
       const data = new Uint8Array(evt.target.result);
       const wb = XLSX.read(data, { type: 'array' });
-      if (!wb.SheetNames?.length) return;
-      const ws = wb.Sheets[wb.SheetNames[0]];
-      const json = XLSX.utils.sheet_to_json(ws, { defval: '' });
-      if (json.length === 0) {
-        notify('Error', 'No data found in file', 'error');
+      const sheetNames = wb.SheetNames || [];
+      if (!sheetNames.length) {
+        notify('Error', 'No sheets found in file', 'error');
         return;
       }
-      const headers = Object.keys(json[0]);
-      const autoMap = autoDetectColumns(headers);
+      const sheets = {};
+      sheetNames.forEach((name) => {
+        sheets[name] = sheetToAoa(wb.Sheets[name]);
+      });
+      const firstName = sheetNames[0];
+      const aoa = sheets[firstName];
+      const { headers, rows, headerRowIndex } = parseSheet(aoa);
+      if (rows.length === 0) {
+        notify('Error', 'No data rows found in file', 'error');
+        return;
+      }
 
       if (mode === 'import') {
-        setImportData({ rows: json, headers, fileName: file.name });
-        setImportColumnMap(autoMap);
+        setImportData({ aoa, rows, headers, fileName: file.name, headerRow: headerRowIndex });
+        setImportColumnMap(
+          autoDetectColumns(
+            headers,
+            IMPORT_FIELDS.map((f) => f.key),
+          ),
+        );
         setShowImportMapper(true);
-      } else {
-        setAdjustData({ rows: json, headers, fileName: file.name });
-        setAdjustColumnMap(autoMap);
+      } else if (mode === 'adjust') {
+        setAdjustData({ aoa, rows, headers, fileName: file.name, headerRow: headerRowIndex });
+        setAdjustColumnMap(
+          autoDetectColumns(
+            headers,
+            ADJUST_FIELDS.map((f) => f.key),
+          ),
+        );
         setShowAdjustMapper(true);
+      } else {
+        setScSheets(sheets);
+        setScData({
+          aoa,
+          rows,
+          headers,
+          fileName: file.name,
+          headerRow: headerRowIndex,
+          sheetNames,
+          sheetName: firstName,
+        });
+        setScColumnMap(
+          autoDetectColumns(
+            headers,
+            STOCK_CHECK_FIELDS.map((f) => f.key),
+          ),
+        );
+        setScPreview(null);
+        setShowStockCheck(true);
       }
     };
     reader.readAsArrayBuffer(file);
     e.target.value = '';
+  };
+
+  // Re-parse an already-loaded grid with a different header row (1-based input).
+  const reparseWith = (data, setData, setMap, fieldKeys, headerRow1Based, aoaOverride, extra = {}) => {
+    const aoa = aoaOverride || data.aoa;
+    const idx = Math.max(0, Math.min((parseInt(headerRow1Based, 10) || 1) - 1, Math.max(0, aoa.length - 1)));
+    const { headers, rows, headerRowIndex } = parseSheet(aoa, idx);
+    setData({ ...data, ...extra, aoa, headers, rows, headerRow: headerRowIndex });
+    setMap(autoDetectColumns(headers, fieldKeys));
   };
 
   const handleBulkImport = async () => {
@@ -302,7 +363,7 @@ export default function LocalInventoryPage({ isAdmin, currentUser: _currentUser,
         description: String(row[importColumnMap.description] || '').trim(),
         lotsNumber: importColumnMap.lotsNumber ? String(row[importColumnMap.lotsNumber] || '').trim() : '',
         category: importColumnMap.category ? String(row[importColumnMap.category] || '').trim() : '',
-        quantity: parseInt(row[importColumnMap.quantity]) || 0,
+        quantity: toNumber(row[importColumnMap.quantity]),
       }))
       .filter((r) => r.materialNo);
 
@@ -330,7 +391,7 @@ export default function LocalInventoryPage({ isAdmin, currentUser: _currentUser,
       .map((row) => ({
         materialNo: String(row[adjustColumnMap.materialNo] || '').trim(),
         lotsNumber: adjustColumnMap.lotsNumber ? String(row[adjustColumnMap.lotsNumber] || '').trim() : '',
-        quantity: parseInt(row[adjustColumnMap.quantity]) || 0,
+        quantity: toNumber(row[adjustColumnMap.quantity]),
       }))
       .filter((r) => r.materialNo && r.quantity !== 0);
 
@@ -351,6 +412,103 @@ export default function LocalInventoryPage({ isAdmin, currentUser: _currentUser,
     } else {
       notify('Error', 'Adjustment failed', 'error');
     }
+  };
+
+  // ── Stock Check (reconciliation) ──
+  const scFieldKeys = STOCK_CHECK_FIELDS.map((f) => f.key);
+
+  const scHeaderRowValues = useMemo(() => {
+    const raw = scData.aoa?.[scData.headerRow] || [];
+    return raw
+      .map((c) => String(c ?? '').trim())
+      .filter(Boolean)
+      .join(' | ');
+  }, [scData.aoa, scData.headerRow]);
+
+  const scValidationError = !scColumnMap.materialNo
+    ? 'Map the Material No column to continue.'
+    : !scColumnMap.chargeIn && !scColumnMap.chargeOut && !scColumnMap.countedQty
+      ? 'Map at least one of Charge In, Charge Out or Counted Qty.'
+      : '';
+
+  const closeStockCheck = () => {
+    setShowStockCheck(false);
+    setScPreview(null);
+  };
+
+  const buildStockCheckItems = () =>
+    scData.rows
+      .map((row) => {
+        const cell = (key) => (scColumnMap[key] ? row[scColumnMap[key]] : '');
+        const item = { materialNo: String(cell('materialNo') ?? '').trim() };
+        if (scColumnMap.lotsNumber) item.lotsNumber = String(cell('lotsNumber') ?? '').trim();
+        if (scColumnMap.description) item.description = String(cell('description') ?? '').trim();
+        if (scColumnMap.chargeIn) item.chargeIn = toNumber(cell('chargeIn'));
+        if (scColumnMap.chargeOut) item.chargeOut = toNumber(cell('chargeOut'));
+        // A blank count means "not counted" — which is not the same as a counted zero.
+        if (scColumnMap.countedQty && !isBlank(cell('countedQty'))) item.countedQty = toNumber(cell('countedQty'));
+        return item;
+      })
+      .filter((i) => i.materialNo);
+
+  const scSummary = useMemo(() => {
+    const rows = scPreview?.rows || [];
+    const errors = rows.filter((r) => r.status === 'error').length;
+    return {
+      total: rows.length,
+      ready: rows.length - errors,
+      newItems: rows.filter((r) => r.status === 'new' || r.status === 'created').length,
+      errors,
+      variances: rows.filter((r) => r.status !== 'error' && Number(r.variance) !== 0).length,
+    };
+  }, [scPreview]);
+
+  const runStockCheck = async (dryRun) => {
+    const items = buildStockCheckItems();
+    if (items.length === 0) {
+      notify('Error', 'No rows with a material number were found', 'error');
+      return;
+    }
+    setScBusy(true);
+    const r = await api.reconcileInventory(items, { dryRun, reference: scData.fileName });
+    setScBusy(false);
+    if (!r || r.ok === false) {
+      const msg = r?.error || 'Stock check failed';
+      notify(
+        'Error',
+        /403|forbidden|admin/i.test(msg) ? 'Admin permission required to apply a stock check' : msg,
+        'error',
+      );
+      return;
+    }
+    if (dryRun) {
+      setScPreview(r);
+      return;
+    }
+    const rows = r.rows || [];
+    const errors = r.errors?.length ?? rows.filter((x) => x.status === 'error').length;
+    const created = r.created ?? rows.filter((x) => x.status === 'created' || x.status === 'new').length;
+    const applied = r.applied ?? rows.length - errors - created;
+    notify(
+      'Stock Check',
+      `${applied} items updated, ${created} created, ${errors} skipped`,
+      errors > 0 ? 'error' : 'success',
+    );
+    closeStockCheck();
+    loadData();
+  };
+
+  const handleStockCheckApply = () => {
+    if (scSummary.errors > 0 || scSummary.variances > 0) {
+      const ok = window.confirm(
+        `Apply this stock check?\n\n` +
+          `${scSummary.ready} rows will be written (${scSummary.newItems} new item(s) created).\n` +
+          `${scSummary.variances} row(s) differ from the expected balance and will be set to the counted figure.\n` +
+          `${scSummary.errors} row(s) have errors and will be skipped.`,
+      );
+      if (!ok) return;
+    }
+    runStockCheck(false);
   };
 
   const openDetail = async (item) => {
@@ -420,7 +578,7 @@ export default function LocalInventoryPage({ isAdmin, currentUser: _currentUser,
   };
 
   // ── Column Mapper Renderer ──
-  const renderColumnMapper = (data, columnMap, setColumnMap, fields, onConfirm, title) => (
+  const renderColumnMapper = (data, setData, columnMap, setColumnMap, fields, onConfirm, title) => (
     <div
       className="li-modal"
       onClick={() => (title.includes('Adjust') ? setShowAdjustMapper(false) : setShowImportMapper(false))}
@@ -446,7 +604,34 @@ export default function LocalInventoryPage({ isAdmin, currentUser: _currentUser,
             borderRadius: 8,
           }}
         >
-          File: <strong>{data.fileName}</strong> — {data.rows.length} rows detected
+          <div>
+            File: <strong>{data.fileName}</strong> — {data.rows.length} rows detected
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8 }}>
+            <label className="li-label" style={{ margin: 0, whiteSpace: 'nowrap' }}>
+              Header row
+            </label>
+            <input
+              className="li-input"
+              type="number"
+              min={1}
+              max={Math.max(1, data.aoa.length)}
+              value={data.headerRow + 1}
+              onChange={(e) =>
+                reparseWith(
+                  data,
+                  setData,
+                  setColumnMap,
+                  fields.map((f) => f.key),
+                  e.target.value,
+                )
+              }
+              style={{ width: 90 }}
+            />
+            <span style={{ fontSize: 11, color: '#64748B', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+              {data.headers.join(' | ')}
+            </span>
+          </div>
         </div>
 
         <div
@@ -607,6 +792,17 @@ export default function LocalInventoryPage({ isAdmin, currentUser: _currentUser,
           <button className="li-btn li-btn-warn" onClick={() => setShowChargeOut(true)}>
             <Minus size={14} /> Charge Out
           </button>
+          {isAdmin && (
+            <label className="li-btn li-btn-stockcheck" style={{ cursor: 'pointer' }}>
+              <ClipboardCheck size={14} /> Stock Check
+              <input
+                type="file"
+                accept=".xlsx,.xls,.csv"
+                onChange={(e) => handleFileUpload(e, 'stockcheck')}
+                style={{ display: 'none' }}
+              />
+            </label>
+          )}
           {isAdmin && (
             <label className="li-btn li-btn-secondary" style={{ cursor: 'pointer' }}>
               <Filter size={14} /> Adjust Qty
@@ -1225,15 +1421,10 @@ export default function LocalInventoryPage({ isAdmin, currentUser: _currentUser,
       {showImportMapper &&
         renderColumnMapper(
           importData,
+          setImportData,
           importColumnMap,
           setImportColumnMap,
-          [
-            { key: 'materialNo', label: 'Material No', required: true },
-            { key: 'description', label: 'Description', required: false },
-            { key: 'lotsNumber', label: 'Lot Number', required: false },
-            { key: 'category', label: 'Category', required: false },
-            { key: 'quantity', label: 'Quantity', required: true },
-          ],
+          IMPORT_FIELDS,
           handleBulkImport,
           'Import Inventory Items',
         )}
@@ -1242,16 +1433,246 @@ export default function LocalInventoryPage({ isAdmin, currentUser: _currentUser,
       {showAdjustMapper &&
         renderColumnMapper(
           adjustData,
+          setAdjustData,
           adjustColumnMap,
           setAdjustColumnMap,
-          [
-            { key: 'materialNo', label: 'Material No', required: true },
-            { key: 'lotsNumber', label: 'Lot Number', required: false },
-            { key: 'quantity', label: 'Quantity (+/-)', required: true },
-          ],
+          ADJUST_FIELDS,
           handleBulkAdjust,
           'Adjust Inventory Quantities',
         )}
+
+      {/* ═══ STOCK CHECK (RECONCILIATION) ═══ */}
+      {showStockCheck && (
+        <div className="li-modal" onClick={closeStockCheck}>
+          <div className="li-modal-box" onClick={(e) => e.stopPropagation()} style={{ width: 980 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+              <h2 style={{ fontSize: 18, fontWeight: 700, margin: 0 }}>Stock Check Reconciliation</h2>
+              <button
+                onClick={closeStockCheck}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#94A3B8' }}
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            <div
+              style={{
+                fontSize: 12,
+                color: '#64748B',
+                marginBottom: 12,
+                padding: '10px 14px',
+                background: '#F0FDFA',
+                border: '1px solid #99F6E4',
+                borderRadius: 8,
+              }}
+            >
+              <div>
+                File: <strong>{scData.fileName}</strong> — {scData.rows.length} rows found
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 8, flexWrap: 'wrap' }}>
+                {scData.sheetNames.length > 1 && (
+                  <>
+                    <label className="li-label" style={{ margin: 0, whiteSpace: 'nowrap' }}>
+                      Sheet
+                    </label>
+                    <select
+                      className="li-input"
+                      value={scData.sheetName}
+                      onChange={(e) => {
+                        const name = e.target.value;
+                        const aoa = scSheets[name] || [];
+                        const parsed = parseSheet(aoa);
+                        setScData({
+                          ...scData,
+                          sheetName: name,
+                          aoa,
+                          headers: parsed.headers,
+                          rows: parsed.rows,
+                          headerRow: parsed.headerRowIndex,
+                        });
+                        setScColumnMap(autoDetectColumns(parsed.headers, scFieldKeys));
+                        setScPreview(null);
+                      }}
+                      style={{ width: 'auto', maxWidth: 220 }}
+                    >
+                      {scData.sheetNames.map((n) => (
+                        <option key={n} value={n}>
+                          {n}
+                        </option>
+                      ))}
+                    </select>
+                  </>
+                )}
+                <label className="li-label" style={{ margin: 0, whiteSpace: 'nowrap' }}>
+                  Header row
+                </label>
+                <input
+                  className="li-input"
+                  type="number"
+                  min={1}
+                  max={Math.max(1, scData.aoa.length)}
+                  value={scData.headerRow + 1}
+                  onChange={(e) => {
+                    reparseWith(scData, setScData, setScColumnMap, scFieldKeys, e.target.value);
+                    setScPreview(null);
+                  }}
+                  style={{ width: 90 }}
+                />
+              </div>
+              <div style={{ fontSize: 11, marginTop: 6, color: '#0F766E' }}>
+                Header row reads: <strong>{scHeaderRowValues || '(empty)'}</strong>
+              </div>
+            </div>
+
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fill, minmax(200px,1fr))',
+                gap: 10,
+                marginBottom: 16,
+              }}
+            >
+              {STOCK_CHECK_FIELDS.map((f) => (
+                <div key={f.key}>
+                  <label className="li-label">
+                    {f.label} {f.required && <span style={{ color: '#DC2626' }}>*</span>}
+                  </label>
+                  <select
+                    className="li-input"
+                    value={scColumnMap[f.key] || ''}
+                    onChange={(e) => {
+                      setScColumnMap((prev) => ({ ...prev, [f.key]: e.target.value }));
+                      setScPreview(null);
+                    }}
+                  >
+                    <option value="">—</option>
+                    {scData.headers.map((h) => (
+                      <option key={h} value={h}>
+                        {h}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              ))}
+            </div>
+
+            <div style={{ fontSize: 11, color: '#64748B', marginBottom: 12 }}>{STOCK_CHECK_RULE}</div>
+
+            {scPreview && (
+              <>
+                <div style={{ fontSize: 12, fontWeight: 600, color: '#334155', marginBottom: 8 }}>
+                  {scSummary.ready} rows ready · {scSummary.newItems} new items · {scSummary.errors} errors ·{' '}
+                  {scSummary.variances} with a count variance
+                </div>
+                <div
+                  style={{
+                    overflow: 'auto',
+                    maxHeight: 320,
+                    border: '1px solid #E2E8F0',
+                    borderRadius: 8,
+                    marginBottom: 16,
+                  }}
+                >
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
+                    <thead>
+                      <tr style={{ background: '#F8FAFB', position: 'sticky', top: 0 }}>
+                        <th className="li-th">Material</th>
+                        <th className="li-th">Description</th>
+                        <th className="li-th">Before</th>
+                        <th className="li-th">+ In</th>
+                        <th className="li-th">− Out</th>
+                        <th className="li-th">Counted</th>
+                        <th className="li-th">Variance</th>
+                        <th className="li-th">After</th>
+                        <th className="li-th">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(scPreview.rows || []).map((r, i) => {
+                        const isError = r.status === 'error';
+                        const badge = SC_STATUS_STYLES[r.status] || SC_STATUS_STYLES.ok;
+                        const variance = Number(r.variance) || 0;
+                        return (
+                          <tr
+                            key={`${r.row ?? i}-${r.materialNo}-${i}`}
+                            style={{ background: isError ? '#FEF2F2' : undefined }}
+                          >
+                            <td
+                              className="li-td li-mono"
+                              style={{ color: isError ? '#DC2626' : '#0B7A3E', fontWeight: 600 }}
+                            >
+                              {r.materialNo}
+                              {r.lotsNumber ? ` / ${r.lotsNumber}` : ''}
+                            </td>
+                            <td
+                              className="li-td"
+                              style={{ maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis' }}
+                            >
+                              {isError ? (
+                                <span style={{ color: '#DC2626' }}>{r.error || 'Error'}</span>
+                              ) : (
+                                r.description || '\u2014'
+                              )}
+                            </td>
+                            <td className="li-td li-mono">{r.before ?? '\u2014'}</td>
+                            <td className="li-td li-mono" style={{ color: '#15803D' }}>
+                              {r.chargeIn || 0}
+                            </td>
+                            <td className="li-td li-mono" style={{ color: '#C2410C' }}>
+                              {r.chargeOut || 0}
+                            </td>
+                            <td className="li-td li-mono">{isBlank(r.counted) ? '\u2014' : r.counted}</td>
+                            <td
+                              className="li-td li-mono"
+                              style={{ fontWeight: 700, color: variance !== 0 ? '#B45309' : '#94A3B8' }}
+                            >
+                              {variance > 0 ? `+${variance}` : variance}
+                            </td>
+                            <td className="li-td li-mono" style={{ fontWeight: 700 }}>
+                              {r.target ?? r.expected ?? '\u2014'}
+                            </td>
+                            <td className="li-td">
+                              <span className="li-badge" style={{ background: badge.bg, color: badge.color }}>
+                                {badge.label}
+                              </span>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            )}
+
+            {scValidationError && (
+              <div style={{ fontSize: 12, color: '#DC2626', marginBottom: 10 }}>{scValidationError}</div>
+            )}
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
+              <button className="li-btn li-btn-secondary" onClick={closeStockCheck}>
+                Cancel
+              </button>
+              <button
+                className="li-btn li-btn-secondary"
+                onClick={() => runStockCheck(true)}
+                disabled={!!scValidationError || scBusy}
+                style={{ opacity: scValidationError || scBusy ? 0.5 : 1 }}
+              >
+                <Filter size={14} /> Preview
+              </button>
+              <button
+                className="li-btn li-btn-stockcheck"
+                onClick={handleStockCheckApply}
+                disabled={!scPreview || scSummary.ready === 0 || scBusy}
+                style={{ opacity: !scPreview || scSummary.ready === 0 || scBusy ? 0.5 : 1 }}
+              >
+                <ClipboardCheck size={14} /> Apply to Stock
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ═══ BULK SEARCH MODAL ═══ */}
       {showBulkSearch && (

@@ -195,5 +195,41 @@ await call('PUT', `/api/users/${admin2Id}`, { role: 'user' }, admin);
 r = await call('GET', '/api/users?all=true', null, admin2);
 ok(r.status === 403, 'demoted admin loses access immediately with the same token', String(r.status));
 
+// ── stock-check reconciliation (charge in / charge out / counted balance) ──
+await call('POST', '/api/local-inventory/bulk', { items: [
+  { materialNo: 'SC-A', description: 'Calib beads', quantity: 10 },
+  { materialNo: 'SC-B', description: 'Pump head', quantity: 4 },
+  { materialNo: 'SC-C', description: 'Bio tubing', quantity: 6 },
+]}, admin);
+const sheet = [
+  { materialNo: 'SC-A', chargeIn: 5, chargeOut: 3, countedQty: 12 }, // 10+5-3=12, count agrees
+  { materialNo: 'SC-B', chargeIn: 0, chargeOut: 2, countedQty: 1 },  // expected 2, counted 1 -> variance -1
+  { materialNo: 'SC-C', chargeIn: 2, chargeOut: 0 },                 // movements only -> 8
+  { materialNo: 'SC-NEW', description: 'Found on shelf', countedQty: 3 },
+  { materialNo: 'SC-B', chargeOut: 999 },                            // impossible -> error row
+];
+r = await call('POST', '/api/local-inventory/reconcile', { items: sheet, dryRun: true, reference: 'Wk38' }, admin);
+ok(r.status === 200 && r.json.dryRun === true, 'reconcile preview runs');
+ok(r.json.rows[0].target === 12 && r.json.rows[0].variance === 0, 'preview: 10 +5 -3 = 12', JSON.stringify(r.json.rows[0]));
+ok(r.json.rows[1].variance === -1 && r.json.rows[1].target === 1, 'preview: counted balance wins over expected', JSON.stringify(r.json.rows[1]));
+ok(r.json.rows[2].target === 8 && r.json.rows[2].counted === null, 'preview: movements only when no count', JSON.stringify(r.json.rows[2]));
+ok(r.json.rows[3].status === 'new', 'preview: unknown material flagged as new');
+ok(r.json.rows[4].status === 'error', 'preview: impossible result reported, not clamped');
+r = await call('GET', '/api/local-inventory?all=true', null, admin);
+ok(r.json.data.find((x) => x.materialNo === 'SC-A').quantity === 10, 'preview writes nothing');
+
+r = await call('POST', '/api/local-inventory/reconcile', { items: sheet, dryRun: false, reference: 'Wk38' }, admin);
+ok(r.json.applied === 4 && r.json.created === 1 && r.json.errors === 1, 'apply: 4 applied, 1 created, 1 skipped', JSON.stringify(r.json).slice(0, 120));
+r = await call('GET', '/api/local-inventory?all=true', null, admin);
+const stock = (m) => r.json.data.find((x) => x.materialNo === m)?.quantity;
+ok(stock('SC-A') === 12 && stock('SC-B') === 1 && stock('SC-C') === 8 && stock('SC-NEW') === 3, 'stock levels after reconcile', `${stock('SC-A')}/${stock('SC-B')}/${stock('SC-C')}/${stock('SC-NEW')}`);
+r = await call('GET', '/api/local-inventory/transactions?materialNo=SC-A', null, admin);
+const kinds = r.json.data.map((x) => `${x.type}:${x.quantityChange}`);
+ok(kinds.includes('arrival:5') && kinds.includes('charge_out:-3'), 'charge in and charge out logged as separate movements', JSON.stringify(kinds));
+r = await call('GET', '/api/local-inventory/transactions?materialNo=SC-B', null, admin);
+ok(r.json.data.some((x) => x.type === 'adjustment' && x.quantityChange === -1), 'count variance logged as its own adjustment');
+r = await call('POST', '/api/local-inventory/reconcile', { items: sheet, dryRun: true }, tech);
+ok(r.status === 403, 'reconcile is admin-only', String(r.status));
+
 console.log(`\n${fails === 0 ? 'ALL PASSED' : fails + ' FAILED'}`);
 process.exit(fails ? 1 : 0);

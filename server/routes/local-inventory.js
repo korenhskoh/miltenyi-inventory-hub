@@ -476,6 +476,186 @@ router.post(
   }),
 );
 
+// ── Stock-check reconciliation ────────────────────────────────────────────────
+// The team counts stock against a spreadsheet that carries the period's charge
+// in / charge out movements and (usually) a counted closing balance. Neither
+// "Import" (absolute set) nor "Adjust" (single delta) could express that: one
+// of the two movement columns was always lost. This endpoint takes both, plus
+// an optional counted figure, and records each movement as its own transaction
+// so the history reflects what physically happened.
+//
+// For every row:
+//     net       = chargeIn - chargeOut
+//     expected  = current + net
+//     target    = counted (when the sheet was counted) else expected
+//     variance  = target - expected        // what the count disagreed by
+const nonNeg = (v) => Math.max(0, Math.round(Number(v) || 0));
+
+function planRow(item, current) {
+  const chargeIn = nonNeg(item.chargeIn);
+  const chargeOut = nonNeg(item.chargeOut);
+  const counted =
+    item.countedQty === undefined || item.countedQty === null || item.countedQty === ''
+      ? null
+      : Math.round(Number(item.countedQty) || 0);
+  const before = current === null ? 0 : Number(current) || 0;
+  const net = chargeIn - chargeOut;
+  const expected = before + net;
+  const target = counted === null ? expected : counted;
+  return { chargeIn, chargeOut, counted, before, net, expected, target, variance: target - expected };
+}
+
+router.post(
+  '/reconcile',
+  requireAdmin,
+  asyncHandler(async (req, res) => {
+    const { items, dryRun = false, reference = '' } = req.body;
+    if (!Array.isArray(items) || items.length === 0) return res.status(400).json({ error: 'items array required' });
+    if (items.length > 5000) return res.status(400).json({ error: 'Too many rows — split the file (max 5000).' });
+
+    const note = `Stock check${reference ? ` ${reference}` : ''}`;
+    const rows = [];
+
+    const lookup = async (q, materialNo, lotsNumber) => {
+      const r = await q(
+        `SELECT * FROM local_inventory
+         WHERE material_no = $1 AND COALESCE(lots_number, '__none__') = COALESCE($2, '__none__')`,
+        [materialNo, lotsNumber],
+      );
+      return r.rows[0] || null;
+    };
+
+    // Dry run: compute only, touch nothing.
+    if (dryRun) {
+      for (const [idx, item] of items.entries()) {
+        const materialNo = String(item.materialNo || '').trim();
+        const lotsNumber = String(item.lotsNumber || '').trim() || null;
+        if (!materialNo) {
+          rows.push({ row: idx + 1, status: 'error', error: 'Material number is missing' });
+          continue;
+        }
+        const existing = await lookup(query, materialNo, lotsNumber);
+        const plan = planRow(item, existing ? existing.quantity : null);
+        const status = plan.target < 0 ? 'error' : existing ? 'ok' : 'new';
+        rows.push({
+          row: idx + 1,
+          materialNo,
+          lotsNumber,
+          description: existing?.description || item.description || '',
+          ...plan,
+          status,
+          error: plan.target < 0 ? `Result would be ${plan.target} — check the charge out figure` : undefined,
+        });
+      }
+      return res.json({ dryRun: true, applied: 0, rows, errors: rows.filter((r) => r.status === 'error').length });
+    }
+
+    try {
+      await withTransaction(async (tx) => {
+        for (const [idx, item] of items.entries()) {
+          await tx.query('SAVEPOINT row_sp');
+          try {
+            const materialNo = String(item.materialNo || '').trim();
+            const lotsNumber = String(item.lotsNumber || '').trim() || null;
+            if (!materialNo) {
+              rows.push({ row: idx + 1, status: 'error', error: 'Material number is missing' });
+              await tx.query('RELEASE SAVEPOINT row_sp');
+              continue;
+            }
+
+            const existing = await lookup((q, p) => tx.query(q, p), materialNo, lotsNumber);
+            const plan = planRow(item, existing ? existing.quantity : null);
+
+            if (plan.target < 0) {
+              rows.push({
+                row: idx + 1,
+                materialNo,
+                lotsNumber,
+                ...plan,
+                status: 'error',
+                error: `Result would be ${plan.target} — check the charge out figure`,
+              });
+              await tx.query('RELEASE SAVEPOINT row_sp');
+              continue;
+            }
+
+            let id = existing?.id;
+            if (!existing) {
+              const created = await tx.query(
+                `INSERT INTO local_inventory (material_no, description, lots_number, category, quantity)
+                 VALUES ($1, $2, $3, $4, 0) RETURNING *`,
+                [materialNo, item.description || null, lotsNumber, item.category || null],
+              );
+              id = created.rows[0].id;
+            }
+
+            // Record each movement separately so the item history is truthful.
+            let running = plan.before;
+            const logTxn = async (change, after, type, txnNote) =>
+              tx.query(
+                `INSERT INTO inventory_transactions (inventory_id, material_no, lots_number, quantity_change, quantity_after, type, user_id, user_name, notes)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+                [
+                  id,
+                  materialNo,
+                  lotsNumber,
+                  change,
+                  after,
+                  type,
+                  req.user?.id || null,
+                  req.user?.username || null,
+                  txnNote,
+                ],
+              );
+
+            if (plan.chargeIn > 0) {
+              running += plan.chargeIn;
+              await logTxn(plan.chargeIn, running, 'arrival', `${note} — charge in`);
+            }
+            if (plan.chargeOut > 0) {
+              running -= plan.chargeOut;
+              await logTxn(-plan.chargeOut, running, 'charge_out', `${note} — charge out`);
+            }
+            if (plan.variance !== 0) {
+              running += plan.variance;
+              await logTxn(plan.variance, running, 'adjustment', `${note} — count variance`);
+            }
+
+            await tx.query('UPDATE local_inventory SET quantity = $1, updated_at = NOW() WHERE id = $2', [
+              plan.target,
+              id,
+            ]);
+
+            rows.push({
+              row: idx + 1,
+              materialNo,
+              lotsNumber,
+              description: existing?.description || item.description || '',
+              ...plan,
+              status: existing ? 'ok' : 'created',
+            });
+            await tx.query('RELEASE SAVEPOINT row_sp');
+          } catch (e) {
+            await tx.query('ROLLBACK TO SAVEPOINT row_sp');
+            rows.push({ row: idx + 1, status: 'error', error: e.message });
+          }
+        }
+      });
+    } catch (e) {
+      return res.status(500).json({ error: e.message });
+    }
+
+    const errors = rows.filter((r) => r.status === 'error');
+    res.json({
+      dryRun: false,
+      applied: rows.length - errors.length,
+      created: rows.filter((r) => r.status === 'created').length,
+      errors: errors.length,
+      rows,
+    });
+  }),
+);
+
 // DELETE /:id — delete inventory item (admin only; the SPA hides it for others)
 router.delete(
   '/:id',
