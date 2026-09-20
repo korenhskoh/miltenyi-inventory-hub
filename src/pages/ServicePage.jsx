@@ -87,11 +87,17 @@ const normMachineDates = (m) => {
 // Days between today and a warranty/expiry date (positive = days remaining, negative = expired)
 function daysLeftFromToday(dateStr) {
   if (!dateStr) return null;
-  const d = new Date(dateStr);
-  if (Number.isNaN(d.getTime())) return null;
-  const now = new Date();
+  const ymd = normalizeDate(dateStr);
+  if (!ymd) return null;
+  // Compare calendar day to calendar day. Subtracting `new Date()` (a local
+  // instant) from 'YYYY-MM-DD' (parsed as UTC midnight) drifted by a day every
+  // evening in UTC+8: the same warranty read 102 days at 15:00 and 101 at
+  // 21:00, and an instrument expiring today showed -1. Everything else in this
+  // module compares plain YYYY-MM-DD strings; now this does too.
+  const [ty, tm, td] = todayLocal().split('-').map(Number);
+  const [dy, dm, dd] = ymd.split('-').map(Number);
   const oneDay = 24 * 60 * 60 * 1000;
-  return Math.round((d - now) / oneDay);
+  return Math.round((Date.UTC(dy, dm - 1, dd) - Date.UTC(ty, tm - 1, td)) / oneDay);
 }
 
 function fmtMoney(v) {
@@ -894,7 +900,11 @@ function ImportModal({ isAdmin, region = 'local', onImport, onClose }) {
       setImporting(false);
       // Always show the result screen so the user sees inserted/errors feedback
       setStep('done');
-      if (res.inserted > 0) onImport(res.machines || []);
+      // onImport refreshes the registry behind this modal. It must NOT close the
+      // modal, or the result screen this just switched to — including the failed
+      // rows and the skipped duplicates — is destroyed in the same commit and
+      // the user never learns which instruments did not import.
+      if (res.inserted > 0) onImport(res.machines || [], { keepOpen: true });
     } catch (err) {
       setImporting(false);
       setErrorMsg(`Import failed: ${err.message || 'unknown error'}`);
@@ -991,14 +1001,48 @@ function ImportModal({ isAdmin, region = 'local', onImport, onClose }) {
                 ) : (
                   <AlertTriangle size={48} style={{ color: '#ef4444' }} />
                 )}
-                <h3 style={{ marginTop: 8 }}>{result.inserted > 0 ? 'Import Complete' : 'Import Failed'}</h3>
+                <h3 style={{ marginTop: 8 }}>
+                  {result.inserted > 0 ? 'Import Complete' : result.skipped?.length > 0 ? 'Nothing New to Import' : 'Import Failed'}
+                </h3>
                 <p style={{ color: 'var(--svc-text-muted)' }}>
                   ✅ {result.inserted} instrument(s) imported successfully
+                  {result.skipped?.length > 0 && (
+                    <span style={{ color: '#f59e0b' }}>
+                      , ⏭️ {result.skipped.length} already in the registry (skipped)
+                    </span>
+                  )}
                   {result.errors?.length > 0 && (
                     <span style={{ color: '#ef4444' }}>, ⚠️ {result.errors.length} row(s) failed</span>
                   )}
                 </p>
               </div>
+              {result.skipped?.length > 0 && (
+                <div
+                  style={{
+                    maxHeight: 140,
+                    overflowY: 'auto',
+                    background: 'var(--svc-surface-2)',
+                    border: '1px solid var(--svc-border)',
+                    borderRadius: 8,
+                    padding: '8px 12px',
+                    marginBottom: 8,
+                    fontSize: 12,
+                    color: 'var(--svc-text-muted)',
+                  }}
+                >
+                  <div style={{ marginBottom: 4, fontWeight: 600 }}>
+                    Skipped — these serial numbers are already registered:
+                  </div>
+                  {result.skipped.slice(0, 50).map((sk, i) => (
+                    <div key={i} style={{ marginBottom: 2 }}>
+                      Row {sk.row}: {sk.serialNumber}
+                    </div>
+                  ))}
+                  {result.skipped.length > 50 && (
+                    <div style={{ marginTop: 4, fontStyle: 'italic' }}>…and {result.skipped.length - 50} more</div>
+                  )}
+                </div>
+              )}
               {result.errors?.length > 0 && (
                 <div
                   style={{
@@ -1023,7 +1067,7 @@ function ImportModal({ isAdmin, region = 'local', onImport, onClose }) {
                 </div>
               )}
               <div style={{ display: 'flex', justifyContent: 'center', gap: 8, marginTop: 16 }}>
-                {result.inserted === 0 && (
+                {result.inserted === 0 && !result.skipped?.length && (
                   <button className="svc-btn svc-btn--ghost" onClick={() => setStep('map')}>
                     Back to Mapping
                   </button>
@@ -1292,6 +1336,7 @@ function Registry({
               <option value="Overdue">Overdue</option>
               <option value="Due">Due Soon</option>
               <option value="OK">OK</option>
+              <option value="None">Not scheduled</option>
             </select>
           )}
         </div>
@@ -2570,9 +2615,11 @@ export default function ServicePage({ isAdmin = false, notify, machines, setMach
     if (sRes) setSummary(sRes);
   };
 
-  const handleImportDone = (newMachines) => {
+  const handleImportDone = (newMachines, { keepOpen = false } = {}) => {
     setMachines((prev) => [...newMachines, ...prev]);
-    setShowImport(false);
+    // Leave the modal up when it is showing its own result screen; the user
+    // closes it with Done once they have read the failures and skips.
+    if (!keepOpen) setShowImport(false);
     notify?.('Import Complete', `${newMachines.length} instrument(s) imported`, 'success');
     api.getMachineSummary({ region }).then((sRes) => {
       if (sRes) setSummary(sRes);
@@ -2931,9 +2978,18 @@ const SERVICE_CSS = `
 .svc-dashboard { padding: 24px 20px; }
 .svc-dash-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  /* Six summary cards. auto-fill produced five columns at some widths, which
+     left the sixth card stranded on its own row beside a wide empty gap.
+     Step through counts that divide six evenly instead. */
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 16px;
   margin-bottom: 28px;
+}
+@media (max-width: 1600px) {
+  .svc-dash-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@media (max-width: 1100px) {
+  .svc-dash-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 .svc-card {
   display: flex;

@@ -215,7 +215,17 @@ async function bulkUpdateOrderStatus(ids, status, approvalStatus) {
         body: JSON.stringify({ ids, status, ...(approvalStatus ? { approvalStatus } : {}) }),
       }),
     );
-    return res.ok;
+    if (!res.ok) return false;
+    // The server answers 207 when it deliberately skipped rows that were not
+    // approved. `res.ok` is true for 207, so returning it alone reported a
+    // partial update as a complete one and the UI showed every selected order
+    // as changed. Surface the shortfall instead.
+    if (res.status === 207) {
+      const rows = await res.json().catch(() => []);
+      const updatedIds = Array.isArray(rows) ? rows.map((r) => r.id) : [];
+      return { ok: true, partial: true, updatedIds, skipped: ids.length - updatedIds.length };
+    }
+    return true;
   } catch {
     return false;
   }
@@ -1067,6 +1077,29 @@ async function adjustInventory(items) {
   }
 }
 
+/**
+ * Record a part arrival. One server-side transaction updates the order AND the
+ * stock level with the order row locked, so a repeat or concurrent confirmation
+ * cannot book the same delivery in twice, and stock is never raised when the
+ * order update is refused.
+ */
+async function confirmOrderArrival(orderId, payload) {
+  try {
+    const res = handleResponse(
+      await fetch(`${BASE}/api/orders/${orderId}/arrival`, {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify(payload),
+      }),
+    );
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, error: typeof data.error === 'string' ? data.error : 'Arrival not saved' };
+    return { ok: true, ...data };
+  } catch {
+    return { ok: false, error: 'Could not reach the server' };
+  }
+}
+
 async function arrivalToInventory(items) {
   try {
     const res = handleResponse(
@@ -1244,6 +1277,7 @@ const api = {
   chargeOutInventory,
   adjustInventory,
   arrivalToInventory,
+  confirmOrderArrival,
   updateInventoryItem,
   deleteInventoryItem,
   lookupPartPrices,

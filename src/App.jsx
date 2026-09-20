@@ -329,8 +329,20 @@ export default function App() {
     (promise, msg) => {
       Promise.resolve(promise)
         .then((r) => {
-          if (r === null || r === false)
+          if (r === null || r === false) {
             notify('Save Failed', msg || 'Failed to save to database. Please retry.', 'error');
+            return;
+          }
+          // A partial result (HTTP 207) is not a failure, but it is not the
+          // success the user was shown either — some rows were deliberately
+          // skipped. Say so rather than letting it pass as a clean save.
+          if (r && typeof r === 'object' && r.partial) {
+            notify(
+              'Partly Saved',
+              `${r.skipped} item(s) were skipped because they are not approved. Refresh to see the current state.`,
+              'warning',
+            );
+          }
         })
         .catch(() => notify('Save Failed', msg || 'Failed to save to database. Please retry.', 'error'));
     },
@@ -897,7 +909,26 @@ export default function App() {
       const updatedOrder = { ...order, ...updates };
       const updatedOrders = orders.map((x) => (x.id === orderId ? updatedOrder : x));
       setOrders(updatedOrders);
-      dbSync(api.updateOrder(orderId, updates), 'Arrival update not saved');
+      // One transactional call updates the order AND the stock level together.
+      // Previously the order PUT and the inventory POST were fired separately
+      // and neither was awaited, so a repeat confirmation double-counted the
+      // stock and a refused order update still raised it.
+      api
+        .confirmOrderArrival(orderId, {
+          qtyReceived: val,
+          arrivalDate: updates.arrivalDate,
+          arrivalCheckedBy: updates.arrivalCheckedBy,
+        })
+        .then((res) => {
+          if (!res.ok) {
+            // Put the row back the way the server has it rather than leaving
+            // the screen claiming an arrival that did not happen.
+            setOrders((prev) => prev.map((x) => (x.id === orderId ? order : x)));
+            notify('Arrival Not Saved', res.error || 'The arrival could not be recorded.', 'error');
+          } else if (res.alreadyRecorded) {
+            notify('Already Recorded', `${order.description || orderId} was already booked in.`, 'warning');
+          }
+        });
       if (order.bulkGroupId) checkBulkGroupCompletion(order.bulkGroupId, updatedOrders);
       setPendingArrival((prev) => {
         const next = { ...prev };
@@ -912,10 +943,6 @@ export default function App() {
       logAction('Confirm Arrival', 'order', orderId, { qtyReceived: val, status });
       notify('Arrival Confirmed', `${order.description || orderId}: ${val}/${order.quantity} received`, 'success');
       sendArrivalReport([updatedOrder]);
-      // Auto-add only the newly received quantity (delta) to local inventory
-      if (delta > 0 && order.materialNo) {
-        api.arrivalToInventory([{ materialNo: order.materialNo, description: order.description, quantity: delta }]);
-      }
     },
     [orders, pendingArrival, currentUser, checkBulkGroupCompletion, dbSync, logAction, notify, sendArrivalReport],
   );
@@ -928,7 +955,6 @@ export default function App() {
       const confirmedIds = [];
       const confirmedOrdersList = [];
       const updates = [];
-      const arrivalItems = [];
       orderIds.forEach((orderId) => {
         const order = updatedOrders.find((o) => o.id === orderId);
         if (!order) return;
@@ -944,17 +970,26 @@ export default function App() {
         };
         const updatedOrder = { ...order, ...upd };
         updatedOrders = updatedOrders.map((x) => (x.id === orderId ? updatedOrder : x));
-        updates.push({ orderId, upd, bulkGroupId: order.bulkGroupId });
+        updates.push({ orderId, upd, bulkGroupId: order.bulkGroupId, qtyReceived: val });
         confirmedIds.push(orderId);
         confirmedOrdersList.push(updatedOrder);
-        if (delta > 0 && order.materialNo) {
-          arrivalItems.push({ materialNo: order.materialNo, description: order.description, quantity: delta });
-        }
       });
       if (confirmedIds.length === 0) return;
       setOrders(updatedOrders);
-      updates.forEach(({ orderId, upd, bulkGroupId }) => {
-        dbSync(api.updateOrder(orderId, upd), 'Arrival update not saved');
+      updates.forEach(({ orderId, upd, bulkGroupId, qtyReceived }) => {
+        api
+          .confirmOrderArrival(orderId, {
+            qtyReceived,
+            arrivalDate: upd.arrivalDate,
+            arrivalCheckedBy: upd.arrivalCheckedBy,
+          })
+          .then((res) => {
+            if (!res.ok) {
+              const original = orders.find((o) => o.id === orderId);
+              if (original) setOrders((prev) => prev.map((x) => (x.id === orderId ? original : x)));
+              notify('Arrival Not Saved', `${orderId}: ${res.error || 'could not be recorded.'}`, 'error');
+            }
+          });
         if (bulkGroupId) checkBulkGroupCompletion(bulkGroupId, updatedOrders);
       });
       setPendingArrival((prev) => {
@@ -966,8 +1001,6 @@ export default function App() {
       logAction('Batch Confirm Arrival', 'order', confirmedIds.join(','), { count: confirmedIds.length });
       notify('Arrival Confirmed', `${confirmedIds.length} order(s) status updated`, 'success');
       sendArrivalReport(confirmedOrdersList);
-      // Auto-add only newly received quantities (deltas) to local inventory
-      if (arrivalItems.length > 0) api.arrivalToInventory(arrivalItems);
     },
     [orders, pendingArrival, currentUser, checkBulkGroupCompletion, dbSync, logAction, notify, sendArrivalReport],
   );
@@ -992,6 +1025,7 @@ export default function App() {
     { key: 'analytics', label: 'Analytics', group: 'Pages' },
     { key: 'stockCheck', label: 'Stock Check', group: 'Pages' },
     { key: 'delivery', label: 'Part Arrival', group: 'Pages' },
+    { key: 'service', label: 'Service Module', group: 'Pages' },
     { key: 'whatsapp', label: 'WhatsApp', group: 'Pages' },
     { key: 'notifications', label: 'Notifications', group: 'Pages' },
     { key: 'auditTrail', label: 'Audit Trail', group: 'Pages' },
@@ -1014,6 +1048,7 @@ export default function App() {
     analytics: true,
     stockCheck: true,
     delivery: true,
+    service: true,
     whatsapp: true,
     notifications: true,
     auditTrail: false,
@@ -1098,9 +1133,16 @@ export default function App() {
   const stats = useMemo(() => {
     const t = orders.length,
       r = orders.filter((o) => o.status === 'Received').length,
-      // Match the server aggregate (/api/orders/stats counts back_order < 0) so the tile
-      // does not jump when the server numbers land.
-      b = orders.filter((o) => (o.backOrder ?? (Number(o.qtyReceived) || 0) - (Number(o.quantity) || 0)) < 0).length;
+      // A back order is a delivery that arrived SHORT — the same definition the
+      // Part Arrival page and the back-order report use, and now the same one
+      // /api/orders/stats uses. The old test was `backOrder < 0`, a field every
+      // order carries from creation and which is never reset on rejection, so
+      // this tile counted orders that had never even been approved: 30 awaiting
+      // approval and 5 rejected showed "35 back orders" while the Part Arrival
+      // tile and the report both showed 0.
+      b = orders.filter(
+        (o) => o.arrivalDate && (Number(o.qtyReceived) || 0) < (Number(o.quantity) || 0) && o.status !== 'Rejected',
+      ).length;
     const pa = orders.filter((o) => o.status === 'Pending Approval').length,
       ap = orders.filter((o) => o.status === 'Approved').length;
     const rej = orders.filter((o) => o.status === 'Rejected').length;
@@ -2106,7 +2148,18 @@ export default function App() {
     if (!selOrders.size) return;
     const ids = [...selOrders];
     const idSet = new Set(ids);
-    const approvalStatus = status === 'Approved' ? 'approved' : status === 'Rejected' ? 'rejected' : undefined;
+    // Sending an order back to 'Pending Approval' used to leave approval_status
+    // at 'approved', so the Part Arrival page still let it be received and the
+    // server's close-out guard still passed — an order pulled back from
+    // approval could be delivered and paid for.
+    const approvalStatus =
+      status === 'Approved'
+        ? 'approved'
+        : status === 'Rejected'
+          ? 'rejected'
+          : status === 'Pending Approval'
+            ? 'pending'
+            : undefined;
     const updatedOrders = orders.map((o) =>
       idSet.has(o.id) ? { ...o, status, ...(approvalStatus ? { approvalStatus } : {}) } : o,
     );
@@ -3425,7 +3478,7 @@ export default function App() {
     { id: 'forecasting', label: 'Forecasting', icon: TrendingUp, perm: 'analytics', module: 'inventory' },
     { id: 'stockcheck', label: 'Stock Check', icon: ClipboardList, perm: 'stockCheck', module: 'inventory' },
     { id: 'delivery', label: 'Part Arrival', icon: Truck, perm: 'delivery', module: 'inventory' },
-    { id: 'service', label: 'Service', icon: Briefcase, perm: 'dashboard', module: 'service' },
+    { id: 'service', label: 'Service', icon: Briefcase, perm: 'service', module: 'service' },
     { id: 'whatsapp', label: 'WhatsApp', icon: MessageSquare, perm: 'whatsapp', module: 'shared' },
     { id: 'notifications', label: 'Notifications', icon: Bell, perm: 'notifications', module: 'shared' },
     { id: 'audit', label: 'Audit Trail', icon: Shield, perm: 'auditTrail', module: 'shared' },

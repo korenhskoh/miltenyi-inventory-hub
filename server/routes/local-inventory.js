@@ -5,6 +5,7 @@ import { pickAllowed } from '../validation.js';
 import { paginate, envelope, limitClause } from '../pagination.js';
 import { asyncHandler } from '../middleware/errorHandler.js';
 import { requireAdmin } from '../middleware/auth.js';
+import { requirePermission } from '../middleware/permissions.js';
 
 const router = Router();
 
@@ -310,8 +311,11 @@ router.post(
 // POST /adjust — admin quantity adjustment (bulk)
 router.post(
   '/adjust',
+  // Was `req.user?.role !== 'admin'`, i.e. the role claim baked into the token —
+  // a demoted account kept admin powers here until its 24h token expired.
+  // requireAdmin re-checks against the database.
+  requireAdmin,
   asyncHandler(async (req, res) => {
-    if (req.user?.role !== 'admin') return res.status(403).json({ error: 'Admin access required' });
 
     const { items } = req.body;
     if (!Array.isArray(items) || items.length === 0) return res.status(400).json({ error: 'items array required' });
@@ -342,11 +346,20 @@ router.post(
             const params = lotsNumber ? [materialNo, lotsNumber, qtyDelta] : [materialNo, qtyDelta];
             const deltaParam = lotsNumber ? '$3' : '$2';
 
+            // Locks the row and carries the pre-update quantity out with the
+            // result, so the logged movement can be the change that actually
+            // happened rather than the one that was asked for.
             const result = await tx.query(
-              `UPDATE local_inventory
-               SET quantity = GREATEST(0, quantity + ${deltaParam}), updated_at = NOW()
-               WHERE material_no = $1 AND ${lotsCondition}
-               RETURNING *`,
+              `WITH prev AS (
+                 SELECT id, quantity FROM local_inventory
+                 WHERE material_no = $1 AND ${lotsCondition}
+                 FOR UPDATE
+               )
+               UPDATE local_inventory li
+               SET quantity = GREATEST(0, li.quantity + ${deltaParam}), updated_at = NOW()
+               FROM prev
+               WHERE li.id = prev.id
+               RETURNING li.*, prev.quantity AS previous_quantity`,
               params,
             );
 
@@ -356,6 +369,13 @@ router.post(
             }
 
             const row = result.rows[0];
+            const before = Number(row.previous_quantity) || 0;
+
+            // The UPDATE clamps at 0, so the requested delta and the change that
+            // actually happened can differ (2 on hand, -5 requested -> 0). Logging
+            // the requested figure left the ledger permanently out of step with the
+            // stored quantity; log what really moved.
+            const appliedDelta = row.quantity - before;
 
             await tx.query(
               `INSERT INTO inventory_transactions (inventory_id, material_no, lots_number, quantity_change, quantity_after, type, user_id, user_name, notes)
@@ -364,11 +384,13 @@ router.post(
                 row.id,
                 materialNo,
                 lotsNumber,
-                qtyDelta,
+                appliedDelta,
                 row.quantity,
                 req.user?.id || null,
                 req.user?.username || null,
-                `Admin adjustment`,
+                appliedDelta === qtyDelta
+                  ? `Admin adjustment`
+                  : `Admin adjustment (requested ${qtyDelta}, clamped at zero)`,
               ],
             );
 
@@ -415,6 +437,10 @@ router.put(
 // POST /arrival — auto-add quantities from confirmed part arrivals
 router.post(
   '/arrival',
+  // Raises stock levels, so it needs the same permission as the Part Arrival
+  // page it serves. Without this any logged-in user could inflate any item's
+  // quantity, which made the admin-only /adjust gate cosmetic.
+  requirePermission('delivery'),
   asyncHandler(async (req, res) => {
     const { items } = req.body;
     if (!Array.isArray(items) || items.length === 0) return res.status(400).json({ error: 'items array required' });
@@ -491,13 +517,20 @@ router.post(
 //     variance  = target - expected        // what the count disagreed by
 const nonNeg = (v) => Math.max(0, Math.round(Number(v) || 0));
 
+// A physical count must be a real number. `Number('-') || 0` is 0, which would
+// read a "not counted" marker as a counted zero and wipe that item's stock, so
+// anything unparseable is treated as no count at all.
+function countedValue(v) {
+  if (v === undefined || v === null || v === '') return null;
+  const n = typeof v === 'number' ? v : Number(String(v).replace(/[,\s]/g, ''));
+  if (!Number.isFinite(n)) return null;
+  return Math.round(n);
+}
+
 function planRow(item, current) {
   const chargeIn = nonNeg(item.chargeIn);
   const chargeOut = nonNeg(item.chargeOut);
-  const counted =
-    item.countedQty === undefined || item.countedQty === null || item.countedQty === ''
-      ? null
-      : Math.round(Number(item.countedQty) || 0);
+  const counted = countedValue(item.countedQty);
   const before = current === null ? 0 : Number(current) || 0;
   const net = chargeIn - chargeOut;
   const expected = before + net;
@@ -516,10 +549,17 @@ router.post(
     const note = `Stock check${reference ? ` ${reference}` : ''}`;
     const rows = [];
 
-    const lookup = async (q, materialNo, lotsNumber) => {
+    // `forUpdate` locks the row for the rest of the transaction. Without it this
+    // was a read-then-absolute-write: a charge-out committing while the reconcile
+    // loop was still working through later rows was silently overwritten when the
+    // reconcile finally set the row to its pre-computed target, re-creating parts
+    // that had genuinely been issued and leaving the ledger permanently at odds
+    // with the stock level. The dry run takes no lock — it writes nothing.
+    const lookup = async (q, materialNo, lotsNumber, forUpdate = false) => {
       const r = await q(
         `SELECT * FROM local_inventory
-         WHERE material_no = $1 AND COALESCE(lots_number, '__none__') = COALESCE($2, '__none__')`,
+         WHERE material_no = $1 AND COALESCE(lots_number, '__none__') = COALESCE($2, '__none__')
+         ${forUpdate ? 'FOR UPDATE' : ''}`,
         [materialNo, lotsNumber],
       );
       return r.rows[0] || null;
@@ -563,7 +603,7 @@ router.post(
               continue;
             }
 
-            const existing = await lookup((q, p) => tx.query(q, p), materialNo, lotsNumber);
+            const existing = await lookup((q, p) => tx.query(q, p), materialNo, lotsNumber, true);
             const plan = planRow(item, existing ? existing.quantity : null);
 
             if (plan.target < 0) {

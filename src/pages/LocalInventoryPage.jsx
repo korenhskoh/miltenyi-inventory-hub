@@ -16,7 +16,7 @@ import {
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import api from '../api.js';
-import { parseSheet, autoDetectColumns, toNumber, isBlank } from '../lib/sheet.js';
+import { parseSheet, autoDetectColumns, toNumber, isBlank, toNumberOrNull } from '../lib/sheet.js';
 import { fmtDate, fmtNum, applySortData, toggleSort, exportToFile } from '../utils.js';
 import Pagination, { usePagination } from '../components/Pagination.jsx';
 
@@ -446,8 +446,14 @@ export default function LocalInventoryPage({ isAdmin, currentUser: _currentUser,
         if (scColumnMap.description) item.description = String(cell('description') ?? '').trim();
         if (scColumnMap.chargeIn) item.chargeIn = toNumber(cell('chargeIn'));
         if (scColumnMap.chargeOut) item.chargeOut = toNumber(cell('chargeOut'));
-        // A blank count means "not counted" — which is not the same as a counted zero.
-        if (scColumnMap.countedQty && !isBlank(cell('countedQty'))) item.countedQty = toNumber(cell('countedQty'));
+        // A blank count means "not counted" — which is not the same as a counted
+        // zero. Sheets also use '-' or 'n/a' for rows nobody counted, and
+        // toNumber() reads those as 0, which would zero that item's stock.
+        // toNumberOrNull keeps "no number here" distinct from "counted zero".
+        if (scColumnMap.countedQty) {
+          const counted = toNumberOrNull(cell('countedQty'));
+          if (counted !== null) item.countedQty = counted;
+        }
         return item;
       })
       .filter((i) => i.materialNo);

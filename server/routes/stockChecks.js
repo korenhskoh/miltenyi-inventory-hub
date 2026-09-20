@@ -9,7 +9,20 @@ import { requirePermission } from '../middleware/permissions.js';
 
 const router = Router();
 
-const STOCK_CHECK_FIELDS = ['id', 'date', 'checked_by', 'items', 'disc', 'status', 'notes'];
+// 'inventory' holds the per-material counts behind the check. It was missing
+// from this list, so the client's counts were silently dropped on save while
+// the POST still returned 201 — the detail of every completed check was lost.
+const STOCK_CHECK_FIELDS = ['id', 'date', 'checked_by', 'items', 'disc', 'status', 'notes', 'inventory'];
+
+// node-postgres renders a JS array as a Postgres ARRAY literal, which a jsonb
+// column rejects outright, so the JSONB payload has to be serialised by hand —
+// the same treatment approvals.order_ids and users.permissions already get.
+function serializeJsonFields(body) {
+  if (body.inventory !== undefined && body.inventory !== null && typeof body.inventory !== 'string') {
+    body.inventory = JSON.stringify(body.inventory);
+  }
+  return body;
+}
 const SC_DATE_FIELDS = ['date'];
 
 // GET / - list all stock checks
@@ -29,7 +42,9 @@ router.get(
 // POST / - create stock check
 router.post('/', async (req, res) => {
   try {
-    const snakeBody = sanitizeDates(pickAllowed(camelToSnake(req.body), STOCK_CHECK_FIELDS), SC_DATE_FIELDS);
+    const snakeBody = serializeJsonFields(
+      sanitizeDates(pickAllowed(camelToSnake(req.body), STOCK_CHECK_FIELDS), SC_DATE_FIELDS),
+    );
     const keys = Object.keys(snakeBody);
     const values = Object.values(snakeBody);
     const placeholders = keys.map((_, i) => `$${i + 1}`);
@@ -46,7 +61,9 @@ router.post('/', async (req, res) => {
 router.put('/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const snakeBody = sanitizeDates(pickAllowed(camelToSnake(req.body), STOCK_CHECK_FIELDS), SC_DATE_FIELDS);
+    const snakeBody = serializeJsonFields(
+      sanitizeDates(pickAllowed(camelToSnake(req.body), STOCK_CHECK_FIELDS), SC_DATE_FIELDS),
+    );
     const keys = Object.keys(snakeBody);
     const values = Object.values(snakeBody);
 

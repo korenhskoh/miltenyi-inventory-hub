@@ -4,6 +4,7 @@ import { snakeToCamel, camelToSnake } from '../utils.js';
 import { pickAllowed } from '../validation.js';
 import { asyncHandler } from '../middleware/errorHandler.js';
 import { requireAdmin } from '../middleware/auth.js';
+import { requirePermission } from '../middleware/permissions.js';
 
 const router = Router();
 
@@ -188,13 +189,23 @@ router.put(
     if (sets.length === 1) return res.status(400).json({ error: 'No fields to update' });
 
     vals.push(req.params.id);
-    const result = await query(
-      `UPDATE fca_definitions SET ${sets.join(', ')} WHERE id = $${pi}
-       RETURNING id, fca_number, instrument_model, title, description, pdf_filename,
-                 pdf_size_bytes, released_date, created_at, created_by, updated_at,
-                 (pdf_blob IS NOT NULL) AS has_pdf`,
-      vals,
-    );
+    let result;
+    try {
+      result = await query(
+        `UPDATE fca_definitions SET ${sets.join(', ')} WHERE id = $${pi}
+         RETURNING id, fca_number, instrument_model, title, description, pdf_filename,
+                   pdf_size_bytes, released_date, created_at, created_by, updated_at,
+                   (pdf_blob IS NOT NULL) AS has_pdf`,
+        vals,
+      );
+    } catch (err) {
+      // POST handles this; PUT did not, so renaming an FCA onto an existing
+      // (number, model) pair returned a generic 500 instead of a clear 409.
+      if (err.code === '23505') {
+        return res.status(409).json({ error: 'An FCA with this number already exists for this instrument model' });
+      }
+      throw err;
+    }
     if (result.rows.length === 0) return res.status(404).json({ error: 'FCA not found' });
     res.json(snakeToCamel(result.rows[0]));
   }),
@@ -263,6 +274,9 @@ router.get(
 // POST /status — upsert a status for (fca_id, machine_id). Authenticated users.
 router.post(
   '/status',
+  // Marks an instrument compliant with a field corrective action — a service
+  // record, so it needs the Service permission rather than just a valid token.
+  requirePermission('service'),
   asyncHandler(async (req, res) => {
     const { fcaId, machineId, status, completedDate, notes } = req.body;
     if (!fcaId || !machineId) return res.status(400).json({ error: 'fcaId and machineId are required' });
