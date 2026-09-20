@@ -6,6 +6,7 @@ import { paginate, envelope, limitClause } from '../pagination.js';
 import { asyncHandler } from '../middleware/errorHandler.js';
 import { requireAdmin } from '../middleware/auth.js';
 import logger from '../logger.js';
+import { notifyEvent } from '../notify.js';
 import { requirePermission, userHasPermission } from '../middleware/permissions.js';
 
 const router = Router();
@@ -340,7 +341,15 @@ router.post(
         await tx.query(
           `INSERT INTO inventory_transactions (inventory_id, material_no, quantity_change, quantity_after, type, user_id, user_name, notes)
            VALUES ($1, $2, $3, $4, 'arrival', $5, $6, $7)`,
-          [row.id, order.material_no, delta, row.quantity, req.user?.id || null, req.user?.username || null, `Part arrival for ${id}`],
+          [
+            row.id,
+            order.material_no,
+            delta,
+            row.quantity,
+            req.user?.id || null,
+            req.user?.username || null,
+            `Part arrival for ${id}`,
+          ],
         );
         inventory = snakeToCamel(row);
       }
@@ -349,6 +358,36 @@ router.post(
     });
 
     res.status(result.status).json(result.body);
+
+    // Fires on the arrival itself, so it happens whether the arrival came from
+    // the Part Arrival page, the WhatsApp bot or the API. Deliberately after
+    // the response and not awaited: a notification must never delay or fail the
+    // operation that triggered it.
+    if (result.status === 200 && result.body.delta > 0) {
+      const o = result.body.order;
+      const shortBy = (Number(o.quantity) || 0) - (Number(o.qtyReceived) || 0);
+      void notifyEvent(
+        shortBy > 0 ? 'backOrderUpdate' : 'partArrivalDone',
+        {
+          orderId: o.id,
+          description: o.description || '',
+          materialNo: o.materialNo || '',
+          quantity: o.quantity,
+          qtyReceived: o.qtyReceived,
+          backOrders: shortBy > 0 ? shortBy : 0,
+          received: shortBy > 0 ? 0 : 1,
+          totalItems: 1,
+          verifiedBy: o.arrivalCheckedBy || '',
+          date: o.arrivalDate || new Date().toISOString().slice(0, 10),
+          month: o.month || '',
+          itemsList: `\u2022 ${(o.description || '').slice(0, 35)}: ${o.qtyReceived}/${o.quantity}`,
+        },
+        {
+          templateKey: shortBy > 0 ? 'deliveryArrival' : 'partArrivalDone',
+          subject: `Part arrival: ${o.description || o.id}`,
+        },
+      );
+    }
   }),
 );
 
@@ -381,7 +420,10 @@ router.put('/:id', async (req, res) => {
       );
       if (owner.rows.length) {
         const { order_by: orderBy, my_name: myName, my_username: myUsername } = owner.rows[0];
-        const norm = (v) => String(v ?? '').trim().toLowerCase();
+        const norm = (v) =>
+          String(v ?? '')
+            .trim()
+            .toLowerCase();
         const mine = orderBy && (norm(orderBy) === norm(myName) || norm(orderBy) === norm(myUsername));
         if (orderBy && !mine) {
           return res.status(403).json({ error: 'You can only edit your own orders' });

@@ -559,47 +559,11 @@ export default function App() {
           .join('\n') + (confirmedOrders.length > 10 ? `\n...and ${confirmedOrders.length - 10} more` : '');
       const month = confirmedOrders[0]?.month || now;
 
-      // WhatsApp auto-report
-      if (waConnected && waNotifyRules.deliveryArrival) {
-        const waMsg = fillTemplate(
-          waMessageTemplates.partArrival?.message ||
-            '\u2705 *Part Arrival Verified*\n\nMonth: {month}\nDate: {date}\nItems: {totalItems}\nReceived: {received}\nBack Orders: {backOrders}\nVerified By: {verifiedBy}\n\n{itemsList}',
-          {
-            month,
-            totalItems: confirmedOrders.length,
-            received,
-            backOrders,
-            verifiedBy: currentUser?.name || 'Admin',
-            date: now,
-            itemsList,
-          },
-        );
-        const recipients = users.filter((u) => u.status === 'active' && u.phone);
-        let waSent = 0;
-        for (const u of recipients) {
-          try {
-            const r = await fetch('/api/whatsapp/send', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${api.getToken()}` },
-              body: JSON.stringify({ phone: u.phone, template: 'custom', data: { message: waMsg } }),
-            });
-            const result = await r.json().catch(() => ({}));
-            if (r.ok && result.success) waSent++;
-          } catch (e) {
-            /* non-blocking per-user failure */
-          }
-        }
-        if (recipients.length > 0) {
-          addNotifEntry({
-            id: `N-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-            type: 'whatsapp',
-            to: `${recipients.length} user(s)`,
-            subject: `Arrival Confirmed: ${confirmedOrders.length} item(s) - ${received} full, ${backOrders} B/O`,
-            date: now,
-            status: waSent === recipients.length ? 'Delivered' : waSent > 0 ? 'Partial' : 'Failed',
-          });
-        }
-      }
+      // The WhatsApp side of this now fires on the server, from the arrival
+      // endpoint itself, so it also happens when an arrival is recorded through
+      // the bot or the API rather than only when someone clicks here. Sending
+      // it from the client as well would deliver every message twice.
+      // (See server/notify.js and POST /api/orders/:id/arrival.)
 
       // Email auto-report
       if (emailConfig.enabled) {

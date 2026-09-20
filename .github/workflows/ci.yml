@@ -1,0 +1,89 @@
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+# A newer push to the same branch supersedes an in-flight run.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Lint, test, build, smoke
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: miltenyi_ci
+        ports:
+          - 5432:5432
+        # Without the health check the first migration can race the server start.
+        options: >-
+          --health-cmd="pg_isready -U postgres"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+
+    env:
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/miltenyi_ci
+      JWT_SECRET: ci-test-secret-not-used-anywhere-real
+      # The seeder no longer has a hard-coded password; CI supplies its own.
+      ADMIN_PASSWORD: ci-admin-password
+      PORT: 3001
+      API_URL: http://localhost:3001
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npx eslint .
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      # The smoke suite is the part that catches the bugs unit tests cannot:
+      # permission gates, SQL behaviour, transaction boundaries and the metric
+      # aggregates, all against a real database.
+      - name: Start API server
+        run: |
+          node server/index.js > /tmp/server.log 2>&1 &
+          echo $! > /tmp/server.pid
+          for i in $(seq 1 60); do
+            if curl -sf "$API_URL/api/health" > /dev/null; then
+              echo "server up after ${i}s"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "server did not become healthy; log follows:" >&2
+          cat /tmp/server.log >&2
+          exit 1
+
+      - name: API smoke suite
+        run: node scripts/smoke-api.mjs
+
+      - name: Server log on failure
+        if: failure()
+        run: cat /tmp/server.log || true
+
+      - name: Stop API server
+        if: always()
+        run: kill "$(cat /tmp/server.pid)" 2>/dev/null || true

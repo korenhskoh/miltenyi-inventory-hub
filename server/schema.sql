@@ -336,3 +336,9 @@ ADD COLUMN IF NOT EXISTS inventory JSONB;
 -- an over-length code aborted the whole arrival batch.
 ALTER TABLE local_inventory
 ALTER COLUMN material_no TYPE TEXT;
+
+-- Migration: flags an account whose password was set by the seeder rather than
+-- chosen by a person. Login answers with mustChangePassword so the client can
+-- force a change before anything else happens.
+ALTER TABLE users
+ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN DEFAULT FALSE;

@@ -1,4 +1,5 @@
-// End-to-end API smoke test. Run against a FRESH database (it seeds admin/admin123):
+// End-to-end API smoke test. Run against a FRESH database. The first admin's
+// password comes from ADMIN_PASSWORD (default 'admin123' for local runs):
 //   DATABASE_URL=postgres://... JWT_SECRET=x PORT=3001 node server/index.js &
 //   SMOKE_BASE=http://localhost:3001 node scripts/smoke-api.mjs
 
@@ -20,7 +21,10 @@ async function call(method, path, body, token) {
 }
 
 // ── auth ──
-let r = await call('POST', '/api/auth/login', { username: 'admin', password: 'admin123' });
+// The seeder takes the first admin's password from ADMIN_PASSWORD; the suite
+// must use the same one rather than a hard-coded default.
+const ADMIN_PW = process.env.ADMIN_PASSWORD || 'admin123';
+let r = await call('POST', '/api/auth/login', { username: 'admin', password: ADMIN_PW });
 ok(r.status === 200 && r.json.token, 'admin login', JSON.stringify(r.json));
 const admin = r.json.token;
 
@@ -497,6 +501,25 @@ r = await call('POST', '/api/auth/login', { username: 'tech1', password: 'pw1234
 const techService = r.json.token;
 r = await call('POST', '/api/machines', { name: 'allowed', modality: 'gM', serialNumber: 'SVC-OK' }, techService);
 ok(r.status === 201, 'a user with the service permission can still work', String(r.status));
+
+// ── Self-service password change ──
+// There was no route for this at all, so a seeded password could only be
+// changed by an admin editing the user record.
+r = await call('POST', '/api/auth/change-password', { currentPassword: 'wrong', newPassword: 'brandnewpw1' }, admin);
+ok(r.status === 401, 'the current password must be proved', String(r.status));
+r = await call('POST', '/api/auth/change-password', { currentPassword: ADMIN_PW, newPassword: 'short' }, admin);
+ok(r.status === 400, 'a too-short password is refused', String(r.status));
+r = await call('POST', '/api/auth/change-password', { currentPassword: ADMIN_PW, newPassword: ADMIN_PW }, admin);
+ok(r.status === 400, 'reusing the same password is refused', String(r.status));
+r = await call('POST', '/api/auth/change-password', { currentPassword: ADMIN_PW, newPassword: 'brandnewpw1' }, admin);
+ok(r.status === 200, 'the password changes', JSON.stringify(r.json));
+r = await call('POST', '/api/auth/login', { username: 'admin', password: ADMIN_PW });
+ok(r.status === 401, 'the old password no longer works', String(r.status));
+r = await call('POST', '/api/auth/login', { username: 'admin', password: 'brandnewpw1' });
+ok(r.status === 200 && r.json.token, 'the new password works');
+ok(r.json.user.mustChangePassword === false, 'the change-password flag is cleared', String(r.json.user.mustChangePassword));
+r = await call('POST', '/api/auth/change-password', { currentPassword: 'brandnewpw1', newPassword: ADMIN_PW }, r.json.token);
+ok(r.status === 200, 'restored for the rest of the suite');
 
 console.log(`\n${fails === 0 ? 'ALL PASSED' : fails + ' FAILED'}`);
 process.exit(fails ? 1 : 0);

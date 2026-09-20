@@ -25,21 +25,42 @@ export async function initDatabase() {
     const userCount = parseInt(usersResult.rows[0].count, 10);
 
     if (userCount === 0) {
+      // The seed password used to be the literal 'admin123', committed in this
+      // file, on an app reachable from the public internet. It now comes from
+      // ADMIN_PASSWORD; in production the server refuses to seed without one,
+      // and the fallback used for local development is flagged so the account
+      // must be changed at first login.
+      const supplied = process.env.ADMIN_PASSWORD;
+      const isProd = process.env.NODE_ENV === 'production';
+      if (isProd && !supplied) {
+        throw new Error(
+          'Refusing to seed the first admin without ADMIN_PASSWORD set. ' +
+            'Set ADMIN_PASSWORD to a strong value and restart.',
+        );
+      }
+      const password = supplied || 'changeme-on-first-login';
       await query(
-        `INSERT INTO users (id, username, password_hash, name, email, role, status, phone)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+        `INSERT INTO users (id, username, password_hash, name, email, role, status, phone, must_change_password)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
         [
           'U001',
           'admin',
-          bcryptjs.hashSync('admin123', 10),
+          bcryptjs.hashSync(password, 10),
           'System Admin',
           'admin@miltenyibiotec.com',
           'admin',
           'active',
           '',
+          // A supplied password is the operator's own choice; the development
+          // fallback is not, so that one must be replaced before use.
+          !supplied,
         ],
       );
-      logger.info('Default admin user seeded');
+      if (supplied) {
+        logger.info('Default admin user seeded with ADMIN_PASSWORD');
+      } else {
+        logger.warn('Default admin seeded with the development fallback password — it must be changed at first login');
+      }
     } else {
       // Safety: ensure at least one active admin exists
       const adminCheck = await query("SELECT COUNT(*) AS count FROM users WHERE role = 'admin' AND status = 'active'");

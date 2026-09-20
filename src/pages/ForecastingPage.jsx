@@ -1,5 +1,6 @@
 import { TrendingUp, Settings, ClipboardList, Search, Plus, Check, Trash2 } from 'lucide-react';
-import { ResponsiveContainer, LineChart, CartesianGrid, XAxis, YAxis, Tooltip, Line } from 'recharts';
+import { ResponsiveContainer, ComposedChart, CartesianGrid, XAxis, YAxis, Tooltip, Line, Area } from 'recharts';
+import { ChartGradient, ChartTooltip, axisProps, gridProps, CHART_COLORS } from '../components/ChartKit.jsx';
 import { fmt, fmtDate } from '../utils.js';
 import { Pill, ExportDropdown } from '../components/ui.jsx';
 import Pagination, { usePagination } from '../components/Pagination.jsx';
@@ -272,11 +273,28 @@ const ForecastingPage = ({
             )}
             {chartData.length > 0 ? (
               <ResponsiveContainer width="100%" height={300}>
-                <LineChart data={chartData}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#F0F2F5" />
-                  <XAxis dataKey="name" tick={{ fontSize: 11, fill: '#94A3B8' }} axisLine={false} tickLine={false} />
-                  <YAxis tick={{ fontSize: 11, fill: '#94A3B8' }} axisLine={false} tickLine={false} />
-                  <Tooltip />
+                <ComposedChart data={chartData} margin={{ top: 8, right: 8, bottom: 0, left: -12 }}>
+                  <defs>
+                    <ChartGradient id="fcFill" color={CHART_COLORS.accent} />
+                  </defs>
+                  <CartesianGrid {...gridProps} />
+                  <XAxis dataKey="name" {...axisProps} />
+                  <YAxis {...axisProps} width={44} allowDecimals={false} />
+                  <Tooltip
+                    content={<ChartTooltip footnote="Dashed points are forecast" />}
+                    cursor={{ stroke: CHART_COLORS.muted, strokeDasharray: '3 3', strokeOpacity: 0.5 }}
+                  />
+                  {/* The fill is decorative — it shares the line's data and carries
+                      no legend or tooltip entry of its own. */}
+                  <Area
+                    type="monotone"
+                    dataKey="qty"
+                    stroke="none"
+                    fill="url(#fcFill)"
+                    isAnimationActive={false}
+                    legendType="none"
+                    tooltipType="none"
+                  />
                   <Line
                     type="monotone"
                     dataKey="qty"
@@ -299,8 +317,9 @@ const ForecastingPage = ({
                       );
                     }}
                     name="Quantity"
+                    activeDot={{ r: 5, strokeWidth: 2, stroke: '#fff' }}
                   />
-                </LineChart>
+                </ComposedChart>
               </ResponsiveContainer>
             ) : (
               <div

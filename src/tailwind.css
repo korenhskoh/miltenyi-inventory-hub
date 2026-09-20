@@ -1,0 +1,16 @@
+/*
+ * Tailwind, deliberately WITHOUT Preflight.
+ *
+ * The app styles everything with inline style objects — App.jsx alone has over
+ * 800 of them — and has no stylesheet of its own. Preflight is Tailwind's base
+ * reset: it strips default margins, unstyles headings, lists and buttons, and
+ * sets `border-style: solid` globally. Importing it would silently restyle
+ * every existing screen.
+ *
+ * Importing only the theme (the CSS variables) and utilities layers gives us
+ * Tailwind's classes for new work while leaving everything already built
+ * untouched. Drop this comment and switch to `@import "tailwindcss"` only after
+ * the inline styles are gone.
+ */
+@import 'tailwindcss/theme.css' layer(theme);
+@import 'tailwindcss/utilities.css' layer(utilities);
