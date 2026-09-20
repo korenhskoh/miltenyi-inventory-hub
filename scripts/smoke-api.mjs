@@ -457,5 +457,46 @@ const techNoDelivery2 = r.json.token;
 r = await call('POST', `/api/orders/${arrId2}/arrival`, { qtyReceived: 1 }, techNoDelivery2);
 ok(r.status === 403, 'arrival needs the delivery permission', String(r.status));
 
+// ── Unified metrics + service permission ──
+
+// Back Orders must mean "delivered short", not "every order ever raised".
+await call('DELETE', '/api/orders/all', null, admin);
+const boBase = Date.now();
+await call('POST', '/api/orders', { id: `ORD-${boBase}-bo1`, materialNo: 'BO-1', description: 'awaiting approval', quantity: 10, listPrice: 10, totalCost: 100, orderBy: 'System Admin', status: 'Pending Approval', approvalStatus: 'pending', backOrder: -10 }, admin);
+await call('POST', '/api/orders', { id: `ORD-${boBase}-bo2`, materialNo: 'BO-2', description: 'rejected', quantity: 4, listPrice: 10, totalCost: 40, orderBy: 'System Admin', status: 'Rejected', approvalStatus: 'rejected', backOrder: -4 }, admin);
+const shortId = `ORD-${boBase}-bo3`;
+await call('POST', '/api/orders', { id: shortId, materialNo: 'BO-3', description: 'arrived short', quantity: 10, listPrice: 10, totalCost: 100, orderBy: 'System Admin', status: 'Pending Approval', approvalStatus: 'pending' }, admin);
+await call('PUT', `/api/orders/${shortId}`, { approvalStatus: 'approved', status: 'Approved' }, admin);
+await call('POST', `/api/orders/${shortId}/arrival`, { qtyReceived: 6, arrivalDate: '2026-09-20' }, admin);
+
+r = await call('GET', '/api/orders/stats', null, admin);
+// Old definition (back_order < 0) counted all three, including one never
+// approved and one rejected. Only the short delivery is a back order.
+ok(r.json.totals.backOrders === 1, 'back orders counts only the short delivery', String(r.json.totals.backOrders));
+
+// Total Value must match the effective price the pages and emails use.
+await call('POST', '/api/catalog', { parts: [{ materialNo: 'NOPRICE-1', description: 'priced only in catalog', sgPrice: 25 }] }, admin);
+await call('POST', '/api/orders', { id: `ORD-${boBase}-np`, materialNo: 'NOPRICE-1', description: 'saved before catalog', quantity: 4, listPrice: 0, totalCost: 0, orderBy: 'System Admin', status: 'Pending Approval', approvalStatus: 'pending' }, admin);
+r = await call('GET', '/api/orders/stats', null, admin);
+// Stored total_cost is 0, so the dashboard used to report S$0 for this order
+// while All Orders and the approval email showed 4 x 25 = 100.
+ok(r.json.totals.totalValue >= 100, 'total value uses the catalog fallback like the pages do', String(r.json.totals.totalValue));
+
+// Service permission must actually gate instrument writes.
+r = await call('PUT', `/api/users/${techId}`, { permissions: { orders: true, service: false } }, admin);
+r = await call('POST', '/api/auth/login', { username: 'tech1', password: 'pw12345' });
+const techNoService = r.json.token;
+r = await call('POST', '/api/machines', { name: 'sneaky', modality: 'gM', serialNumber: 'SVC-X' }, techNoService);
+ok(r.status === 403, 'creating an instrument needs the service permission', String(r.status));
+r = await call('GET', '/api/machines?all=true', null, admin);
+const anyMachine = r.json.data[0];
+r = await call('PUT', `/api/machines/${anyMachine.id}`, { customerName: 'hijacked' }, techNoService);
+ok(r.status === 403, 'editing an instrument needs the service permission', String(r.status));
+r = await call('PUT', `/api/users/${techId}`, { permissions: { orders: true, service: true } }, admin);
+r = await call('POST', '/api/auth/login', { username: 'tech1', password: 'pw12345' });
+const techService = r.json.token;
+r = await call('POST', '/api/machines', { name: 'allowed', modality: 'gM', serialNumber: 'SVC-OK' }, techService);
+ok(r.status === 201, 'a user with the service permission can still work', String(r.status));
+
 console.log(`\n${fails === 0 ? 'ALL PASSED' : fails + ' FAILED'}`);
 process.exit(fails ? 1 : 0);

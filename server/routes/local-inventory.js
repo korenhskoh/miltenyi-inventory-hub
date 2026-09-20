@@ -549,10 +549,17 @@ router.post(
     const note = `Stock check${reference ? ` ${reference}` : ''}`;
     const rows = [];
 
-    const lookup = async (q, materialNo, lotsNumber) => {
+    // `forUpdate` locks the row for the rest of the transaction. Without it this
+    // was a read-then-absolute-write: a charge-out committing while the reconcile
+    // loop was still working through later rows was silently overwritten when the
+    // reconcile finally set the row to its pre-computed target, re-creating parts
+    // that had genuinely been issued and leaving the ledger permanently at odds
+    // with the stock level. The dry run takes no lock — it writes nothing.
+    const lookup = async (q, materialNo, lotsNumber, forUpdate = false) => {
       const r = await q(
         `SELECT * FROM local_inventory
-         WHERE material_no = $1 AND COALESCE(lots_number, '__none__') = COALESCE($2, '__none__')`,
+         WHERE material_no = $1 AND COALESCE(lots_number, '__none__') = COALESCE($2, '__none__')
+         ${forUpdate ? 'FOR UPDATE' : ''}`,
         [materialNo, lotsNumber],
       );
       return r.rows[0] || null;
@@ -596,7 +603,7 @@ router.post(
               continue;
             }
 
-            const existing = await lookup((q, p) => tx.query(q, p), materialNo, lotsNumber);
+            const existing = await lookup((q, p) => tx.query(q, p), materialNo, lotsNumber, true);
             const plan = planRow(item, existing ? existing.quantity : null);
 
             if (plan.target < 0) {

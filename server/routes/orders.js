@@ -70,26 +70,63 @@ function isCloseOut(body) {
 router.get(
   '/stats',
   asyncHandler(async (req, res) => {
+    // `effective_total` mirrors getEffectiveTotal() in src/lib/pricing.js: the
+    // price stored on the order wins when it is > 0 (it is what was costed and
+    // approved), and the catalog price is a fallback for orders saved before a
+    // catalog existed. Summing raw total_cost here made the dashboard report
+    // S$0 for those orders while All Orders and the approval emails showed a
+    // real figure for the very same rows.
     const totals = await query(`
+      WITH priced AS (
+        SELECT
+          o.*,
+          CASE
+            WHEN COALESCE(o.list_price, 0) > 0 THEN o.list_price * COALESCE(o.quantity, 0)
+            WHEN COALESCE(c.sg_price, 0) > 0 THEN c.sg_price * COALESCE(o.quantity, 0)
+            WHEN COALESCE(c.transfer_price, 0) > 0 THEN c.transfer_price * COALESCE(o.quantity, 0)
+            WHEN COALESCE(c.dist_price, 0) > 0 THEN c.dist_price * COALESCE(o.quantity, 0)
+            ELSE COALESCE(o.total_cost, 0)
+          END AS effective_total
+        FROM orders o
+        LEFT JOIN parts_catalog c ON c.material_no = o.material_no
+      )
       SELECT
         COUNT(*)::int AS total,
         COUNT(*) FILTER (WHERE status = 'Pending Approval')::int AS pending_approval,
         COUNT(*) FILTER (WHERE status = 'Approved')::int AS approved,
         COUNT(*) FILTER (WHERE status = 'Received')::int AS received,
         COUNT(*) FILTER (WHERE status = 'Rejected')::int AS rejected,
-        COUNT(*) FILTER (WHERE back_order < 0)::int AS back_orders,
-        COALESCE(SUM(total_cost), 0)::float AS total_value,
-        COALESCE(SUM(total_cost) FILTER (WHERE status = 'Received'), 0)::float AS received_value
-      FROM orders
+        -- A back order is a delivery that arrived SHORT — which is what the
+        -- Part Arrival page and the back-order report have always meant.
+        -- This used to be back_order < 0, a field every order carries from
+        -- creation and which is never reset on rejection, so the tile counted
+        -- orders that had never even been approved, let alone shipped.
+        COUNT(*) FILTER (
+          WHERE arrival_date IS NOT NULL
+            AND COALESCE(qty_received, 0) < COALESCE(quantity, 0)
+            AND COALESCE(status, '') <> 'Rejected'
+        )::int AS back_orders,
+        COALESCE(SUM(effective_total), 0)::float AS total_value,
+        COALESCE(SUM(effective_total) FILTER (WHERE status = 'Received'), 0)::float AS received_value
+      FROM priced
     `);
     const byMonth = await query(`
       SELECT
-        to_char(date_trunc('month', order_date), 'YYYY-MM') AS ym,
+        to_char(date_trunc('month', o.order_date), 'YYYY-MM') AS ym,
         COUNT(*)::int AS orders,
-        COALESCE(SUM(quantity), 0)::int AS items,
-        COALESCE(SUM(total_cost), 0)::float AS value
-      FROM orders
-      WHERE order_date IS NOT NULL
+        COALESCE(SUM(o.quantity), 0)::int AS items,
+        COALESCE(SUM(
+          CASE
+            WHEN COALESCE(o.list_price, 0) > 0 THEN o.list_price * COALESCE(o.quantity, 0)
+            WHEN COALESCE(c.sg_price, 0) > 0 THEN c.sg_price * COALESCE(o.quantity, 0)
+            WHEN COALESCE(c.transfer_price, 0) > 0 THEN c.transfer_price * COALESCE(o.quantity, 0)
+            WHEN COALESCE(c.dist_price, 0) > 0 THEN c.dist_price * COALESCE(o.quantity, 0)
+            ELSE COALESCE(o.total_cost, 0)
+          END
+        ), 0)::float AS value
+      FROM orders o
+      LEFT JOIN parts_catalog c ON c.material_no = o.material_no
+      WHERE o.order_date IS NOT NULL
       GROUP BY 1
       ORDER BY 1
     `);

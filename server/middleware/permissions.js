@@ -13,6 +13,9 @@ export const DEFAULT_USER_PERMS = {
   analytics: true,
   stockCheck: true,
   delivery: true,
+  // Service module (instrument registry, contracts, FCA). Default on so nobody
+  // loses access, but it now exists as a key an admin can actually revoke.
+  service: true,
   whatsapp: true,
   notifications: true,
   auditTrail: false,

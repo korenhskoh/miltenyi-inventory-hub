@@ -1077,6 +1077,29 @@ async function adjustInventory(items) {
   }
 }
 
+/**
+ * Record a part arrival. One server-side transaction updates the order AND the
+ * stock level with the order row locked, so a repeat or concurrent confirmation
+ * cannot book the same delivery in twice, and stock is never raised when the
+ * order update is refused.
+ */
+async function confirmOrderArrival(orderId, payload) {
+  try {
+    const res = handleResponse(
+      await fetch(`${BASE}/api/orders/${orderId}/arrival`, {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify(payload),
+      }),
+    );
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, error: typeof data.error === 'string' ? data.error : 'Arrival not saved' };
+    return { ok: true, ...data };
+  } catch {
+    return { ok: false, error: 'Could not reach the server' };
+  }
+}
+
 async function arrivalToInventory(items) {
   try {
     const res = handleResponse(
@@ -1254,6 +1277,7 @@ const api = {
   chargeOutInventory,
   adjustInventory,
   arrivalToInventory,
+  confirmOrderArrival,
   updateInventoryItem,
   deleteInventoryItem,
   lookupPartPrices,

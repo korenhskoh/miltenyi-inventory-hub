@@ -6,6 +6,7 @@ import { paginate, envelope, wantsAll } from '../pagination.js';
 import { todayInTz, daysFromNowInTz } from '../appDates.js';
 import { asyncHandler } from '../middleware/errorHandler.js';
 import { requireAdmin } from '../middleware/auth.js';
+import { requirePermission } from '../middleware/permissions.js';
 import logger from '../logger.js';
 
 const router = Router();
@@ -285,6 +286,11 @@ router.delete(
 // POST / — add single machine
 router.post(
   '/',
+  // The Service module had no permission of its own: the nav item was gated on
+  // 'dashboard' (on for everyone) and these write endpoints checked nothing, so
+  // any logged-in user could create or rewrite instrument records, contract
+  // dates and prices.
+  requirePermission('service'),
   asyncHandler(async (req, res) => {
     const b = normalizeMachine(pickAllowed(camelToSnake(req.body), MACHINE_FIELDS));
     b.region = normalizeRegion(b.region);
@@ -306,6 +312,7 @@ router.post(
 // PUT /:id — update machine
 router.put(
   '/:id',
+  requirePermission('service'),
   asyncHandler(async (req, res) => {
     const { id } = req.params;
     const b = normalizeMachine(pickAllowed(camelToSnake(req.body), MACHINE_FIELDS, { keepNull: true }), {
