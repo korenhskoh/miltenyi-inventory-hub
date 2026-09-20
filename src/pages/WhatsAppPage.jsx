@@ -14,6 +14,7 @@ import {
   CheckCircle,
 } from 'lucide-react';
 import { Pill, Toggle, QRCodeCanvas } from '../components/ui.jsx';
+import Pagination, { usePagination } from '../components/Pagination.jsx';
 
 export default function WhatsAppPage({
   waConnected,
@@ -47,6 +48,7 @@ export default function WhatsAppPage({
   sendScheduledReport,
   api,
 }) {
+  const messagePager = usePagination(waMessages, { storageKey: 'wa-log', initialSize: 50 });
   return (
     <div>
       <div className="grid-2" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24 }}>
@@ -817,7 +819,7 @@ export default function WhatsAppPage({
           <div className="card" style={{ padding: '18px 20px' }}>
             <h4 style={{ fontSize: 13, fontWeight: 600, marginBottom: 12 }}>Message History</h4>
             <div style={{ maxHeight: 300, overflow: 'auto' }}>
-              {waMessages.map((m) => (
+              {messagePager.pageItems.map((m) => (
                 <div key={m.id} style={{ padding: '10px 12px', borderBottom: '1px solid #F0F2F5', fontSize: 12 }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
                     <span style={{ fontWeight: 600, color: '#1A202C' }}>{m.to}</span>
@@ -836,6 +838,7 @@ export default function WhatsAppPage({
                 </div>
               ))}
             </div>
+            <Pagination {...messagePager} unit="messages" />
           </div>
         </div>
       </div>

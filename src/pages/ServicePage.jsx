@@ -26,6 +26,7 @@ import {
 import * as XLSX from 'xlsx';
 import api from '../api.js';
 import { toLocalYmd, todayLocal, daysFromNowLocal, normalizeDate } from '../lib/dates.js';
+import Pagination, { usePagination } from '../components/Pagination.jsx';
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -1211,36 +1212,13 @@ function Registry({
 
   // Client-side pagination. All rows are already loaded via ?all=true; we just
   // slice for display so the table stays snappy with large datasets.
-  const [pageSize, setPageSize] = useState(() => {
-    try {
-      const saved = parseInt(localStorage.getItem('svc_pageSize'), 10);
-      return [50, 100, 200].includes(saved) ? saved : 50;
-    } catch {
-      return 50;
-    }
+  const pager = usePagination(filtered, {
+    storageKey: 'service-registry',
+    initialSize: 100,
+    resetKey: [search, filterModality, filterContract, filterMaint, filterCountry, region].join('|'),
   });
-  const [page, setPage] = useState(1);
-  useEffect(() => {
-    try {
-      localStorage.setItem('svc_pageSize', String(pageSize));
-    } catch {
-      /* ignore */
-    }
-  }, [pageSize]);
-  // Reset to first page whenever a filter / search / region change alters the list
-  // (render-time adjustment instead of an effect — avoids an extra render pass)
-  const filterKey = [search, filterModality, filterContract, filterMaint, filterCountry, region, pageSize].join('|');
-  const [prevFilterKey, setPrevFilterKey] = useState(filterKey);
-  if (prevFilterKey !== filterKey) {
-    setPrevFilterKey(filterKey);
-    setPage(1);
-  }
-  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
-  const safePage = Math.min(page, totalPages);
-  const pageStart = (safePage - 1) * pageSize;
-  const pagedRows = filtered.slice(pageStart, pageStart + pageSize);
-  const rangeStart = filtered.length === 0 ? 0 : pageStart + 1;
-  const rangeEnd = Math.min(filtered.length, pageStart + pagedRows.length);
+  const pagedRows = pager.pageItems;
+  const pageStart = Math.max(0, pager.from - 1);
 
   return (
     <div className="svc-registry">
@@ -1351,29 +1329,6 @@ function Registry({
             <Plus size={14} /> Add Instrument
           </button>
         </div>
-      </div>
-
-      {/* Result count + page size */}
-      <div className="svc-result-count svc-pagination-top">
-        <span>
-          {loading
-            ? 'Loading\u2026'
-            : filtered.length === 0
-              ? 'No instruments found'
-              : `Showing ${rangeStart}-${rangeEnd} of ${filtered.length} instrument${filtered.length !== 1 ? 's' : ''}`}
-        </span>
-        <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginLeft: 'auto' }}>
-          <span>Per page</span>
-          <select
-            className="svc-select svc-select--sm"
-            value={pageSize}
-            onChange={(e) => setPageSize(parseInt(e.target.value, 10))}
-          >
-            <option value={50}>50</option>
-            <option value={100}>100</option>
-            <option value={200}>200</option>
-          </select>
-        </label>
       </div>
 
       {/* Desktop Table */}
@@ -1706,29 +1661,7 @@ function Registry({
       </div>
 
       {/* Pagination controls */}
-      {filtered.length > pageSize && (
-        <div className="svc-pagination">
-          <button
-            type="button"
-            className="svc-btn svc-btn--ghost svc-btn--sm"
-            disabled={safePage <= 1}
-            onClick={() => setPage((p) => Math.max(1, p - 1))}
-          >
-            ‹ Prev
-          </button>
-          <span className="svc-pagination__info">
-            Page {safePage} of {totalPages}
-          </span>
-          <button
-            type="button"
-            className="svc-btn svc-btn--ghost svc-btn--sm"
-            disabled={safePage >= totalPages}
-            onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-          >
-            Next ›
-          </button>
-        </div>
-      )}
+      <Pagination {...pager} unit="instruments" />
 
       {/* Reset confirmation modal */}
       {showResetModal && (
@@ -2125,6 +2058,12 @@ function FcaPage({ isAdmin, notify, fcaList, fcaLoading, reloadFcas, instrumentM
     [fcaList, effectiveModel],
   );
 
+  const statusPager = usePagination(statuses, {
+    storageKey: 'service-fca',
+    initialSize: 50,
+    resetKey: String(selectedFca?.id ?? ''),
+  });
+
   const openFcaDetail = useCallback(async (fca) => {
     setSelectedFca(fca);
     setStatusesLoading(true);
@@ -2365,7 +2304,7 @@ function FcaPage({ isAdmin, notify, fcaList, fcaLoading, reloadFcas, instrumentM
                   </tr>
                 </thead>
                 <tbody>
-                  {statuses.map((r) => (
+                  {statusPager.pageItems.map((r) => (
                     <tr key={r.machineId}>
                       <td>{r.name || '—'}</td>
                       <td>
@@ -2415,6 +2354,7 @@ function FcaPage({ isAdmin, notify, fcaList, fcaLoading, reloadFcas, instrumentM
                   ))}
                 </tbody>
               </table>
+              <Pagination {...statusPager} unit="instruments" />
             </div>
           )}
         </div>

@@ -139,7 +139,10 @@ async function getOrders(filters = {}) {
     for (const [k, v] of Object.entries(filters)) {
       if (v !== '' && v !== null && v !== undefined) params.append(k, v);
     }
-    if (!filters.page && !filters.limit) params.append('all', 'true');
+    // Only when the caller wants the whole list AND hasn't already asked:
+    // appending a second `all` makes Express parse it as an array, which the
+    // server's `wantsAll` then rejects — silently falling back to 50 rows.
+    if (!filters.page && !filters.limit && !params.has('all')) params.append('all', 'true');
     const qs = params.toString();
     const res = handleResponse(await fetch(`${BASE}/api/orders${qs ? `?${qs}` : ''}`, { headers: authHeadersGet() }));
     if (!res.ok) return null;
@@ -622,7 +625,10 @@ async function getAuditLog(filters = {}) {
     for (const [k, v] of Object.entries(filters)) {
       if (v !== '' && v !== null && v !== undefined) params.append(k, v);
     }
-    if (!filters.page && !filters.limit) params.append('all', 'true');
+    // Only when the caller wants the whole list AND hasn't already asked:
+    // appending a second `all` makes Express parse it as an array, which the
+    // server's `wantsAll` then rejects — silently falling back to 50 rows.
+    if (!filters.page && !filters.limit && !params.has('all')) params.append('all', 'true');
     const qs = params.toString();
     const res = handleResponse(
       await fetch(`${BASE}/api/audit-log${qs ? `?${qs}` : ''}`, { headers: authHeadersGet() }),
@@ -960,7 +966,10 @@ async function getLocalInventory(filters = {}) {
     for (const [k, v] of Object.entries(filters)) {
       if (v !== '' && v !== null && v !== undefined && v !== 'All') params.append(k, v);
     }
-    if (!filters.page && !filters.limit) params.append('all', 'true');
+    // Only when the caller wants the whole list AND hasn't already asked:
+    // appending a second `all` makes Express parse it as an array, which the
+    // server's `wantsAll` then rejects — silently falling back to 50 rows.
+    if (!filters.page && !filters.limit && !params.has('all')) params.append('all', 'true');
     const qs = params.toString();
     const res = handleResponse(
       await fetch(`${BASE}/api/local-inventory${qs ? `?${qs}` : ''}`, { headers: authHeadersGet() }),

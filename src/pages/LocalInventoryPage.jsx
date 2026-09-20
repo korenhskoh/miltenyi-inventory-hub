@@ -12,14 +12,13 @@ import {
   History,
   AlertTriangle,
   Filter,
-  ChevronLeft,
-  ChevronRight,
   ClipboardCheck,
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import api from '../api.js';
 import { parseSheet, autoDetectColumns, toNumber, isBlank } from '../lib/sheet.js';
 import { fmtDate, fmtNum, applySortData, toggleSort, exportToFile } from '../utils.js';
+import Pagination, { usePagination } from '../components/Pagination.jsx';
 
 // ─── CSS ──────────────────────────────────────────────────────────────────────
 const LI_CSS = `
@@ -56,7 +55,6 @@ const LI_CSS = `
 }
 `;
 
-const PAGE_SIZE = 25;
 
 const TXN_COLORS = {
   charge_out: { bg: '#FEF2F2', color: '#DC2626', label: 'Charge Out' },
@@ -107,7 +105,6 @@ export default function LocalInventoryPage({ isAdmin, currentUser: _currentUser,
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [catFilter, setCatFilter] = useState('All');
-  const [currentPage, setCurrentPage] = useState(0);
   const [sortCfg, setSortCfg] = useState({ key: 'updatedAt', dir: 'desc' });
 
   // Modals
@@ -194,8 +191,12 @@ export default function LocalInventoryPage({ isAdmin, currentUser: _currentUser,
     return applySortData(items, sortCfg);
   }, [inventory, search, catFilter, sortCfg]);
 
-  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
-  const pageItems = filtered.slice(currentPage * PAGE_SIZE, (currentPage + 1) * PAGE_SIZE);
+  const pager = usePagination(filtered, {
+    storageKey: 'inventory',
+    initialSize: 100,
+    resetKey: [search, catFilter, sortCfg.key, sortCfg.dir].join('|'),
+  });
+  const pageItems = pager.pageItems;
 
   // ── Handlers ──
   const handleSave = async () => {
@@ -751,7 +752,6 @@ export default function LocalInventoryPage({ isAdmin, currentUser: _currentUser,
             value={search}
             onChange={(e) => {
               setSearch(e.target.value);
-              setCurrentPage(0);
             }}
             style={{ paddingLeft: 32 }}
           />
@@ -761,7 +761,6 @@ export default function LocalInventoryPage({ isAdmin, currentUser: _currentUser,
           value={catFilter}
           onChange={(e) => {
             setCatFilter(e.target.value);
-            setCurrentPage(0);
           }}
           style={{ width: 'auto', maxWidth: 180 }}
         >
@@ -819,9 +818,6 @@ export default function LocalInventoryPage({ isAdmin, currentUser: _currentUser,
           </button>
         </div>
       </div>
-
-      {/* Info bar */}
-      <div style={{ fontSize: 12, color: '#94A3B8', marginBottom: 8 }}>{filtered.length} items</div>
 
       {/* Table (Desktop) */}
       <div className="li-card li-table-wrap">
@@ -924,39 +920,9 @@ export default function LocalInventoryPage({ isAdmin, currentUser: _currentUser,
               </table>
             </div>
 
-            {/* Pagination */}
-            {totalPages > 1 && (
-              <div
-                style={{
-                  display: 'flex',
-                  justifyContent: 'center',
-                  alignItems: 'center',
-                  gap: 12,
-                  padding: '12px 16px',
-                  borderTop: '1px solid #E2E8F0',
-                }}
-              >
-                <button
-                  className="li-btn li-btn-secondary"
-                  disabled={currentPage === 0}
-                  onClick={() => setCurrentPage((p) => p - 1)}
-                  style={{ padding: '4px 10px' }}
-                >
-                  <ChevronLeft size={14} />
-                </button>
-                <span style={{ fontSize: 12, color: '#64748B' }}>
-                  Page {currentPage + 1} / {totalPages}
-                </span>
-                <button
-                  className="li-btn li-btn-secondary"
-                  disabled={currentPage >= totalPages - 1}
-                  onClick={() => setCurrentPage((p) => p + 1)}
-                  style={{ padding: '4px 10px' }}
-                >
-                  <ChevronRight size={14} />
-                </button>
-              </div>
-            )}
+            <div style={{ padding: '4px 16px 10px', borderTop: '1px solid #E2E8F0' }}>
+              <Pagination {...pager} unit="items" />
+            </div>
           </>
         )}
       </div>
@@ -1000,27 +966,7 @@ export default function LocalInventoryPage({ isAdmin, currentUser: _currentUser,
         {filtered.length === 0 && !loading && (
           <div style={{ padding: 30, textAlign: 'center', color: '#94A3B8', fontSize: 13 }}>No items found</div>
         )}
-        {totalPages > 1 && (
-          <div style={{ display: 'flex', justifyContent: 'center', gap: 12, padding: 12 }}>
-            <button
-              className="li-btn li-btn-secondary"
-              disabled={currentPage === 0}
-              onClick={() => setCurrentPage((p) => p - 1)}
-            >
-              <ChevronLeft size={14} /> Prev
-            </button>
-            <span style={{ fontSize: 12, alignSelf: 'center', color: '#64748B' }}>
-              {currentPage + 1}/{totalPages}
-            </span>
-            <button
-              className="li-btn li-btn-secondary"
-              disabled={currentPage >= totalPages - 1}
-              onClick={() => setCurrentPage((p) => p + 1)}
-            >
-              Next <ChevronRight size={14} />
-            </button>
-          </div>
-        )}
+        <Pagination {...pager} unit="items" style={{ padding: '4px 4px 10px' }} />
       </div>
 
       {/* ═══ ADD / EDIT MODAL ═══ */}

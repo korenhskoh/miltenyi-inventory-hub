@@ -20,6 +20,7 @@ import {
 import * as XLSX from 'xlsx';
 import { fmt } from '../utils.js';
 import { Pill, Toggle, SelBox } from '../components/ui.jsx';
+import Pagination, { usePagination } from '../components/Pagination.jsx';
 
 export default function SettingsPage({
   customLogo,
@@ -72,6 +73,11 @@ export default function SettingsPage({
   blurPrices,
   setBlurPrices,
 }) {
+  const openApprovals = (Array.isArray(pendingApprovals) ? pendingApprovals : []).filter((a) => a.status === 'pending');
+  const approvalPager = usePagination(openApprovals, { storageKey: 'settings-approvals', initialSize: 50 });
+  const approvalSelectionBeyondPage =
+    selApprovals.size > approvalPager.pageItems.filter((a) => selApprovals.has(a.id)).length;
+
   return (
     <div style={{ maxWidth: 700 }}>
       {/* Logo Settings - Admin Only */}
@@ -628,9 +634,11 @@ export default function SettingsPage({
             {pendingApprovals.length > 0 && (
               <div style={{ marginTop: 8 }}>
                 <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#4A5568', marginBottom: 8 }}>
-                  Pending Approvals ({pendingApprovals.filter((a) => a.status === 'pending').length})
+                  Pending Approvals ({openApprovals.length})
                   {selApprovals.size > 0 && (
-                    <span style={{ color: '#2563EB', marginLeft: 8 }}>{selApprovals.size} selected</span>
+                    <span style={{ color: '#2563EB', marginLeft: 8 }}>
+                      {selApprovals.size} selected{approvalSelectionBeyondPage ? ' across all pages' : ''}
+                    </span>
                   )}
                 </label>
                 {selApprovals.size > 0 && (
@@ -689,69 +697,68 @@ export default function SettingsPage({
                   </div>
                 )}
                 <div style={{ maxHeight: 250, overflow: 'auto', border: '1px solid #E8ECF0', borderRadius: 8 }}>
-                  {pendingApprovals
-                    .filter((a) => a.status === 'pending')
-                    .map((a) => (
-                      <div
-                        key={a.id}
-                        style={{
-                          padding: 12,
-                          borderBottom: '1px solid #F1F5F9',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'space-between',
-                          background: selApprovals.has(a.id) ? '#EDE9FE' : '#fff',
-                        }}
-                      >
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                          <SelBox
-                            checked={selApprovals.has(a.id)}
-                            onChange={() => toggleSel(selApprovals, setSelApprovals, a.id)}
-                          />
-                          <div>
-                            <div style={{ fontSize: 12, fontWeight: 600 }}>
-                              {a.orderId} - {a.description}
-                            </div>
-                            <div style={{ fontSize: 11, color: '#64748B' }}>
-                              By: {a.requestedBy} | Qty: {a.quantity} | S${a.totalCost?.toFixed(2) || '0.00'}
-                            </div>
+                  {approvalPager.pageItems.map((a) => (
+                    <div
+                      key={a.id}
+                      style={{
+                        padding: 12,
+                        borderBottom: '1px solid #F1F5F9',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        background: selApprovals.has(a.id) ? '#EDE9FE' : '#fff',
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                        <SelBox
+                          checked={selApprovals.has(a.id)}
+                          onChange={() => toggleSel(selApprovals, setSelApprovals, a.id)}
+                        />
+                        <div>
+                          <div style={{ fontSize: 12, fontWeight: 600 }}>
+                            {a.orderId} - {a.description}
+                          </div>
+                          <div style={{ fontSize: 11, color: '#64748B' }}>
+                            By: {a.requestedBy} | Qty: {a.quantity} | S${a.totalCost?.toFixed(2) || '0.00'}
                           </div>
                         </div>
-                        <div style={{ display: 'flex', gap: 6 }}>
-                          <button
-                            onClick={() => handleApprovalAction(a.id, 'approved')}
-                            style={{
-                              padding: '6px 12px',
-                              background: '#D1FAE5',
-                              color: '#059669',
-                              border: 'none',
-                              borderRadius: 6,
-                              fontSize: 11,
-                              fontWeight: 600,
-                              cursor: 'pointer',
-                            }}
-                          >
-                            Approve
-                          </button>
-                          <button
-                            onClick={() => handleApprovalAction(a.id, 'rejected')}
-                            style={{
-                              padding: '6px 12px',
-                              background: '#FEE2E2',
-                              color: '#DC2626',
-                              border: 'none',
-                              borderRadius: 6,
-                              fontSize: 11,
-                              fontWeight: 600,
-                              cursor: 'pointer',
-                            }}
-                          >
-                            Reject
-                          </button>
-                        </div>
                       </div>
-                    ))}
+                      <div style={{ display: 'flex', gap: 6 }}>
+                        <button
+                          onClick={() => handleApprovalAction(a.id, 'approved')}
+                          style={{
+                            padding: '6px 12px',
+                            background: '#D1FAE5',
+                            color: '#059669',
+                            border: 'none',
+                            borderRadius: 6,
+                            fontSize: 11,
+                            fontWeight: 600,
+                            cursor: 'pointer',
+                          }}
+                        >
+                          Approve
+                        </button>
+                        <button
+                          onClick={() => handleApprovalAction(a.id, 'rejected')}
+                          style={{
+                            padding: '6px 12px',
+                            background: '#FEE2E2',
+                            color: '#DC2626',
+                            border: 'none',
+                            borderRadius: 6,
+                            fontSize: 11,
+                            fontWeight: 600,
+                            cursor: 'pointer',
+                          }}
+                        >
+                          Reject
+                        </button>
+                      </div>
+                    </div>
+                  ))}
                 </div>
+                <Pagination {...approvalPager} unit="approvals" />
               </div>
             )}
             <div style={{ fontSize: 11, color: '#94A3B8', background: '#F8FAFB', padding: 12, borderRadius: 8 }}>

@@ -73,7 +73,6 @@ import {
   WifiOff,
   Layers,
   FolderPlus,
-  ChevronLeft,
   Bot,
   Upload,
   Sparkles,
@@ -121,6 +120,7 @@ import {
   SelBox,
   QRCodeCanvas,
 } from './components/ui.jsx';
+import Pagination, { usePagination } from './components/Pagination.jsx';
 import { todayLocal, toLocalYmd } from './lib/dates.js';
 import { getCatalogPrice, getEffectiveUnitPrice, getEffectiveTotal } from './lib/pricing.js';
 import { computeArrival, arrivalDelta } from './lib/arrival.js';
@@ -207,13 +207,7 @@ export default function App() {
   const [allOrdersStatus, setAllOrdersStatus] = useState('All');
   const [allOrdersUserFilter, setAllOrdersUserFilter] = useState('All');
   const [allOrdersSort, setAllOrdersSort] = useState({ key: null, dir: 'asc' });
-  const [singleOrderPage, setSingleOrderPage] = useState(0);
-  const [singleOrderPageSize, setSingleOrderPageSize] = useState(50);
-  const [bulkOrderPage, setBulkOrderPage] = useState(0);
-  const [bulkOrderPageSize, setBulkOrderPageSize] = useState(50);
   const [bulkMonthFilter, setBulkMonthFilter] = useState('All');
-  const [allOrdersPage, setAllOrdersPage] = useState(0);
-  const [allOrdersPageSize, setAllOrdersPageSize] = useState(50);
   const [expandedAllMonth, setExpandedAllMonth] = useState(null);
   const [expandedAllBulkGroup, setExpandedAllBulkGroup] = useState(null);
   const [catFilter, setCatFilter] = useState('All');
@@ -267,8 +261,6 @@ export default function App() {
       return false;
     }
   });
-  const [catalogPage, setCatalogPage] = useState(0);
-  const [catalogPageSize, setCatalogPageSize] = useState(50);
   const [showCatalogMapper, setShowCatalogMapper] = useState(false);
   const [catalogMapperData, setCatalogMapperData] = useState({ rows: [], headers: [], fileName: '' });
   const [catalogColumnMap, setCatalogColumnMap] = useState({ m: '', d: '', c: '', sg: '', dist: '', tp: '', rsp: '' });
@@ -1276,6 +1268,88 @@ export default function App() {
     if (allOrdersUserFilter !== 'All') combined = combined.filter((o) => o.orderBy === allOrdersUserFilter);
     return combined;
   }, [orders, allOrdersTypeFilter, allOrdersMonth, allOrdersStatus, allOrdersUserFilter]);
+
+  // ── Table views + pagination ──
+  // Every data table pages through the same `usePagination` hook: the array
+  // passed in is exactly the filtered/sorted list the table renders, so the
+  // row count, the page slice and any select-all box all agree.
+  const sortedOrders = useMemo(() => applySortData(filteredOrders, orderSort), [filteredOrders, orderSort]);
+  const filteredBulkGroups = useMemo(
+    () =>
+      applySortData(
+        bulkGroups.filter(
+          (g) =>
+            (bulkMonthFilter === 'All' || g.month === bulkMonthFilter) &&
+            (bulkCreatedByFilter === 'All' || g.createdBy === bulkCreatedByFilter),
+        ),
+        bulkSort,
+      ),
+    [bulkGroups, bulkMonthFilter, bulkCreatedByFilter, bulkSort],
+  );
+  const expandedBulkGroupOrders = useMemo(
+    () => (expandedBulkGroup ? orders.filter((o) => o.bulkGroupId === expandedBulkGroup) : []),
+    [orders, expandedBulkGroup],
+  );
+  const filteredNotifLog = useMemo(
+    () =>
+      notifLog.filter(
+        (n) =>
+          !notifSearch ||
+          [n.id, n.type, n.to, n.subject, n.status].join(' ').toLowerCase().includes(notifSearch.toLowerCase()),
+      ),
+    [notifLog, notifSearch],
+  );
+  const filteredAuditLog = useMemo(
+    () =>
+      auditLog.filter((a) => {
+        if (auditFilter.action !== 'All' && a.action !== auditFilter.action) return false;
+        if (auditFilter.user !== 'All' && a.userName !== auditFilter.user) return false;
+        if (auditFilter.entityType !== 'All' && a.entityType !== auditFilter.entityType) return false;
+        if (auditSearch) {
+          const q = auditSearch.toLowerCase();
+          if (
+            ![a.userName, a.action, a.entityType, a.entityId, a.details ? JSON.stringify(a.details) : '']
+              .join(' ')
+              .toLowerCase()
+              .includes(q)
+          )
+            return false;
+        }
+        return true;
+      }),
+    [auditLog, auditFilter, auditSearch],
+  );
+
+  const catalogPg = usePagination(catalog, {
+    storageKey: 'catalog',
+    initialSize: 100,
+    resetKey: `${catalogSearch}|${catFilter}|${catalogSort.key}|${catalogSort.dir}`,
+  });
+  const ordersPg = usePagination(sortedOrders, {
+    storageKey: 'orders',
+    resetKey: `${search}|${statusFilter}|${singleOrderMonth}|${orderByFilter}|${orderSort.key}|${orderSort.dir}`,
+  });
+  const bulkPg = usePagination(filteredBulkGroups, {
+    storageKey: 'bulk',
+    resetKey: `${bulkMonthFilter}|${bulkCreatedByFilter}|${bulkSort.key}|${bulkSort.dir}`,
+  });
+  const bulkGroupOrdersPg = usePagination(expandedBulkGroupOrders, {
+    storageKey: 'bulkgroup',
+    resetKey: expandedBulkGroup || '',
+  });
+  const notifsPg = usePagination(filteredNotifLog, { storageKey: 'notifs', resetKey: notifSearch });
+  const auditPg = usePagination(filteredAuditLog, {
+    storageKey: 'audit',
+    resetKey: `${auditFilter.action}|${auditFilter.user}|${auditFilter.entityType}|${auditSearch}`,
+  });
+  const usersPg = usePagination(visibleUsers, { storageKey: 'users', resetKey: userSearch });
+  const approvalsPg = usePagination(allPendingUsers, { storageKey: 'approvals' });
+  const wishlistPg = usePagination(wishlist, { storageKey: 'wishlist', resetKey: showWishlistPicker || '' });
+  const priceFinderPg = usePagination(priceFinderResults, { storageKey: 'pricefinder', resetKey: priceFinderInput });
+  const importPreviewPg = usePagination(historyImportData, {
+    storageKey: 'importpreview',
+    resetKey: String(historyImportData.length),
+  });
   const topItems = useMemo(() => {
     const m = {};
     orders.forEach((o) => {
@@ -2006,6 +2080,13 @@ export default function App() {
       return n;
     });
   const toggleAll = (set, setter, ids) => setter((prev) => (prev.size === ids.length ? new Set() : new Set(ids)));
+  // Label shown beside a pagination control so a selection that reaches rows the
+  // current page does not show stays visible ("12 selected across all pages").
+  const selectionNote = (sel, pageItems) => {
+    if (!sel.size) return null;
+    const onPage = pageItems.filter((r) => sel.has(r.id)).length;
+    return sel.size > onPage ? `${sel.size} selected across all pages` : `${sel.size} selected`;
+  };
 
   // Batch Actions — Orders
   const batchDeleteOrders = () => {
@@ -5281,7 +5362,6 @@ export default function App() {
                         setOrdersMenuOpen((prev) => !prev);
                       } else {
                         setPage('allorders');
-                        setCatalogPage(0);
                       }
                     }}
                     title={item.label}
@@ -5302,7 +5382,6 @@ export default function App() {
                         className={`ni ${page === child.id ? 'a' : ''}`}
                         onClick={() => {
                           setPage(child.id);
-                          setCatalogPage(0);
                           if (window.innerWidth <= 768) setSidebarOpen(false);
                         }}
                         title={child.label}
@@ -5321,7 +5400,6 @@ export default function App() {
                 className={`ni ${page === item.id ? 'a' : ''}`}
                 onClick={() => {
                   setPage(item.id);
-                  setCatalogPage(0);
                   if (window.innerWidth <= 768) setSidebarOpen(false);
                 }}
                 title={item.label}
@@ -5805,21 +5883,11 @@ export default function App() {
                   <input
                     placeholder="Search material no. or description..."
                     value={catalogSearch}
-                    onChange={(e) => {
-                      setCatalogSearch(e.target.value);
-                      setCatalogPage(0);
-                    }}
+                    onChange={(e) => setCatalogSearch(e.target.value)}
                     style={{ paddingLeft: 32, width: '100%', height: 36 }}
                   />
                 </div>
-                <select
-                  value={catFilter}
-                  onChange={(e) => {
-                    setCatFilter(e.target.value);
-                    setCatalogPage(0);
-                  }}
-                  style={{ height: 36 }}
-                >
+                <select value={catFilter} onChange={(e) => setCatFilter(e.target.value)} style={{ height: 36 }}>
                   <option value="All">All Categories</option>
                   {Object.entries(CATEGORIES).map(([k, v]) => (
                     <option key={k} value={k}>
@@ -5838,31 +5906,6 @@ export default function App() {
                 >
                   <Search size={14} /> Price Finder
                 </button>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginLeft: 'auto' }}>
-                  <span style={{ fontSize: 12, color: '#94A3B8' }}>{catalog.length} parts</span>
-                  <select
-                    value={catalogPageSize}
-                    onChange={(e) => {
-                      setCatalogPageSize(Number(e.target.value));
-                      setCatalogPage(0);
-                    }}
-                    style={{
-                      padding: '4px 8px',
-                      borderRadius: 6,
-                      border: '1px solid #E2E8F0',
-                      fontSize: 11,
-                      fontFamily: 'inherit',
-                      cursor: 'pointer',
-                      color: '#1A202C',
-                    }}
-                  >
-                    {[20, 50, 100, 200].map((n) => (
-                      <option key={n} value={n}>
-                        {n} / page
-                      </option>
-                    ))}
-                  </select>
-                </div>
               </div>
               <div className="card" style={{ overflow: 'hidden' }}>
                 <div className="table-wrap" style={{ overflowX: 'auto' }}>
@@ -5902,7 +5945,7 @@ export default function App() {
                       </tr>
                     </thead>
                     <tbody>
-                      {catalog.slice(catalogPage * catalogPageSize, (catalogPage + 1) * catalogPageSize).map((p, i) => {
+                      {catalogPg.pageItems.map((p, i) => {
                         const margin =
                           p.singaporePrice > 0
                             ? (((p.singaporePrice - p.distributorPrice) / p.singaporePrice) * 100).toFixed(1)
@@ -6007,41 +6050,11 @@ export default function App() {
                     </tbody>
                   </table>
                 </div>
-                <div
-                  style={{
-                    padding: '12px 16px',
-                    borderTop: '1px solid #F0F2F5',
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    background: '#FCFCFD',
-                  }}
-                >
-                  <span style={{ fontSize: 12, color: '#94A3B8' }}>
-                    Showing {Math.min(catalogPage * catalogPageSize + 1, catalog.length)}–
-                    {Math.min((catalogPage + 1) * catalogPageSize, catalog.length)} of {catalog.length}
-                  </span>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <button
-                      className="bs"
-                      style={{ padding: '6px 10px', fontSize: 12 }}
-                      disabled={catalogPage === 0}
-                      onClick={() => setCatalogPage((p) => p - 1)}
-                    >
-                      <ChevronLeft size={14} />
-                    </button>
-                    <span style={{ fontSize: 12, color: '#64748B' }}>
-                      Page {catalogPage + 1}/{Math.max(1, Math.ceil(catalog.length / catalogPageSize))}
-                    </span>
-                    <button
-                      className="bs"
-                      style={{ padding: '6px 10px', fontSize: 12 }}
-                      disabled={(catalogPage + 1) * catalogPageSize >= catalog.length}
-                      onClick={() => setCatalogPage((p) => p + 1)}
-                    >
-                      <ChevronRight size={14} />
-                    </button>
-                  </div>
-                </div>
+                <Pagination
+                  {...catalogPg}
+                  unit="parts"
+                  style={{ padding: '10px 16px', borderTop: '1px solid #F0F2F5', background: '#FCFCFD' }}
+                />
               </div>
             </div>
           )}
@@ -6082,10 +6095,6 @@ export default function App() {
                 expandedAllBulkGroup,
                 setExpandedAllBulkGroup,
                 openOrderInNewTab,
-                allOrdersPage,
-                setAllOrdersPage,
-                allOrdersPageSize,
-                setAllOrdersPageSize,
               }}
             />
           )}
@@ -6106,10 +6115,7 @@ export default function App() {
                   {['All', 'Pending Approval', 'Approved', 'Received', 'Rejected'].map((s) => (
                     <button
                       key={s}
-                      onClick={() => {
-                        setStatusFilter(s);
-                        setSingleOrderPage(0);
-                      }}
+                      onClick={() => setStatusFilter(s)}
                       style={{
                         padding: '6px 14px',
                         borderRadius: 20,
@@ -6132,10 +6138,7 @@ export default function App() {
                   <div style={{ width: 1, height: 24, background: '#E2E8F0' }} />
                   <select
                     value={singleOrderMonth}
-                    onChange={(e) => {
-                      setSingleOrderMonth(e.target.value);
-                      setSingleOrderPage(0);
-                    }}
+                    onChange={(e) => setSingleOrderMonth(e.target.value)}
                     style={{
                       padding: '6px 10px',
                       borderRadius: 8,
@@ -6155,10 +6158,7 @@ export default function App() {
                   </select>
                   <select
                     value={orderByFilter}
-                    onChange={(e) => {
-                      setOrderByFilter(e.target.value);
-                      setSingleOrderPage(0);
-                    }}
+                    onChange={(e) => setOrderByFilter(e.target.value)}
                     style={{
                       padding: '6px 10px',
                       borderRadius: 8,
@@ -6185,28 +6185,6 @@ export default function App() {
                   </select>
                 </div>
                 <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                  <select
-                    value={singleOrderPageSize}
-                    onChange={(e) => {
-                      setSingleOrderPageSize(Number(e.target.value));
-                      setSingleOrderPage(0);
-                    }}
-                    style={{
-                      padding: '4px 8px',
-                      borderRadius: 6,
-                      border: '1px solid #E2E8F0',
-                      fontSize: 11,
-                      fontFamily: 'inherit',
-                      cursor: 'pointer',
-                      color: '#1A202C',
-                    }}
-                  >
-                    {[20, 50, 100, 200].map((n) => (
-                      <option key={n} value={n}>
-                        {n} / page
-                      </option>
-                    ))}
-                  </select>
                   <ExportDropdown
                     data={filteredOrders}
                     columns={[
@@ -6256,25 +6234,16 @@ export default function App() {
                       <tr style={{ background: '#F8FAFB' }}>
                         {hasPermission('deleteOrders') && (
                           <th className="th" style={{ width: 36 }}>
-                            {(() => {
-                              const sorted = applySortData(filteredOrders, orderSort);
-                              const pageItems = sorted.slice(
-                                singleOrderPage * singleOrderPageSize,
-                                (singleOrderPage + 1) * singleOrderPageSize,
-                              );
-                              return (
-                                <SelBox
-                                  checked={pageItems.length > 0 && pageItems.every((o) => selOrders.has(o.id))}
-                                  onChange={() =>
-                                    toggleAll(
-                                      selOrders,
-                                      setSelOrders,
-                                      pageItems.map((o) => o.id),
-                                    )
-                                  }
-                                />
-                              );
-                            })()}
+                            <SelBox
+                              checked={sortedOrders.length > 0 && sortedOrders.every((o) => selOrders.has(o.id))}
+                              onChange={() =>
+                                toggleAll(
+                                  selOrders,
+                                  setSelOrders,
+                                  sortedOrders.map((o) => o.id),
+                                )
+                              }
+                            />
                           </th>
                         )}
                         {[
@@ -6300,103 +6269,80 @@ export default function App() {
                       </tr>
                     </thead>
                     <tbody>
-                      {applySortData(filteredOrders, orderSort)
-                        .slice(singleOrderPage * singleOrderPageSize, (singleOrderPage + 1) * singleOrderPageSize)
-                        .map((o, i) => (
-                          <tr
-                            key={o.id}
-                            className="tr"
+                      {ordersPg.pageItems.map((o, i) => (
+                        <tr
+                          key={o.id}
+                          className="tr"
+                          style={{
+                            borderBottom: '1px solid #F7FAFC',
+                            background: selOrders.has(o.id) ? '#E6F4ED' : i % 2 === 0 ? '#fff' : '#FCFCFD',
+                            cursor: 'pointer',
+                          }}
+                          onClick={() => openOrderInNewTab(o)}
+                        >
+                          {hasPermission('deleteOrders') && (
+                            <td className="td" onClick={(e) => e.stopPropagation()}>
+                              <SelBox
+                                checked={selOrders.has(o.id)}
+                                onChange={() => toggleSel(selOrders, setSelOrders, o.id)}
+                              />
+                            </td>
+                          )}
+                          <td className="td mono" style={{ fontSize: 11, color: '#0B7A3E', fontWeight: 500 }}>
+                            {o.materialNo || '—'}
+                          </td>
+                          <td
+                            className="td"
                             style={{
-                              borderBottom: '1px solid #F7FAFC',
-                              background: selOrders.has(o.id) ? '#E6F4ED' : i % 2 === 0 ? '#fff' : '#FCFCFD',
-                              cursor: 'pointer',
+                              maxWidth: 200,
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                              whiteSpace: 'nowrap',
                             }}
-                            onClick={() => openOrderInNewTab(o)}
                           >
-                            {hasPermission('deleteOrders') && (
-                              <td className="td" onClick={(e) => e.stopPropagation()}>
-                                <SelBox
-                                  checked={selOrders.has(o.id)}
-                                  onChange={() => toggleSel(selOrders, setSelOrders, o.id)}
-                                />
-                              </td>
-                            )}
-                            <td className="td mono" style={{ fontSize: 11, color: '#0B7A3E', fontWeight: 500 }}>
-                              {o.materialNo || '—'}
-                            </td>
-                            <td
-                              className="td"
-                              style={{
-                                maxWidth: 200,
-                                overflow: 'hidden',
-                                textOverflow: 'ellipsis',
-                                whiteSpace: 'nowrap',
-                              }}
-                            >
-                              {o.description}
-                            </td>
-                            <td className="td" style={{ fontWeight: 600, textAlign: 'center' }}>
-                              {o.quantity}
-                            </td>
-                            <td className="td mono" style={{ fontSize: 11 }}>
-                              <span className="pv">
-                                {(() => {
-                                  const price = getEffectiveUnitPrice(o, catalogLookup);
-                                  return price > 0 ? fmt(price) : '—';
-                                })()}
-                              </span>
-                            </td>
-                            <td className="td mono" style={{ fontSize: 11, fontWeight: 600 }}>
-                              <span className="pv">
-                                {(() => {
-                                  const total = getEffectiveTotal(o, catalogLookup);
-                                  return total > 0 ? fmt(total) : '—';
-                                })()}
-                              </span>
-                            </td>
-                            <td className="td" style={{ color: '#94A3B8', fontSize: 11 }}>
-                              {fmtDate(o.orderDate)}
-                            </td>
-                            <td className="td" style={{ fontSize: 11 }}>
-                              {o.orderBy || '—'}
-                            </td>
-                            <td className="td">
-                              <Badge status={o.status} />
-                            </td>
-                            <td className="td">
-                              <ArrivalBadge order={o} />
-                            </td>
-                            <td className="td">
-                              <div style={{ display: 'flex', gap: 4 }}>
-                                {(hasPermission('editAllOrders') || o.orderBy === currentUser?.name) && (
-                                  <button
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      setEditingOrder({ ...o });
-                                    }}
-                                    style={{
-                                      background: '#2563EB',
-                                      color: '#fff',
-                                      border: 'none',
-                                      borderRadius: 6,
-                                      padding: '4px 8px',
-                                      fontSize: 10,
-                                      cursor: 'pointer',
-                                      display: 'flex',
-                                      alignItems: 'center',
-                                      gap: 3,
-                                    }}
-                                  >
-                                    <Edit3 size={11} /> Edit
-                                  </button>
-                                )}
+                            {o.description}
+                          </td>
+                          <td className="td" style={{ fontWeight: 600, textAlign: 'center' }}>
+                            {o.quantity}
+                          </td>
+                          <td className="td mono" style={{ fontSize: 11 }}>
+                            <span className="pv">
+                              {(() => {
+                                const price = getEffectiveUnitPrice(o, catalogLookup);
+                                return price > 0 ? fmt(price) : '—';
+                              })()}
+                            </span>
+                          </td>
+                          <td className="td mono" style={{ fontSize: 11, fontWeight: 600 }}>
+                            <span className="pv">
+                              {(() => {
+                                const total = getEffectiveTotal(o, catalogLookup);
+                                return total > 0 ? fmt(total) : '—';
+                              })()}
+                            </span>
+                          </td>
+                          <td className="td" style={{ color: '#94A3B8', fontSize: 11 }}>
+                            {fmtDate(o.orderDate)}
+                          </td>
+                          <td className="td" style={{ fontSize: 11 }}>
+                            {o.orderBy || '—'}
+                          </td>
+                          <td className="td">
+                            <Badge status={o.status} />
+                          </td>
+                          <td className="td">
+                            <ArrivalBadge order={o} />
+                          </td>
+                          <td className="td">
+                            <div style={{ display: 'flex', gap: 4 }}>
+                              {(hasPermission('editAllOrders') || o.orderBy === currentUser?.name) && (
                                 <button
                                   onClick={(e) => {
                                     e.stopPropagation();
-                                    handleDuplicateOrder(o);
+                                    setEditingOrder({ ...o });
                                   }}
                                   style={{
-                                    background: '#7C3AED',
+                                    background: '#2563EB',
                                     color: '#fff',
                                     border: 'none',
                                     borderRadius: 6,
@@ -6408,83 +6354,84 @@ export default function App() {
                                     gap: 3,
                                   }}
                                 >
-                                  <Copy size={11} />
+                                  <Edit3 size={11} /> Edit
                                 </button>
-                                {hasPermission('deleteOrders') && (
-                                  <button
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      if (window.confirm(`Delete order ${o.id}?`)) {
-                                        const remaining = orders.filter((x) => x.id !== o.id);
-                                        setOrders(remaining);
-                                        dbSync(api.deleteOrder(o.id), 'Order delete not saved');
-                                        if (o.bulkGroupId) recalcBulkGroupForMonths([o.bulkGroupId], remaining);
-                                        notify('Deleted', o.id, 'success');
-                                      }
-                                    }}
-                                    style={{
-                                      background: '#DC2626',
-                                      color: '#fff',
-                                      border: 'none',
-                                      borderRadius: 6,
-                                      padding: '4px 8px',
-                                      fontSize: 10,
-                                      cursor: 'pointer',
-                                      display: 'flex',
-                                      alignItems: 'center',
-                                      gap: 3,
-                                    }}
-                                  >
-                                    <Trash2 size={11} />
-                                  </button>
-                                )}
-                              </div>
-                            </td>
-                          </tr>
-                        ))}
+                              )}
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleDuplicateOrder(o);
+                                }}
+                                style={{
+                                  background: '#7C3AED',
+                                  color: '#fff',
+                                  border: 'none',
+                                  borderRadius: 6,
+                                  padding: '4px 8px',
+                                  fontSize: 10,
+                                  cursor: 'pointer',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: 3,
+                                }}
+                              >
+                                <Copy size={11} />
+                              </button>
+                              {hasPermission('deleteOrders') && (
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    if (window.confirm(`Delete order ${o.id}?`)) {
+                                      const remaining = orders.filter((x) => x.id !== o.id);
+                                      setOrders(remaining);
+                                      dbSync(api.deleteOrder(o.id), 'Order delete not saved');
+                                      if (o.bulkGroupId) recalcBulkGroupForMonths([o.bulkGroupId], remaining);
+                                      notify('Deleted', o.id, 'success');
+                                    }
+                                  }}
+                                  style={{
+                                    background: '#DC2626',
+                                    color: '#fff',
+                                    border: 'none',
+                                    borderRadius: 6,
+                                    padding: '4px 8px',
+                                    fontSize: 10,
+                                    cursor: 'pointer',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: 3,
+                                  }}
+                                >
+                                  <Trash2 size={11} />
+                                </button>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
                     </tbody>
                   </table>
                 </div>
                 <div
                   style={{
-                    padding: '12px 16px',
+                    padding: '4px 16px 8px',
                     borderTop: '1px solid #F0F2F5',
                     display: 'flex',
-                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    gap: 12,
+                    flexWrap: 'wrap',
                     background: '#FCFCFD',
                   }}
                 >
-                  <span style={{ fontSize: 12, color: '#94A3B8' }}>
-                    Showing {Math.min(singleOrderPage * singleOrderPageSize + 1, filteredOrders.length)}–
-                    {Math.min((singleOrderPage + 1) * singleOrderPageSize, filteredOrders.length)} of{' '}
-                    {filteredOrders.length}
-                    {selOrders.size > 0 && ` • ${selOrders.size} selected`}
+                  <Pagination {...ordersPg} unit="orders" style={{ flex: 1, minWidth: 260 }} />
+                  {selectionNote(selOrders, ordersPg.pageItems) && (
+                    <span style={{ fontSize: 11.5, color: '#0B7A3E', fontWeight: 600 }}>
+                      {selectionNote(selOrders, ordersPg.pageItems)}
+                    </span>
+                  )}
+                  <span className="pv" style={{ fontSize: 12, fontWeight: 500 }}>
+                    {fmt(filteredOrders.reduce((s, o) => s + o.totalCost, 0))}
                   </span>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <span className="pv" style={{ fontSize: 12, fontWeight: 500 }}>
-                      {fmt(filteredOrders.reduce((s, o) => s + o.totalCost, 0))}
-                    </span>
-                    <div style={{ width: 1, height: 16, background: '#E2E8F0' }} />
-                    <button
-                      className="bs"
-                      style={{ padding: '6px 10px', fontSize: 12 }}
-                      disabled={singleOrderPage === 0}
-                      onClick={() => setSingleOrderPage((p) => p - 1)}
-                    >
-                      <ChevronLeft size={14} />
-                    </button>
-                    <span style={{ fontSize: 12, color: '#64748B' }}>
-                      Page {singleOrderPage + 1}/{Math.max(1, Math.ceil(filteredOrders.length / singleOrderPageSize))}
-                    </span>
-                    <button
-                      className="bs"
-                      style={{ padding: '6px 10px', fontSize: 12 }}
-                      disabled={(singleOrderPage + 1) * singleOrderPageSize >= filteredOrders.length}
-                      onClick={() => setSingleOrderPage((p) => p + 1)}
-                    >
-                      <ChevronRight size={14} />
-                    </button>
-                  </div>
                 </div>
               </div>
             </div>
@@ -6590,10 +6537,7 @@ export default function App() {
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                     <select
                       value={bulkMonthFilter}
-                      onChange={(e) => {
-                        setBulkMonthFilter(e.target.value);
-                        setBulkOrderPage(0);
-                      }}
+                      onChange={(e) => setBulkMonthFilter(e.target.value)}
                       style={{
                         padding: '6px 10px',
                         borderRadius: 8,
@@ -6613,10 +6557,7 @@ export default function App() {
                     </select>
                     <select
                       value={bulkCreatedByFilter}
-                      onChange={(e) => {
-                        setBulkCreatedByFilter(e.target.value);
-                        setBulkOrderPage(0);
-                      }}
+                      onChange={(e) => setBulkCreatedByFilter(e.target.value)}
                       style={{
                         padding: '6px 10px',
                         borderRadius: 8,
@@ -6641,28 +6582,6 @@ export default function App() {
                           </option>
                         ))}
                     </select>
-                    <select
-                      value={bulkOrderPageSize}
-                      onChange={(e) => {
-                        setBulkOrderPageSize(Number(e.target.value));
-                        setBulkOrderPage(0);
-                      }}
-                      style={{
-                        padding: '4px 8px',
-                        borderRadius: 6,
-                        border: '1px solid #E2E8F0',
-                        fontSize: 11,
-                        fontFamily: 'inherit',
-                        cursor: 'pointer',
-                        color: '#1A202C',
-                      }}
-                    >
-                      {[20, 50, 100, 200].map((n) => (
-                        <option key={n} value={n}>
-                          {n} / page
-                        </option>
-                      ))}
-                    </select>
                   </div>
                 </div>
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5 }}>
@@ -6670,30 +6589,18 @@ export default function App() {
                     <tr style={{ background: '#F8FAFB' }}>
                       {hasPermission('deleteBulkOrders') && (
                         <th className="th" style={{ width: 36 }}>
-                          {(() => {
-                            const filtered = bulkGroups.filter(
-                              (g) =>
-                                (bulkMonthFilter === 'All' || g.month === bulkMonthFilter) &&
-                                (bulkCreatedByFilter === 'All' || g.createdBy === bulkCreatedByFilter),
-                            );
-                            const sorted = applySortData(filtered, bulkSort);
-                            const pageItems = sorted.slice(
-                              bulkOrderPage * bulkOrderPageSize,
-                              (bulkOrderPage + 1) * bulkOrderPageSize,
-                            );
-                            return (
-                              <SelBox
-                                checked={pageItems.length > 0 && pageItems.every((g) => selBulk.has(g.id))}
-                                onChange={() =>
-                                  toggleAll(
-                                    selBulk,
-                                    setSelBulk,
-                                    pageItems.map((g) => g.id),
-                                  )
-                                }
-                              />
-                            );
-                          })()}
+                          <SelBox
+                            checked={
+                              filteredBulkGroups.length > 0 && filteredBulkGroups.every((g) => selBulk.has(g.id))
+                            }
+                            onChange={() =>
+                              toggleAll(
+                                selBulk,
+                                setSelBulk,
+                                filteredBulkGroups.map((g) => g.id),
+                              )
+                            }
+                          />
                         </th>
                       )}
                       {[
@@ -6717,17 +6624,7 @@ export default function App() {
                     </tr>
                   </thead>
                   <tbody>
-                    {(() => {
-                      const filtered = bulkGroups.filter(
-                        (g) =>
-                          (bulkMonthFilter === 'All' || g.month === bulkMonthFilter) &&
-                          (bulkCreatedByFilter === 'All' || g.createdBy === bulkCreatedByFilter),
-                      );
-                      return applySortData(filtered, bulkSort).slice(
-                        bulkOrderPage * bulkOrderPageSize,
-                        (bulkOrderPage + 1) * bulkOrderPageSize,
-                      );
-                    })().map((g) => (
+                    {bulkPg.pageItems.map((g) => (
                       <tr
                         key={g.id}
                         className="tr"
@@ -6860,52 +6757,24 @@ export default function App() {
                     ))}
                   </tbody>
                 </table>
-                {(() => {
-                  const filtered = bulkGroups.filter(
-                    (g) =>
-                      (bulkMonthFilter === 'All' || g.month === bulkMonthFilter) &&
-                      (bulkCreatedByFilter === 'All' || g.createdBy === bulkCreatedByFilter),
-                  );
-                  const totalPages = Math.max(1, Math.ceil(filtered.length / bulkOrderPageSize));
-                  return (
-                    <div
-                      style={{
-                        padding: '12px 16px',
-                        borderTop: '1px solid #F0F2F5',
-                        display: 'flex',
-                        justifyContent: 'space-between',
-                        alignItems: 'center',
-                        background: '#FCFCFD',
-                      }}
-                    >
-                      <span style={{ fontSize: 12, color: '#94A3B8' }}>
-                        Showing {Math.min(bulkOrderPage * bulkOrderPageSize + 1, filtered.length)}–
-                        {Math.min((bulkOrderPage + 1) * bulkOrderPageSize, filtered.length)} of {filtered.length}
-                      </span>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                        <button
-                          className="bs"
-                          style={{ padding: '6px 10px', fontSize: 12 }}
-                          disabled={bulkOrderPage === 0}
-                          onClick={() => setBulkOrderPage((p) => p - 1)}
-                        >
-                          <ChevronLeft size={14} />
-                        </button>
-                        <span style={{ fontSize: 12, color: '#64748B' }}>
-                          Page {bulkOrderPage + 1}/{totalPages}
-                        </span>
-                        <button
-                          className="bs"
-                          style={{ padding: '6px 10px', fontSize: 12 }}
-                          disabled={(bulkOrderPage + 1) * bulkOrderPageSize >= filtered.length}
-                          onClick={() => setBulkOrderPage((p) => p + 1)}
-                        >
-                          <ChevronRight size={14} />
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })()}
+                <div
+                  style={{
+                    padding: '4px 16px 8px',
+                    borderTop: '1px solid #F0F2F5',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 12,
+                    flexWrap: 'wrap',
+                    background: '#FCFCFD',
+                  }}
+                >
+                  <Pagination {...bulkPg} unit="groups" style={{ flex: 1, minWidth: 260 }} />
+                  {selectionNote(selBulk, bulkPg.pageItems) && (
+                    <span style={{ fontSize: 11.5, color: '#5B21B6', fontWeight: 600 }}>
+                      {selectionNote(selBulk, bulkPg.pageItems)}
+                    </span>
+                  )}
+                </div>
               </div>
               {/* Orders grouped by bulk group */}
               <div className="card" style={{ padding: '20px 24px', marginTop: 16 }}>
@@ -6975,7 +6844,7 @@ export default function App() {
               {/* Expanded Bulk Group Orders View */}
               {expandedBulkGroup &&
                 (() => {
-                  const bgOrders = orders.filter((o) => o.bulkGroupId === expandedBulkGroup);
+                  const bgOrders = expandedBulkGroupOrders;
                   const bg = bulkGroups.find((g) => g.id === expandedBulkGroup);
                   const bgLabel = `${expandedBulkGroup}${bg?.month ? ' — ' + bg.month : ''}`;
                   return (
@@ -7074,7 +6943,7 @@ export default function App() {
                           </tr>
                         </thead>
                         <tbody>
-                          {bgOrders.map((o) => (
+                          {bulkGroupOrdersPg.pageItems.map((o) => (
                             <tr
                               key={o.id}
                               className="tr"
@@ -7206,6 +7075,14 @@ export default function App() {
                           ))}
                         </tbody>
                       </table>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+                        <Pagination {...bulkGroupOrdersPg} unit="orders" style={{ flex: 1, minWidth: 260 }} />
+                        {selectionNote(selOrders, bulkGroupOrdersPg.pageItems) && (
+                          <span style={{ fontSize: 11.5, color: '#0B7A3E', fontWeight: 600 }}>
+                            {selectionNote(selOrders, bulkGroupOrdersPg.pageItems)}
+                          </span>
+                        )}
+                      </div>
                       <div style={{ marginTop: 12, padding: 12, background: '#F8FAFB', borderRadius: 8, fontSize: 12 }}>
                         <strong>Summary:</strong> {bgOrders.length} orders | Total Qty:{' '}
                         {bgOrders.reduce((s, o) => s + o.quantity, 0)} | Total Cost:{' '}
@@ -7897,14 +7774,7 @@ export default function App() {
                 </BatchBar>
               )}
               {(() => {
-                const fn = notifLog.filter(
-                  (n) =>
-                    !notifSearch ||
-                    [n.id, n.type, n.to, n.subject, n.status]
-                      .join(' ')
-                      .toLowerCase()
-                      .includes(notifSearch.toLowerCase()),
-                );
+                const fn = filteredNotifLog;
                 return (
                   <div className="card" style={{ overflow: 'hidden' }}>
                     <div
@@ -7929,9 +7799,6 @@ export default function App() {
                             style={{ paddingLeft: 32, width: 200, height: 36 }}
                           />
                         </div>
-                        <span style={{ fontSize: 11, color: '#94A3B8' }}>
-                          {fn.length} records{selNotifs.size > 0 && ` • ${selNotifs.size} selected`}
-                        </span>
                       </div>
                     </div>
                     <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5 }}>
@@ -7979,7 +7846,7 @@ export default function App() {
                             </td>
                           </tr>
                         ) : (
-                          fn.map((n) => (
+                          notifsPg.pageItems.map((n) => (
                             <tr
                               key={n.id}
                               className="tr"
@@ -8059,6 +7926,23 @@ export default function App() {
                         )}
                       </tbody>
                     </table>
+                    <div
+                      style={{
+                        padding: '4px 20px 8px',
+                        borderTop: '1px solid #F0F2F5',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 12,
+                        flexWrap: 'wrap',
+                      }}
+                    >
+                      <Pagination {...notifsPg} unit="notifications" style={{ flex: 1, minWidth: 260 }} />
+                      {selectionNote(selNotifs, notifsPg.pageItems) && (
+                        <span style={{ fontSize: 11.5, color: '#5B21B6', fontWeight: 600 }}>
+                          {selectionNote(selNotifs, notifsPg.pageItems)}
+                        </span>
+                      )}
+                    </div>
                   </div>
                 );
               })()}
@@ -8082,22 +7966,7 @@ export default function App() {
               const actions = ['All', ...new Set(auditLog.map((a) => a.action))];
               const entityTypes = ['All', ...new Set(auditLog.map((a) => a.entityType).filter(Boolean))];
               const auditUsers = ['All', ...new Set(auditLog.map((a) => a.userName).filter(Boolean))];
-              const filtered = auditLog.filter((a) => {
-                if (auditFilter.action !== 'All' && a.action !== auditFilter.action) return false;
-                if (auditFilter.user !== 'All' && a.userName !== auditFilter.user) return false;
-                if (auditFilter.entityType !== 'All' && a.entityType !== auditFilter.entityType) return false;
-                if (auditSearch) {
-                  const q = auditSearch.toLowerCase();
-                  if (
-                    ![a.userName, a.action, a.entityType, a.entityId, a.details ? JSON.stringify(a.details) : '']
-                      .join(' ')
-                      .toLowerCase()
-                      .includes(q)
-                  )
-                    return false;
-                }
-                return true;
-              });
+              const filtered = filteredAuditLog;
               return (
                 <div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 24 }}>
@@ -8249,7 +8118,6 @@ export default function App() {
                       filename="audit-trail"
                       title="Audit Trail Export"
                     />
-                    <span style={{ fontSize: 12, color: '#94A3B8' }}>{filtered.length} events</span>
                   </div>
 
                   <div className="card" style={{ overflow: 'hidden' }}>
@@ -8275,7 +8143,7 @@ export default function App() {
                               </td>
                             </tr>
                           ) : (
-                            filtered.slice(0, 200).map((a, i) => (
+                            auditPg.pageItems.map((a, i) => (
                               <tr
                                 key={a.id || i}
                                 className="tr"
@@ -8325,19 +8193,11 @@ export default function App() {
                         </tbody>
                       </table>
                     </div>
-                    {filtered.length > 200 && (
-                      <div
-                        style={{
-                          padding: '12px 16px',
-                          borderTop: '1px solid #F0F2F5',
-                          textAlign: 'center',
-                          fontSize: 11,
-                          color: '#94A3B8',
-                        }}
-                      >
-                        Showing first 200 of {filtered.length} events. Use export to see all.
-                      </div>
-                    )}
+                    <Pagination
+                      {...auditPg}
+                      unit="events"
+                      style={{ padding: '10px 16px', borderTop: '1px solid #F0F2F5' }}
+                    />
                   </div>
                 </div>
               );
@@ -8358,7 +8218,7 @@ export default function App() {
                       Pending Approvals ({allPendingUsers.length})
                     </h3>
                   </div>
-                  {allPendingUsers.map((u) => (
+                  {approvalsPg.pageItems.map((u) => (
                     <div
                       key={u.id}
                       style={{
@@ -8409,6 +8269,7 @@ export default function App() {
                       </div>
                     </div>
                   ))}
+                  <Pagination {...approvalsPg} unit="approvals" />
                 </div>
               )}
 
@@ -8492,8 +8353,8 @@ export default function App() {
                   </thead>
                   <tbody>
                     {(() => {
-                      const fu = visibleUsers;
-                      return fu.length === 0 ? (
+                      const fu = usersPg.pageItems;
+                      return visibleUsers.length === 0 ? (
                         <tr>
                           <td colSpan={10} style={{ padding: 24, textAlign: 'center', color: '#94A3B8', fontSize: 13 }}>
                             {users.length === 0 ? 'No users found' : 'No users match your search.'}
@@ -8620,6 +8481,23 @@ export default function App() {
                     })()}
                   </tbody>
                 </table>
+                <div
+                  style={{
+                    padding: '4px 16px 8px',
+                    borderTop: '1px solid #F0F2F5',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 12,
+                    flexWrap: 'wrap',
+                  }}
+                >
+                  <Pagination {...usersPg} unit="users" style={{ flex: 1, minWidth: 260 }} />
+                  {selectionNote(selUsers, usersPg.pageItems) && (
+                    <span style={{ fontSize: 11.5, color: '#1E40AF', fontWeight: 600 }}>
+                      {selectionNote(selUsers, usersPg.pageItems)}
+                    </span>
+                  )}
+                </div>
               </div>
             </div>
           )}
@@ -10502,7 +10380,7 @@ export default function App() {
                       </tr>
                     </thead>
                     <tbody>
-                      {historyImportData.slice(0, 50).map((o, i) => (
+                      {importPreviewPg.pageItems.map((o, i) => (
                         <tr key={i} className="tr" style={{ borderBottom: '1px solid #F0F2F5' }}>
                           <td className="td mono" style={{ fontSize: 10, color: '#4338CA' }}>
                             {o.id}
@@ -10552,11 +10430,7 @@ export default function App() {
                   </table>
                 </div>
 
-                {historyImportData.length > 50 && (
-                  <div style={{ textAlign: 'center', padding: 10, fontSize: 11, color: '#64748B' }}>
-                    Showing first 50 of {historyImportData.length} records
-                  </div>
-                )}
+                <Pagination {...importPreviewPg} unit="records" />
 
                 <div
                   style={{
@@ -11037,7 +10911,7 @@ export default function App() {
                     </tr>
                   </thead>
                   <tbody>
-                    {priceFinderResults.map((r, i) => (
+                    {priceFinderPg.pageItems.map((r, i) => (
                       <tr
                         key={i}
                         style={{
@@ -11080,6 +10954,7 @@ export default function App() {
                     ))}
                   </tbody>
                 </table>
+                <Pagination {...priceFinderPg} unit="parts" style={{ padding: '8px 12px' }} />
               </div>
             )}
           </div>
@@ -11711,7 +11586,7 @@ export default function App() {
                   </tr>
                 </thead>
                 <tbody>
-                  {wishlist.map((w) => (
+                  {wishlistPg.pageItems.map((w) => (
                     <tr key={w.id} className="tr" style={{ borderBottom: '1px solid #F0F2F5' }}>
                       <td className="td mono" style={{ fontSize: 11, color: '#0B7A3E', fontWeight: 500 }}>
                         {w.materialNo}
@@ -11784,6 +11659,7 @@ export default function App() {
                 </tbody>
               </table>
             )}
+            {wishlist.length > 0 && <Pagination {...wishlistPg} unit="items" />}
             {showWishlistPicker === 'bulk' && wishlist.length > 0 && (
               <div style={{ marginTop: 12, textAlign: 'right' }}>
                 <button

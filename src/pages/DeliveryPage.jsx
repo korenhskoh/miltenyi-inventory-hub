@@ -1,21 +1,10 @@
 import { useState, Fragment } from 'react';
-import {
-  CheckCircle,
-  AlertCircle,
-  Clock,
-  AlertTriangle,
-  Mail,
-  MessageSquare,
-  Check,
-  ChevronLeft,
-  ChevronRight,
-} from 'lucide-react';
+import { CheckCircle, AlertCircle, Clock, AlertTriangle, Mail, MessageSquare, Check } from 'lucide-react';
 import { fmt, fmtDate, applySortData, toggleSort, fillTemplate, escapeHtml } from '../utils.js';
 import { Pill, ArrivalBadge, ExportDropdown, SortTh } from '../components/ui.jsx';
 import api from '../api.js';
 import { todayLocal } from '../lib/dates.js';
-
-const PAGE_SIZE_OPTIONS = [20, 50, 100, 500];
+import Pagination, { usePaginationState, paginate } from '../components/Pagination.jsx';
 
 /**
  * Send an arrival report via the server-side mailer (SMTP config is stored server-side).
@@ -98,23 +87,14 @@ const DeliveryPage = ({
   api,
   setPage,
 }) => {
-  // Pagination state for each section
-  const [bulkPageSize, setBulkPageSize] = useState(20);
-  const [bulkPage, setBulkPage] = useState(0);
-  const [singlePageSize, setSinglePageSize] = useState(20);
-  const [singlePage, setSinglePage] = useState(0);
   // Sort state for single/bulk arrival tables (default: newest approved first)
   const [singleArrivalSort, setSingleArrivalSort] = useState({ key: 'approvalSentDate', dir: 'desc' });
   const [bulkArrivalSort, setBulkArrivalSort] = useState({ key: 'approvalSentDate', dir: 'desc' });
   // Sort state for bulk group rows (table header sort)
   const [bulkGroupSort, setBulkGroupSort] = useState({ key: 'approvedDate', dir: 'desc' });
-  const [allPageSize, setAllPageSize] = useState(50);
-  const [allPage, setAllPage] = useState(0);
   const [arrivalCheckedByFilter, setArrivalCheckedByFilter] = useState('All');
 
-  // Reset pagination to the first page whenever a filter changes so the
-  // current page index can never point past the end of the new result set.
-  // (React's "adjust state when a prop changes" pattern — no effect needed.)
+  // Each table returns to page 1 whenever one of these filters changes.
   const filterKey = [
     arrivalMonthFilter,
     arrivalOrderByFilter,
@@ -122,13 +102,9 @@ const DeliveryPage = ({
     arrivalStatusFilter,
     arrivalTypeFilter,
   ].join('|');
-  const [prevFilterKey, setPrevFilterKey] = useState(filterKey);
-  if (filterKey !== prevFilterKey) {
-    setPrevFilterKey(filterKey);
-    setBulkPage(0);
-    setSinglePage(0);
-    setAllPage(0);
-  }
+  const bulkPager = usePaginationState({ storageKey: 'delivery-bulk', initialSize: 25, resetKey: filterKey });
+  const singlePager = usePaginationState({ storageKey: 'delivery-single', initialSize: 25, resetKey: filterKey });
+  const allPager = usePaginationState({ storageKey: 'delivery-all', initialSize: 50, resetKey: filterKey });
 
   // Unique list of users who have checked arrivals
   const arrivalCheckedByUsers = [
@@ -335,41 +311,12 @@ const DeliveryPage = ({
         });
 
         const sorted = applySortData(enriched, bulkGroupSort);
-        const bulkTotalPages = Math.max(1, Math.ceil(sorted.length / bulkPageSize));
-        const bulkPageItems = sorted.slice(bulkPage * bulkPageSize, (bulkPage + 1) * bulkPageSize);
+        const bulkView = paginate(sorted, bulkPager.page, bulkPager.pageSize);
+        const bulkPageItems = bulkView.pageItems;
         return (
           <div className="card" style={{ padding: '20px 24px', marginBottom: 20 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
               <h3 style={{ fontSize: 15, fontWeight: 700, margin: 0 }}>Bulk Orders - Arrival Verification</h3>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, color: '#64748B' }}>
-                <span>{filteredBulkGroups.length} group(s)</span>
-                {filteredBulkGroups.length > 20 && (
-                  <>
-                    <span style={{ margin: '0 2px' }}>|</span>
-                    <span>Show</span>
-                    <select
-                      value={bulkPageSize}
-                      onChange={(e) => {
-                        setBulkPageSize(Number(e.target.value));
-                        setBulkPage(0);
-                      }}
-                      style={{
-                        padding: '2px 6px',
-                        borderRadius: 6,
-                        border: '1px solid #E2E8F0',
-                        fontSize: 11,
-                        cursor: 'pointer',
-                      }}
-                    >
-                      {PAGE_SIZE_OPTIONS.map((n) => (
-                        <option key={n} value={n}>
-                          {n}
-                        </option>
-                      ))}
-                    </select>
-                  </>
-                )}
-              </div>
             </div>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5 }}>
               <thead>
@@ -972,7 +919,7 @@ const DeliveryPage = ({
               </tbody>
             </table>
             {/* Bulk pagination */}
-            {bulkTotalPages > 1 && (
+            {bulkView.total > 0 && (
               <div
                 style={{
                   display: 'flex',
@@ -984,25 +931,7 @@ const DeliveryPage = ({
                   marginTop: 14,
                 }}
               >
-                <button
-                  className="bs"
-                  disabled={bulkPage === 0}
-                  onClick={() => setBulkPage((p) => p - 1)}
-                  style={{ padding: '4px 10px', fontSize: 11 }}
-                >
-                  <ChevronLeft size={14} />
-                </button>
-                <span style={{ fontSize: 12, color: '#64748B' }}>
-                  Page {bulkPage + 1} / {bulkTotalPages}
-                </span>
-                <button
-                  className="bs"
-                  disabled={bulkPage >= bulkTotalPages - 1}
-                  onClick={() => setBulkPage((p) => p + 1)}
-                  style={{ padding: '4px 10px', fontSize: 11 }}
-                >
-                  <ChevronRight size={14} />
-                </button>
+                <Pagination {...bulkView} {...bulkPager} unit="groups" />
               </div>
             )}
           </div>
@@ -1021,40 +950,12 @@ const DeliveryPage = ({
             (arrivalCheckedByFilter === 'All' || o.arrivalCheckedBy === arrivalCheckedByFilter),
         );
         if (!indivOrders.length) return null;
-        const singleTotalPages = Math.max(1, Math.ceil(indivOrders.length / singlePageSize));
+        const singleSorted = applySortData(indivOrders, singleArrivalSort);
+        const singleView = paginate(singleSorted, singlePager.page, singlePager.pageSize);
         return (
           <div className="card" style={{ padding: '20px 24px', marginBottom: 20 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
               <h3 style={{ fontSize: 15, fontWeight: 700, margin: 0 }}>Single Orders - Arrival Verification</h3>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, color: '#64748B' }}>
-                <span>{indivOrders.length} order(s)</span>
-                {indivOrders.length > 20 && (
-                  <>
-                    <span style={{ margin: '0 2px' }}>|</span>
-                    <span>Show</span>
-                    <select
-                      value={singlePageSize}
-                      onChange={(e) => {
-                        setSinglePageSize(Number(e.target.value));
-                        setSinglePage(0);
-                      }}
-                      style={{
-                        padding: '2px 6px',
-                        borderRadius: 6,
-                        border: '1px solid #E2E8F0',
-                        fontSize: 11,
-                        cursor: 'pointer',
-                      }}
-                    >
-                      {PAGE_SIZE_OPTIONS.map((n) => (
-                        <option key={n} value={n}>
-                          {n}
-                        </option>
-                      ))}
-                    </select>
-                  </>
-                )}
-              </div>
             </div>
             <div style={{ fontSize: 12, color: '#64748B', marginBottom: 12 }}>
               {indivOrders.length} approved individual order(s) not part of any bulk group
@@ -1064,8 +965,7 @@ const DeliveryPage = ({
                 <tr style={{ background: '#F8FAFB' }}>
                   <th className="th" style={{ width: 30 }}>
                     {(() => {
-                      const sorted = applySortData(indivOrders, singleArrivalSort);
-                      const items = sorted.slice(singlePage * singlePageSize, (singlePage + 1) * singlePageSize);
+                      const items = singleView.pageItems;
                       return (
                         <input
                           type="checkbox"
@@ -1134,172 +1034,139 @@ const DeliveryPage = ({
                 </tr>
               </thead>
               <tbody>
-                {applySortData(indivOrders, singleArrivalSort)
-                  .slice(singlePage * singlePageSize, (singlePage + 1) * singlePageSize)
-                  .map((o) => {
-                    const pv = pendingArrival[o.id];
-                    const dispQty = pv ? pv.qtyReceived : o.qtyReceived || 0;
-                    const dispBO = pv ? pv.qtyReceived - o.quantity : (o.qtyReceived || 0) - o.quantity;
-                    const hasPending = !!pv;
-                    return (
-                      <tr
-                        key={o.id}
-                        style={{
-                          borderBottom: '1px solid #F0F2F5',
-                          background: hasPending ? '#FFFBEB' : 'transparent',
-                        }}
+                {singleView.pageItems.map((o) => {
+                  const pv = pendingArrival[o.id];
+                  const dispQty = pv ? pv.qtyReceived : o.qtyReceived || 0;
+                  const dispBO = pv ? pv.qtyReceived - o.quantity : (o.qtyReceived || 0) - o.quantity;
+                  const hasPending = !!pv;
+                  return (
+                    <tr
+                      key={o.id}
+                      style={{
+                        borderBottom: '1px solid #F0F2F5',
+                        background: hasPending ? '#FFFBEB' : 'transparent',
+                      }}
+                    >
+                      <td className="td">
+                        <input
+                          type="checkbox"
+                          checked={arrivalSelected.has(o.id)}
+                          onChange={(e) => {
+                            setArrivalSelected((prev) => {
+                              const next = new Set(prev);
+                              if (e.target.checked) next.add(o.id);
+                              else next.delete(o.id);
+                              return next;
+                            });
+                          }}
+                        />
+                      </td>
+                      <td className="td mono" style={{ fontSize: 11, color: '#0B7A3E', fontWeight: 600 }}>
+                        {o.materialNo || '\u2014'}
+                      </td>
+                      <td
+                        className="td"
+                        style={{ maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
                       >
-                        <td className="td">
-                          <input
-                            type="checkbox"
-                            checked={arrivalSelected.has(o.id)}
-                            onChange={(e) => {
-                              setArrivalSelected((prev) => {
-                                const next = new Set(prev);
-                                if (e.target.checked) next.add(o.id);
-                                else next.delete(o.id);
-                                return next;
-                              });
-                            }}
-                          />
-                        </td>
-                        <td className="td mono" style={{ fontSize: 11, color: '#0B7A3E', fontWeight: 600 }}>
-                          {o.materialNo || '\u2014'}
-                        </td>
-                        <td
-                          className="td"
-                          style={{ maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-                        >
-                          {o.description}
-                        </td>
-                        <td className="td" style={{ fontSize: 11 }}>
-                          {o.orderBy || '\u2014'}
-                        </td>
-                        <td className="td" style={{ fontSize: 11, color: o.approvalSentDate ? '#1A202C' : '#94A3B8' }}>
-                          {o.approvalSentDate ? fmtDate(o.approvalSentDate) : '\u2014'}
-                        </td>
-                        <td className="td" style={{ textAlign: 'center', fontWeight: 600 }}>
-                          {o.quantity}
-                        </td>
-                        <td className="td" style={{ textAlign: 'center' }}>
-                          <input
-                            type="number"
-                            min="0"
-                            max={o.quantity}
-                            value={dispQty}
-                            disabled={o.approvalStatus !== 'approved'}
-                            onChange={(e) => {
-                              const val = Math.max(0, Math.min(o.quantity, parseInt(e.target.value) || 0));
-                              setPendingArrival((prev) => ({
-                                ...prev,
-                                [o.id]: { qtyReceived: val, backOrder: val - o.quantity },
-                              }));
-                            }}
-                            style={{
-                              width: 50,
-                              padding: '4px 6px',
-                              textAlign: 'center',
-                              borderRadius: 6,
-                              border: hasPending ? '2px solid #F59E0B' : '1px solid #E2E8F0',
-                              fontSize: 12,
-                            }}
-                          />
-                        </td>
-                        <td
-                          className="td"
-                          style={{ textAlign: 'center', fontWeight: 600, color: dispBO < 0 ? '#DC2626' : '#059669' }}
-                        >
-                          {dispBO < 0 ? dispBO : '\u2713'}
-                        </td>
-                        <td className="td" style={{ fontSize: 11, color: '#64748B' }}>
-                          {o.arrivalCheckedBy || '\u2014'}
-                        </td>
-                        <td className="td">
-                          <Pill
-                            bg={
-                              (o.qtyReceived || 0) >= o.quantity && o.quantity > 0
-                                ? '#D1FAE5'
-                                : o.arrivalDate && (o.qtyReceived || 0) < o.quantity
-                                  ? '#FEE2E2'
-                                  : '#FEF3C7'
-                            }
-                            color={
-                              (o.qtyReceived || 0) >= o.quantity && o.quantity > 0
-                                ? '#059669'
-                                : o.arrivalDate && (o.qtyReceived || 0) < o.quantity
-                                  ? '#DC2626'
-                                  : '#D97706'
-                            }
-                          >
-                            {(o.qtyReceived || 0) >= o.quantity && o.quantity > 0
-                              ? `${o.qtyReceived || 0}/${o.quantity} Arrived`
+                        {o.description}
+                      </td>
+                      <td className="td" style={{ fontSize: 11 }}>
+                        {o.orderBy || '\u2014'}
+                      </td>
+                      <td className="td" style={{ fontSize: 11, color: o.approvalSentDate ? '#1A202C' : '#94A3B8' }}>
+                        {o.approvalSentDate ? fmtDate(o.approvalSentDate) : '\u2014'}
+                      </td>
+                      <td className="td" style={{ textAlign: 'center', fontWeight: 600 }}>
+                        {o.quantity}
+                      </td>
+                      <td className="td" style={{ textAlign: 'center' }}>
+                        <input
+                          type="number"
+                          min="0"
+                          max={o.quantity}
+                          value={dispQty}
+                          disabled={o.approvalStatus !== 'approved'}
+                          onChange={(e) => {
+                            const val = Math.max(0, Math.min(o.quantity, parseInt(e.target.value) || 0));
+                            setPendingArrival((prev) => ({
+                              ...prev,
+                              [o.id]: { qtyReceived: val, backOrder: val - o.quantity },
+                            }));
+                          }}
+                          style={{
+                            width: 50,
+                            padding: '4px 6px',
+                            textAlign: 'center',
+                            borderRadius: 6,
+                            border: hasPending ? '2px solid #F59E0B' : '1px solid #E2E8F0',
+                            fontSize: 12,
+                          }}
+                        />
+                      </td>
+                      <td
+                        className="td"
+                        style={{ textAlign: 'center', fontWeight: 600, color: dispBO < 0 ? '#DC2626' : '#059669' }}
+                      >
+                        {dispBO < 0 ? dispBO : '\u2713'}
+                      </td>
+                      <td className="td" style={{ fontSize: 11, color: '#64748B' }}>
+                        {o.arrivalCheckedBy || '\u2014'}
+                      </td>
+                      <td className="td">
+                        <Pill
+                          bg={
+                            (o.qtyReceived || 0) >= o.quantity && o.quantity > 0
+                              ? '#D1FAE5'
                               : o.arrivalDate && (o.qtyReceived || 0) < o.quantity
-                                ? `${o.qtyReceived || 0}/${o.quantity} Back Order`
-                                : `0/${o.quantity} Awaiting`}
-                          </Pill>
-                        </td>
-                        <td className="td">
-                          <button
-                            className={hasPending || !o.arrivalDate ? 'bp' : 'bs'}
-                            disabled={!hasPending && !!o.arrivalDate}
-                            onClick={() => confirmArrival(o.id)}
-                            style={{
-                              padding: '4px 10px',
-                              fontSize: 11,
-                              borderRadius: 6,
-                              opacity: hasPending || !o.arrivalDate ? 1 : 0.4,
-                              cursor: hasPending || !o.arrivalDate ? 'pointer' : 'default',
-                            }}
-                          >
-                            {hasPending
-                              ? o.arrivalDate
-                                ? 'Update'
-                                : 'Confirm'
-                              : o.arrivalDate
-                                ? o.status === 'Received'
-                                  ? '\u2713 Done'
-                                  : 'Confirmed'
-                                : 'Confirm'}
-                          </button>
-                        </td>
-                      </tr>
-                    );
-                  })}
+                                ? '#FEE2E2'
+                                : '#FEF3C7'
+                          }
+                          color={
+                            (o.qtyReceived || 0) >= o.quantity && o.quantity > 0
+                              ? '#059669'
+                              : o.arrivalDate && (o.qtyReceived || 0) < o.quantity
+                                ? '#DC2626'
+                                : '#D97706'
+                          }
+                        >
+                          {(o.qtyReceived || 0) >= o.quantity && o.quantity > 0
+                            ? `${o.qtyReceived || 0}/${o.quantity} Arrived`
+                            : o.arrivalDate && (o.qtyReceived || 0) < o.quantity
+                              ? `${o.qtyReceived || 0}/${o.quantity} Back Order`
+                              : `0/${o.quantity} Awaiting`}
+                        </Pill>
+                      </td>
+                      <td className="td">
+                        <button
+                          className={hasPending || !o.arrivalDate ? 'bp' : 'bs'}
+                          disabled={!hasPending && !!o.arrivalDate}
+                          onClick={() => confirmArrival(o.id)}
+                          style={{
+                            padding: '4px 10px',
+                            fontSize: 11,
+                            borderRadius: 6,
+                            opacity: hasPending || !o.arrivalDate ? 1 : 0.4,
+                            cursor: hasPending || !o.arrivalDate ? 'pointer' : 'default',
+                          }}
+                        >
+                          {hasPending
+                            ? o.arrivalDate
+                              ? 'Update'
+                              : 'Confirm'
+                            : o.arrivalDate
+                              ? o.status === 'Received'
+                                ? '\u2713 Done'
+                                : 'Confirmed'
+                              : 'Confirm'}
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
             {/* Single Orders pagination */}
-            {singleTotalPages > 1 && (
-              <div
-                style={{
-                  display: 'flex',
-                  justifyContent: 'center',
-                  alignItems: 'center',
-                  gap: 12,
-                  paddingTop: 12,
-                  marginTop: 8,
-                }}
-              >
-                <button
-                  className="bs"
-                  disabled={singlePage === 0}
-                  onClick={() => setSinglePage((p) => p - 1)}
-                  style={{ padding: '4px 10px', fontSize: 11 }}
-                >
-                  <ChevronLeft size={14} />
-                </button>
-                <span style={{ fontSize: 12, color: '#64748B' }}>
-                  Page {singlePage + 1} / {singleTotalPages}
-                </span>
-                <button
-                  className="bs"
-                  disabled={singlePage >= singleTotalPages - 1}
-                  onClick={() => setSinglePage((p) => p + 1)}
-                  style={{ padding: '4px 10px', fontSize: 11 }}
-                >
-                  <ChevronRight size={14} />
-                </button>
-              </div>
-            )}
+            <Pagination {...singleView} {...singlePager} unit="orders" />
             <div
               style={{
                 display: 'flex',
@@ -1510,8 +1377,8 @@ const DeliveryPage = ({
           : [...arrivalFiltered].sort(
               (a, b) => (arrivalPriority[getArrivalCond(a)] ?? 9) - (arrivalPriority[getArrivalCond(b)] ?? 9),
             );
-        const allTotalPages = Math.max(1, Math.ceil(arrivalSorted.length / allPageSize));
-        const allPageItems = arrivalSorted.slice(allPage * allPageSize, (allPage + 1) * allPageSize);
+        const allView = paginate(arrivalSorted, allPager.page, allPager.pageSize);
+        const allPageItems = allView.pageItems;
         return (
           <div className="card" style={{ overflow: 'hidden' }}>
             <div style={{ padding: '16px 20px', borderBottom: '1px solid #E8ECF0' }}>
@@ -1538,28 +1405,6 @@ const DeliveryPage = ({
                     <span>
                       {arrivalSorted.length} of {approvedOrders.length}
                     </span>
-                    <span style={{ margin: '0 2px' }}>|</span>
-                    <span>Show</span>
-                    <select
-                      value={allPageSize}
-                      onChange={(e) => {
-                        setAllPageSize(Number(e.target.value));
-                        setAllPage(0);
-                      }}
-                      style={{
-                        padding: '2px 6px',
-                        borderRadius: 6,
-                        border: '1px solid #E2E8F0',
-                        fontSize: 11,
-                        cursor: 'pointer',
-                      }}
-                    >
-                      {PAGE_SIZE_OPTIONS.map((n) => (
-                        <option key={n} value={n}>
-                          {n}
-                        </option>
-                      ))}
-                    </select>
                   </div>
                 </div>
               </div>
@@ -1576,7 +1421,6 @@ const DeliveryPage = ({
                       key={t}
                       onClick={() => {
                         setArrivalTypeFilter(t);
-                        setAllPage(0);
                       }}
                       style={{
                         padding: '5px 12px',
@@ -1617,7 +1461,6 @@ const DeliveryPage = ({
                       key={s}
                       onClick={() => {
                         setArrivalStatusFilter(s);
-                        setAllPage(0);
                       }}
                       style={{
                         padding: '5px 12px',
@@ -1765,38 +1608,7 @@ const DeliveryPage = ({
               </table>
             </div>
             {/* All Orders pagination */}
-            {allTotalPages > 1 && (
-              <div
-                style={{
-                  display: 'flex',
-                  justifyContent: 'center',
-                  alignItems: 'center',
-                  gap: 12,
-                  padding: '12px 20px',
-                  borderTop: '1px solid #E8ECF0',
-                }}
-              >
-                <button
-                  className="bs"
-                  disabled={allPage === 0}
-                  onClick={() => setAllPage((p) => p - 1)}
-                  style={{ padding: '4px 10px', fontSize: 11 }}
-                >
-                  <ChevronLeft size={14} />
-                </button>
-                <span style={{ fontSize: 12, color: '#64748B' }}>
-                  Page {allPage + 1} / {allTotalPages}
-                </span>
-                <button
-                  className="bs"
-                  disabled={allPage >= allTotalPages - 1}
-                  onClick={() => setAllPage((p) => p + 1)}
-                  style={{ padding: '4px 10px', fontSize: 11 }}
-                >
-                  <ChevronRight size={14} />
-                </button>
-              </div>
-            )}
+            <Pagination {...allView} {...allPager} unit="orders" />
           </div>
         );
       })()}

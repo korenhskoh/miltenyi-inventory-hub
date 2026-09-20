@@ -4,6 +4,7 @@ import { Upload, Check, X, Download, Search, Trash2 } from 'lucide-react';
 import { fmtDate, exportToFile } from '../utils.js';
 import { todayLocal } from '../lib/dates.js';
 import { Pill, BatchBar, BatchBtn, SelBox } from '../components/ui.jsx';
+import Pagination, { usePagination } from '../components/Pagination.jsx';
 
 /** Split one CSV line into cells, respecting double-quoted fields (with "" escapes). */
 const splitCsvLine = (line) => {
@@ -123,6 +124,20 @@ const StockCheckPage = ({
 }) => {
   // Id of the stock check currently being performed (not necessarily index 0 of the list)
   const [activeCheckId, setActiveCheckId] = useState(null);
+
+  // Stock check history: filter first, then page the filtered list.
+  const filteredChecks = stockChecks.filter(
+    (r) =>
+      !stockCheckSearch ||
+      [r.id, r.checkedBy, r.notes || '', r.status].join(' ').toLowerCase().includes(stockCheckSearch.toLowerCase()),
+  );
+  const historyPager = usePagination(filteredChecks, {
+    storageKey: 'stockchecks',
+    initialSize: 50,
+    resetKey: stockCheckSearch,
+  });
+  const historyRows = historyPager.pageItems;
+  const selectionBeyondPage = selStockChecks.size > historyRows.filter((r) => selStockChecks.has(r.id)).length;
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 20 }}>
@@ -531,7 +546,9 @@ const StockCheckPage = ({
               />
             </div>
             {selStockChecks.size > 0 && (
-              <span style={{ fontSize: 11, color: '#DC2626', fontWeight: 600 }}>{selStockChecks.size} selected</span>
+              <span style={{ fontSize: 11, color: '#DC2626', fontWeight: 600 }}>
+                {selStockChecks.size} selected{selectionBeyondPage ? ' across all pages' : ''}
+              </span>
             )}
           </div>
         </div>
@@ -560,124 +577,117 @@ const StockCheckPage = ({
             </tr>
           </thead>
           <tbody>
-            {(() => {
-              const fs = stockChecks.filter(
-                (r) =>
-                  !stockCheckSearch ||
-                  [r.id, r.checkedBy, r.notes || '', r.status]
-                    .join(' ')
-                    .toLowerCase()
-                    .includes(stockCheckSearch.toLowerCase()),
-              );
-              return fs.length === 0 ? (
-                <tr>
-                  <td
-                    colSpan={hasPermission('deleteStockChecks') ? 9 : 8}
-                    style={{ padding: 24, textAlign: 'center', color: '#94A3B8', fontSize: 13 }}
-                  >
-                    {stockChecks.length === 0 ? 'No stock checks recorded yet' : 'No stock checks match your search.'}
+            {filteredChecks.length === 0 ? (
+              <tr>
+                <td
+                  colSpan={hasPermission('deleteStockChecks') ? 9 : 8}
+                  style={{ padding: 24, textAlign: 'center', color: '#94A3B8', fontSize: 13 }}
+                >
+                  {stockChecks.length === 0 ? 'No stock checks recorded yet' : 'No stock checks match your search.'}
+                </td>
+              </tr>
+            ) : (
+              historyRows.map((r) => (
+                <tr
+                  key={r.id}
+                  className="tr"
+                  style={{
+                    borderBottom: '1px solid #F7FAFC',
+                    background: selStockChecks.has(r.id) ? '#FEF3C7' : '#fff',
+                  }}
+                >
+                  {hasPermission('deleteStockChecks') && (
+                    <td className="td">
+                      <SelBox
+                        checked={selStockChecks.has(r.id)}
+                        onChange={() => toggleSel(selStockChecks, setSelStockChecks, r.id)}
+                      />
+                    </td>
+                  )}
+                  <td className="td mono" style={{ fontSize: 11, fontWeight: 600, color: '#0B7A3E' }}>
+                    {r.id}
                   </td>
-                </tr>
-              ) : (
-                fs.map((r) => (
-                  <tr
-                    key={r.id}
-                    className="tr"
+                  <td className="td">{fmtDate(r.date)}</td>
+                  <td className="td">{r.checkedBy}</td>
+                  <td className="td" style={{ fontWeight: 600, textAlign: 'center' }}>
+                    {r.items}
+                  </td>
+                  <td className="td" style={{ textAlign: 'center' }}>
+                    <Pill bg={r.disc > 0 ? '#FEE2E2' : '#D1FAE5'} color={r.disc > 0 ? '#DC2626' : '#059669'}>
+                      {r.disc}
+                    </Pill>
+                  </td>
+                  <td className="td">
+                    <Pill
+                      bg={r.status === 'Completed' ? '#D1FAE5' : '#FEF3C7'}
+                      color={r.status === 'Completed' ? '#059669' : '#D97706'}
+                    >
+                      {r.status}
+                    </Pill>
+                  </td>
+                  <td
+                    className="td"
                     style={{
-                      borderBottom: '1px solid #F7FAFC',
-                      background: selStockChecks.has(r.id) ? '#FEF3C7' : '#fff',
+                      color: '#64748B',
+                      fontSize: 11,
+                      maxWidth: 180,
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
                     }}
                   >
-                    {hasPermission('deleteStockChecks') && (
-                      <td className="td">
-                        <SelBox
-                          checked={selStockChecks.has(r.id)}
-                          onChange={() => toggleSel(selStockChecks, setSelStockChecks, r.id)}
-                        />
-                      </td>
-                    )}
-                    <td className="td mono" style={{ fontSize: 11, fontWeight: 600, color: '#0B7A3E' }}>
-                      {r.id}
-                    </td>
-                    <td className="td">{fmtDate(r.date)}</td>
-                    <td className="td">{r.checkedBy}</td>
-                    <td className="td" style={{ fontWeight: 600, textAlign: 'center' }}>
-                      {r.items}
-                    </td>
-                    <td className="td" style={{ textAlign: 'center' }}>
-                      <Pill bg={r.disc > 0 ? '#FEE2E2' : '#D1FAE5'} color={r.disc > 0 ? '#DC2626' : '#059669'}>
-                        {r.disc}
-                      </Pill>
-                    </td>
-                    <td className="td">
-                      <Pill
-                        bg={r.status === 'Completed' ? '#D1FAE5' : '#FEF3C7'}
-                        color={r.status === 'Completed' ? '#059669' : '#D97706'}
-                      >
-                        {r.status}
-                      </Pill>
-                    </td>
-                    <td
-                      className="td"
-                      style={{
-                        color: '#64748B',
-                        fontSize: 11,
-                        maxWidth: 180,
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                        whiteSpace: 'nowrap',
-                      }}
-                    >
-                      {r.notes || '\u2014'}
-                    </td>
-                    <td className="td">
-                      <div style={{ display: 'flex', gap: 4 }}>
-                        {r.status === 'Completed' && (
-                          <button
-                            className="bs"
-                            style={{ padding: '4px 8px', fontSize: 11 }}
-                            onClick={() => {
-                              try {
-                                exportStockCheckReport(r);
-                                notify('Report Downloaded', `${r.id} exported`, 'success');
-                              } catch {
-                                notify('Export Failed', `Could not export ${r.id}`, 'error');
-                              }
-                            }}
-                          >
-                            <Download size={12} />
-                          </button>
-                        )}
-                        {hasPermission('deleteStockChecks') && (
-                          <button
-                            onClick={() => {
-                              if (window.confirm(`Delete stock check ${r.id}?`)) {
-                                setStockChecks((prev) => prev.filter((x) => x.id !== r.id));
-                                dbSync(api.deleteStockCheck(r.id), 'Stock check delete not saved');
-                                notify('Deleted', r.id, 'success');
-                              }
-                            }}
-                            style={{
-                              background: '#DC2626',
-                              color: '#fff',
-                              border: 'none',
-                              borderRadius: 6,
-                              padding: '4px 8px',
-                              fontSize: 10,
-                              cursor: 'pointer',
-                            }}
-                          >
-                            <Trash2 size={11} />
-                          </button>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                ))
-              );
-            })()}
+                    {r.notes || '\u2014'}
+                  </td>
+                  <td className="td">
+                    <div style={{ display: 'flex', gap: 4 }}>
+                      {r.status === 'Completed' && (
+                        <button
+                          className="bs"
+                          style={{ padding: '4px 8px', fontSize: 11 }}
+                          onClick={() => {
+                            try {
+                              exportStockCheckReport(r);
+                              notify('Report Downloaded', `${r.id} exported`, 'success');
+                            } catch {
+                              notify('Export Failed', `Could not export ${r.id}`, 'error');
+                            }
+                          }}
+                        >
+                          <Download size={12} />
+                        </button>
+                      )}
+                      {hasPermission('deleteStockChecks') && (
+                        <button
+                          onClick={() => {
+                            if (window.confirm(`Delete stock check ${r.id}?`)) {
+                              setStockChecks((prev) => prev.filter((x) => x.id !== r.id));
+                              dbSync(api.deleteStockCheck(r.id), 'Stock check delete not saved');
+                              notify('Deleted', r.id, 'success');
+                            }
+                          }}
+                          style={{
+                            background: '#DC2626',
+                            color: '#fff',
+                            border: 'none',
+                            borderRadius: 6,
+                            padding: '4px 8px',
+                            fontSize: 10,
+                            cursor: 'pointer',
+                          }}
+                        >
+                          <Trash2 size={11} />
+                        </button>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              ))
+            )}
           </tbody>
         </table>
+        <div style={{ padding: '4px 20px 10px' }}>
+          <Pagination {...historyPager} unit="stock checks" />
+        </div>
       </div>
     </div>
   );

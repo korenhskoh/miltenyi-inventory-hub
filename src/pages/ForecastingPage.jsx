@@ -2,6 +2,7 @@ import { TrendingUp, Settings, ClipboardList, Search, Plus, Check, Trash2 } from
 import { ResponsiveContainer, LineChart, CartesianGrid, XAxis, YAxis, Tooltip, Line } from 'recharts';
 import { fmt, fmtDate } from '../utils.js';
 import { Pill, ExportDropdown } from '../components/ui.jsx';
+import Pagination, { usePagination } from '../components/Pagination.jsx';
 
 const ForecastingPage = ({
   orders,
@@ -123,6 +124,22 @@ const ForecastingPage = ({
       vals.length >= 3 ? Math.sqrt(vals.slice(-3).reduce((s, v) => s + Math.pow(v - avg, 2), 0) / 3) : 999;
     const confidence = variance < avg * 0.3 ? 'High' : variance < avg * 0.7 ? 'Medium' : 'Low';
     return { ...mat, avgMonthly: avg, trend, predicted, confidence, monthCount: vals.length };
+  });
+
+  // Machine registry: filter first, then page the filtered list.
+  const filteredMachines = machines.filter(
+    (m) =>
+      !machineSearch ||
+      [m.name, m.modality, m.location, m.status].join(' ').toLowerCase().includes(machineSearch.toLowerCase()),
+  );
+  const machinePager = usePagination(filteredMachines, {
+    storageKey: 'forecast-machines',
+    initialSize: 100,
+    resetKey: machineSearch,
+  });
+  const summaryPager = usePagination(forecastSummary, {
+    storageKey: 'forecast-summary',
+    initialSize: 50,
   });
 
   // Modality stats
@@ -581,80 +598,73 @@ const ForecastingPage = ({
                 </tr>
               </thead>
               <tbody>
-                {(() => {
-                  const fm = machines.filter(
-                    (m) =>
-                      !machineSearch ||
-                      [m.name, m.modality, m.location, m.status]
-                        .join(' ')
-                        .toLowerCase()
-                        .includes(machineSearch.toLowerCase()),
-                  );
-                  return fm.length === 0 ? (
-                    <tr>
-                      <td colSpan={6} style={{ padding: 24, textAlign: 'center', color: '#94A3B8', fontSize: 13 }}>
-                        {machines.length === 0
-                          ? 'No machines added yet. Add machines to improve forecast accuracy.'
-                          : 'No machines match your search.'}
+                {filteredMachines.length === 0 ? (
+                  <tr>
+                    <td colSpan={6} style={{ padding: 24, textAlign: 'center', color: '#94A3B8', fontSize: 13 }}>
+                      {machines.length === 0
+                        ? 'No machines added yet. Add machines to improve forecast accuracy.'
+                        : 'No machines match your search.'}
+                    </td>
+                  </tr>
+                ) : (
+                  machinePager.pageItems.map((m) => (
+                    <tr key={m.id} className="tr" style={{ borderBottom: '1px solid #F7FAFC' }}>
+                      <td className="td" style={{ fontWeight: 600 }}>
+                        {m.name}
+                      </td>
+                      <td className="td">
+                        <Pill bg="#EDE9FE" color="#7C3AED">
+                          {m.modality}
+                        </Pill>
+                      </td>
+                      <td className="td" style={{ color: '#64748B' }}>
+                        {m.location || '\u2014'}
+                      </td>
+                      <td className="td" style={{ fontSize: 11, color: '#94A3B8' }}>
+                        {m.installDate ? fmtDate(m.installDate) : '\u2014'}
+                      </td>
+                      <td className="td">
+                        <Pill
+                          bg={m.status === 'Active' ? '#D1FAE5' : m.status === 'Inactive' ? '#FEF3C7' : '#F3F4F6'}
+                          color={m.status === 'Active' ? '#059669' : m.status === 'Inactive' ? '#D97706' : '#64748B'}
+                        >
+                          {m.status}
+                        </Pill>
+                      </td>
+                      <td className="td">
+                        <button
+                          onClick={() => {
+                            if (window.confirm(`Delete machine "${m.name}"?`)) {
+                              setMachines((prev) => prev.filter((x) => x.id !== m.id));
+                              dbSync(api.deleteMachine(m.id), 'Machine delete failed');
+                              logAction('delete', 'machine', String(m.id), { name: m.name });
+                              notify('Deleted', m.name, 'success');
+                            }
+                          }}
+                          style={{
+                            background: '#DC2626',
+                            color: '#fff',
+                            border: 'none',
+                            borderRadius: 6,
+                            padding: '4px 8px',
+                            fontSize: 10,
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 3,
+                          }}
+                        >
+                          <Trash2 size={11} /> Delete
+                        </button>
                       </td>
                     </tr>
-                  ) : (
-                    fm.map((m) => (
-                      <tr key={m.id} className="tr" style={{ borderBottom: '1px solid #F7FAFC' }}>
-                        <td className="td" style={{ fontWeight: 600 }}>
-                          {m.name}
-                        </td>
-                        <td className="td">
-                          <Pill bg="#EDE9FE" color="#7C3AED">
-                            {m.modality}
-                          </Pill>
-                        </td>
-                        <td className="td" style={{ color: '#64748B' }}>
-                          {m.location || '\u2014'}
-                        </td>
-                        <td className="td" style={{ fontSize: 11, color: '#94A3B8' }}>
-                          {m.installDate ? fmtDate(m.installDate) : '\u2014'}
-                        </td>
-                        <td className="td">
-                          <Pill
-                            bg={m.status === 'Active' ? '#D1FAE5' : m.status === 'Inactive' ? '#FEF3C7' : '#F3F4F6'}
-                            color={m.status === 'Active' ? '#059669' : m.status === 'Inactive' ? '#D97706' : '#64748B'}
-                          >
-                            {m.status}
-                          </Pill>
-                        </td>
-                        <td className="td">
-                          <button
-                            onClick={() => {
-                              if (window.confirm(`Delete machine "${m.name}"?`)) {
-                                setMachines((prev) => prev.filter((x) => x.id !== m.id));
-                                dbSync(api.deleteMachine(m.id), 'Machine delete failed');
-                                logAction('delete', 'machine', String(m.id), { name: m.name });
-                                notify('Deleted', m.name, 'success');
-                              }
-                            }}
-                            style={{
-                              background: '#DC2626',
-                              color: '#fff',
-                              border: 'none',
-                              borderRadius: 6,
-                              padding: '4px 8px',
-                              fontSize: 10,
-                              cursor: 'pointer',
-                              display: 'flex',
-                              alignItems: 'center',
-                              gap: 3,
-                            }}
-                          >
-                            <Trash2 size={11} /> Delete
-                          </button>
-                        </td>
-                      </tr>
-                    ))
-                  );
-                })()}
+                  ))
+                )}
               </tbody>
             </table>
+            <div style={{ padding: '4px 16px 10px' }}>
+              <Pagination {...machinePager} unit="machines" />
+            </div>
           </div>
         </div>
       )}
@@ -711,7 +721,7 @@ const ForecastingPage = ({
                       </td>
                     </tr>
                   ) : (
-                    forecastSummary.map((m, i) => (
+                    summaryPager.pageItems.map((m, i) => (
                       <tr
                         key={m.materialNo}
                         className="tr"
@@ -772,6 +782,9 @@ const ForecastingPage = ({
                   )}
                 </tbody>
               </table>
+            </div>
+            <div style={{ padding: '4px 16px 10px' }}>
+              <Pagination {...summaryPager} unit="materials" />
             </div>
           </div>
         </div>

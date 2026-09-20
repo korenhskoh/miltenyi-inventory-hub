@@ -9,7 +9,10 @@ export function paginate(query) {
 // The SPA loads several tables wholesale and derives totals / bulk-group
 // membership from them, so a silent 50-row cap corrupts those calculations.
 export function wantsAll(query) {
-  return query.all === 'true' || query.all === '1';
+  // A repeated ?all=true&all=true arrives as an array; treat any truthy
+  // occurrence as the request it plainly is rather than silently paging.
+  const v = Array.isArray(query.all) ? query.all[0] : query.all;
+  return v === 'true' || v === '1' || v === true;
 }
 
 // Build the trailing LIMIT/OFFSET clause (or nothing when returning all rows).
