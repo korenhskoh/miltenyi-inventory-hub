@@ -27,6 +27,7 @@ import * as XLSX from 'xlsx';
 import api from '../api.js';
 import { toLocalYmd, todayLocal, daysFromNowLocal, normalizeDate } from '../lib/dates.js';
 import Pagination, { usePagination } from '../components/Pagination.jsx';
+import { CountUp, FadeIn } from '../components/motion.jsx';
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -176,7 +177,9 @@ function SummaryCard({ label, value, icon, color, sub, onClick, active }) {
       <div className={className}>
         <div className="svc-card__icon">{icon}</div>
         <div className="svc-card__body">
-          <div className="svc-card__value">{value}</div>
+          <div className="svc-card__value">
+            <CountUp value={value} />
+          </div>
           <div className="svc-card__label">{label}</div>
           {sub && <div className="svc-card__sub">{sub}</div>}
         </div>
@@ -193,7 +196,9 @@ function SummaryCard({ label, value, icon, color, sub, onClick, active }) {
     >
       <div className="svc-card__icon">{icon}</div>
       <div className="svc-card__body">
-        <div className="svc-card__value">{value}</div>
+        <div className="svc-card__value">
+          <CountUp value={value} />
+        </div>
         <div className="svc-card__label">{label}</div>
         {sub && <div className="svc-card__sub">{sub}</div>}
       </div>
@@ -1024,7 +1029,11 @@ function ImportModal({ isAdmin, region = 'local', onImport, onClose }) {
                   <AlertTriangle size={48} style={{ color: '#ef4444' }} />
                 )}
                 <h3 style={{ marginTop: 8 }}>
-                  {result.inserted > 0 ? 'Import Complete' : result.skipped?.length > 0 ? 'Nothing New to Import' : 'Import Failed'}
+                  {result.inserted > 0
+                    ? 'Import Complete'
+                    : result.skipped?.length > 0
+                      ? 'Nothing New to Import'
+                      : 'Import Failed'}
                 </h3>
                 <p style={{ color: 'var(--svc-text-muted)' }}>
                   ✅ {result.inserted} instrument(s) imported successfully
@@ -1233,7 +1242,7 @@ function Dashboard({ summary, machines, region = 'local' }) {
             <p>{tile ? `No instruments match ${heading}.` : 'All instruments are up to date. No action required!'}</p>
           </div>
         ) : (
-          <div className="svc-alert-table-wrapper">
+          <FadeIn key={tile ?? 'attention'} className="svc-alert-table-wrapper">
             <table className="svc-table">
               <thead>
                 <tr>
@@ -1247,38 +1256,38 @@ function Dashboard({ summary, machines, region = 'local' }) {
               </thead>
               <tbody>
                 {pager.pageItems.map((m) => {
-                    const dl = isOverseas ? daysLeftFromToday(m.warrantyEnd) : null;
-                    const dlCls =
-                      dl === null ? 'badge-gray' : dl < 0 ? 'badge-red' : dl <= 30 ? 'badge-amber' : 'badge-green';
-                    return (
-                      <tr key={m.id}>
-                        <td>{m.name || '\u2014'}</td>
-                        <td>
-                          <span className="svc-mono">{m.serialNumber || '\u2014'}</span>
-                        </td>
-                        <td>{(isOverseas ? m.country : m.customerName) || '\u2014'}</td>
-                        <td>{isOverseas ? fmtDate(m.warrantyEnd) : m.modality}</td>
-                        <td>
-                          {isOverseas ? (
-                            dl === null ? (
-                              '\u2014'
-                            ) : (
-                              <span className={`svc-badge ${dlCls}`}>{dl} day(s)</span>
-                            )
+                  const dl = isOverseas ? daysLeftFromToday(m.warrantyEnd) : null;
+                  const dlCls =
+                    dl === null ? 'badge-gray' : dl < 0 ? 'badge-red' : dl <= 30 ? 'badge-amber' : 'badge-green';
+                  return (
+                    <tr key={m.id}>
+                      <td>{m.name || '\u2014'}</td>
+                      <td>
+                        <span className="svc-mono">{m.serialNumber || '\u2014'}</span>
+                      </td>
+                      <td>{(isOverseas ? m.country : m.customerName) || '\u2014'}</td>
+                      <td>{isOverseas ? fmtDate(m.warrantyEnd) : m.modality}</td>
+                      <td>
+                        {isOverseas ? (
+                          dl === null ? (
+                            '\u2014'
                           ) : (
-                            <MaintBadge status={maintenanceStatus(m)} />
-                          )}
-                        </td>
-                        <td>
-                          <ContractBadge status={contractStatus(m)} />
-                        </td>
-                      </tr>
-                    );
-                  })}
+                            <span className={`svc-badge ${dlCls}`}>{dl} day(s)</span>
+                          )
+                        ) : (
+                          <MaintBadge status={maintenanceStatus(m)} />
+                        )}
+                      </td>
+                      <td>
+                        <ContractBadge status={contractStatus(m)} />
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
             <Pagination {...pager} unit="instruments" />
-          </div>
+          </FadeIn>
         )}
       </div>
     </div>
