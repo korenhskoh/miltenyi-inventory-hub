@@ -166,16 +166,38 @@ function MaintBadge({ status }) {
 
 // ─── Summary Card ─────────────────────────────────────────────────────────────
 
-function SummaryCard({ label, value, icon, color, sub }) {
+function SummaryCard({ label, value, icon, color, sub, onClick, active }) {
+  const interactive = typeof onClick === 'function';
+  const className = `svc-card svc-card--${color}${interactive ? ' svc-card--clickable' : ''}${
+    active ? ' svc-card--active' : ''
+  }`;
+  if (!interactive) {
+    return (
+      <div className={className}>
+        <div className="svc-card__icon">{icon}</div>
+        <div className="svc-card__body">
+          <div className="svc-card__value">{value}</div>
+          <div className="svc-card__label">{label}</div>
+          {sub && <div className="svc-card__sub">{sub}</div>}
+        </div>
+      </div>
+    );
+  }
   return (
-    <div className={`svc-card svc-card--${color}`}>
+    <button
+      type="button"
+      className={className}
+      onClick={onClick}
+      aria-pressed={active}
+      title={active ? `Showing ${label} — click to clear` : `Show only ${label}`}
+    >
       <div className="svc-card__icon">{icon}</div>
       <div className="svc-card__body">
         <div className="svc-card__value">{value}</div>
         <div className="svc-card__label">{label}</div>
         {sub && <div className="svc-card__sub">{sub}</div>}
       </div>
-    </div>
+    </button>
   );
 }
 
@@ -1086,8 +1108,55 @@ function ImportModal({ isAdmin, region = 'local', onImport, onClose }) {
 
 // ─── Dashboard Sub-view ──────────────────────────────────────────────────────
 
+// What each summary tile shows when you tap it. `null` is the default view —
+// everything that needs attention — which is what you get back by tapping the
+// active tile again.
+const TILE_FILTERS = {
+  all: { heading: 'All Instruments', match: () => true },
+  due: { heading: 'Upcoming Maintenance', match: (m) => maintenanceStatus(m) === 'Due' },
+  overdue: { heading: 'Overdue Maintenance', match: (m) => maintenanceStatus(m) === 'Overdue' },
+  active: { heading: 'Active Contracts', match: (m) => contractStatus(m) === 'Active' },
+  expiring: { heading: 'Expiring Contracts', match: (m) => contractStatus(m) === 'Expiring' },
+  expired: { heading: 'Expired Contracts', match: (m) => contractStatus(m) === 'Expired' },
+};
+
 function Dashboard({ summary, machines, region = 'local' }) {
   const isOverseas = region === 'overseas';
+  const [tile, setTile] = useState(null);
+
+  // Tapping the tile that is already selected clears it, so the tiles toggle
+  // rather than trapping you in a filtered view with no way back.
+  const toggleTile = (key) => setTile((prev) => (prev === key ? null : key));
+
+  const needsAttention = useCallback(
+    (m) => {
+      if (isOverseas) {
+        const dl = daysLeftFromToday(m.warrantyEnd);
+        const warrantyAlert = dl !== null && dl <= 30;
+        return contractStatus(m) === 'Expired' || contractStatus(m) === 'Expiring' || warrantyAlert;
+      }
+      return (
+        contractStatus(m) === 'Expired' ||
+        contractStatus(m) === 'Expiring' ||
+        maintenanceStatus(m) === 'Overdue' ||
+        maintenanceStatus(m) === 'Due'
+      );
+    },
+    [isOverseas],
+  );
+
+  const visible = useMemo(
+    () => machines.filter(tile ? TILE_FILTERS[tile].match : needsAttention),
+    [machines, tile, needsAttention],
+  );
+
+  const heading = tile ? TILE_FILTERS[tile].heading : 'Attention Required';
+  const pager = usePagination(visible, {
+    storageKey: 'service-dash',
+    initialSize: 25,
+    resetKey: `${region}:${tile ?? 'attention'}`,
+  });
+
   return (
     <div className="svc-dashboard">
       <div className="svc-dash-grid">
@@ -1097,6 +1166,8 @@ function Dashboard({ summary, machines, region = 'local' }) {
           icon={<Wrench size={22} />}
           color="blue"
           sub="All registered"
+          onClick={() => toggleTile('all')}
+          active={tile === 'all'}
         />
         <SummaryCard
           label="Upcoming Maintenance"
@@ -1104,6 +1175,8 @@ function Dashboard({ summary, machines, region = 'local' }) {
           icon={<Clock size={22} />}
           color="amber"
           sub="Within 30 days"
+          onClick={() => toggleTile('due')}
+          active={tile === 'due'}
         />
         <SummaryCard
           label="Overdue Maintenance"
@@ -1111,6 +1184,8 @@ function Dashboard({ summary, machines, region = 'local' }) {
           icon={<AlertTriangle size={22} />}
           color="red"
           sub="Past due date"
+          onClick={() => toggleTile('overdue')}
+          active={tile === 'overdue'}
         />
         <SummaryCard
           label="Active Contracts"
@@ -1118,6 +1193,8 @@ function Dashboard({ summary, machines, region = 'local' }) {
           icon={<CheckCircle size={22} />}
           color="green"
           sub="Currently active"
+          onClick={() => toggleTile('active')}
+          active={tile === 'active'}
         />
         <SummaryCard
           label="Expiring Contracts"
@@ -1125,6 +1202,8 @@ function Dashboard({ summary, machines, region = 'local' }) {
           icon={<Calendar size={22} />}
           color="amber"
           sub="Within 30 days"
+          onClick={() => toggleTile('expiring')}
+          active={tile === 'expiring'}
         />
         <SummaryCard
           label="Expired Contracts"
@@ -1132,28 +1211,26 @@ function Dashboard({ summary, machines, region = 'local' }) {
           icon={<XCircle size={22} />}
           color="red"
           sub="Action required"
+          onClick={() => toggleTile('expired')}
+          active={tile === 'expired'}
         />
       </div>
 
-      {/* Recent Alerts */}
+      {/* The list below follows whichever tile is selected; with none selected it
+          is the default "needs attention" view. */}
       <div className="svc-alerts-section">
-        <h3 className="svc-section-heading">Attention Required</h3>
-        {machines.filter((m) => {
-          if (isOverseas) {
-            const dl = daysLeftFromToday(m.warrantyEnd);
-            const warrantyAlert = dl !== null && dl <= 30;
-            return contractStatus(m) === 'Expired' || contractStatus(m) === 'Expiring' || warrantyAlert;
-          }
-          return (
-            contractStatus(m) === 'Expired' ||
-            contractStatus(m) === 'Expiring' ||
-            maintenanceStatus(m) === 'Overdue' ||
-            maintenanceStatus(m) === 'Due'
-          );
-        }).length === 0 ? (
+        <div className="svc-alerts-head">
+          <h3 className="svc-section-heading">{heading}</h3>
+          {tile && (
+            <button type="button" className="svc-filter-clear" onClick={() => setTile(null)}>
+              <XCircle size={12} /> Clear filter
+            </button>
+          )}
+        </div>
+        {visible.length === 0 ? (
           <div className="svc-empty-alert">
             <CheckCircle size={32} style={{ color: '#22c55e' }} />
-            <p>All instruments are up to date. No action required!</p>
+            <p>{tile ? `No instruments match ${heading}.` : 'All instruments are up to date. No action required!'}</p>
           </div>
         ) : (
           <div className="svc-alert-table-wrapper">
@@ -1169,22 +1246,7 @@ function Dashboard({ summary, machines, region = 'local' }) {
                 </tr>
               </thead>
               <tbody>
-                {machines
-                  .filter((m) => {
-                    if (isOverseas) {
-                      const dl = daysLeftFromToday(m.warrantyEnd);
-                      const warrantyAlert = dl !== null && dl <= 30;
-                      return contractStatus(m) === 'Expired' || contractStatus(m) === 'Expiring' || warrantyAlert;
-                    }
-                    return (
-                      contractStatus(m) === 'Expired' ||
-                      contractStatus(m) === 'Expiring' ||
-                      maintenanceStatus(m) === 'Overdue' ||
-                      maintenanceStatus(m) === 'Due'
-                    );
-                  })
-                  .slice(0, 10)
-                  .map((m) => {
+                {pager.pageItems.map((m) => {
                     const dl = isOverseas ? daysLeftFromToday(m.warrantyEnd) : null;
                     const dlCls =
                       dl === null ? 'badge-gray' : dl < 0 ? 'badge-red' : dl <= 30 ? 'badge-amber' : 'badge-green';
@@ -1215,6 +1277,7 @@ function Dashboard({ summary, machines, region = 'local' }) {
                   })}
               </tbody>
             </table>
+            <Pagination {...pager} unit="instruments" />
           </div>
         )}
       </div>
@@ -2976,6 +3039,35 @@ const SERVICE_CSS = `
 
 /* Dashboard */
 .svc-dashboard { padding: 24px 20px; }
+/* Tapping a summary card filters the list underneath it. */
+.svc-card--clickable { cursor: pointer; transition: transform .12s ease, border-color .12s ease, box-shadow .12s ease; }
+.svc-card--clickable:hover { transform: translateY(-2px); border-color: var(--svc-accent, #6366f1); }
+.svc-card--clickable:focus-visible { outline: 2px solid var(--svc-accent, #6366f1); outline-offset: 2px; }
+.svc-card--active {
+  border-color: var(--svc-accent, #6366f1);
+  box-shadow: 0 0 0 1px var(--svc-accent, #6366f1) inset;
+}
+.svc-alerts-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.svc-filter-clear {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+  background: transparent;
+  color: var(--svc-text-muted);
+  border: 1px solid var(--svc-border);
+}
+.svc-filter-clear:hover { color: inherit; border-color: var(--svc-accent, #6366f1); }
 .svc-dash-grid {
   display: grid;
   /* Six summary cards. auto-fill produced five columns at some widths, which
@@ -2999,6 +3091,11 @@ const SERVICE_CSS = `
   border-radius: 12px;
   background: var(--svc-surface);
   border: 1px solid var(--svc-border);
+  /* A card may render as a <button>; keep it looking like a card. */
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  color: inherit;
   transition: transform 0.15s, box-shadow 0.15s;
 }
 .svc-card:hover { transform: translateY(-2px); box-shadow: 0 6px 24px rgba(0,0,0,0.3); }
