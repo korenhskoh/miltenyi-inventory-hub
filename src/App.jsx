@@ -68,6 +68,7 @@ import {
   Shield,
   Lock,
   LogOut,
+  KeyRound,
   QrCode,
   Wifi,
   WifiOff,
@@ -121,6 +122,7 @@ import {
   QRCodeCanvas,
 } from './components/ui.jsx';
 import Pagination, { usePagination } from './components/Pagination.jsx';
+import ChangePasswordModal from './components/ChangePasswordModal.jsx';
 import { todayLocal, toLocalYmd } from './lib/dates.js';
 import { getCatalogPrice, getEffectiveUnitPrice, getEffectiveTotal } from './lib/pricing.js';
 import { computeArrival, arrivalDelta } from './lib/arrival.js';
@@ -193,6 +195,7 @@ export default function App() {
     return mod === 'service' ? 'service' : 'dashboard';
   });
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [showChangePw, setShowChangePw] = useState(false);
   const [ordersMenuOpen, setOrdersMenuOpen] = useState(false);
   const [orders, setOrders] = useState([]);
   const [search, setSearch] = useState('');
@@ -4955,6 +4958,25 @@ export default function App() {
     );
   }
 
+  // ═══════════════════ FORCED PASSWORD CHANGE ══════════════════════
+  // An account still carrying the password the seeder gave it can reach
+  // nothing else until it has chosen its own. This sits ahead of the module
+  // picker deliberately: mounting it inside the module shell meant it never
+  // appeared, because logging in lands on the picker first.
+  if (currentUser?.mustChangePassword === true) {
+    return (
+      <>
+        <ChangePasswordModal
+          open
+          forced
+          onChanged={() => setCurrentUser((u) => (u ? { ...u, mustChangePassword: false } : u))}
+          notify={notify}
+        />
+        <Toast items={notifs} onDismiss={(i) => setNotifs((p) => p.filter((_, j) => j !== i))} />
+      </>
+    );
+  }
+
   // ════════════════════════════ MODULE PICKER ══════════════════════
   if (!activeModule) {
     const moduleCards = [
@@ -5603,6 +5625,15 @@ export default function App() {
               <button
                 className="bs"
                 style={{ padding: '8px 12px', fontSize: 12 }}
+                title="Change your password"
+                onClick={() => setShowChangePw(true)}
+              >
+                <KeyRound size={14} />
+                <span className="logout-text">{sidebarOpen ? 'Password' : ''}</span>
+              </button>
+              <button
+                className="bs"
+                style={{ padding: '8px 12px', fontSize: 12 }}
                 onClick={() => {
                   api.logout();
                   setCurrentUser(null);
@@ -5616,6 +5647,15 @@ export default function App() {
             </div>
           </div>
         </header>
+
+        {/* Opened from the header. The forced variant is handled earlier, ahead
+            of the module picker, so it cannot be skipped. */}
+        <ChangePasswordModal
+          open={showChangePw}
+          onClose={() => setShowChangePw(false)}
+          onChanged={() => setShowChangePw(false)}
+          notify={notify}
+        />
 
         <div className="app-content" style={{ padding: '24px 28px', animation: 'fadeIn .3s' }}>
           {/* ═══════════ DASHBOARD ═══════════ */}

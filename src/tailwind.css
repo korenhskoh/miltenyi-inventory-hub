@@ -14,3 +14,64 @@
  */
 @import 'tailwindcss/theme.css' layer(theme);
 @import 'tailwindcss/utilities.css' layer(utilities);
+
+/*
+ * Theme variables for the vendored Bklit chart components (src/charts/).
+ *
+ * Those components are written against shadcn's CSS-variable theme, which we
+ * do not have — importing shadcn's base layer would bring Preflight with it
+ * and restyle the whole app. Defining just the variables they actually
+ * reference gives them what they need and touches nothing else.
+ *
+ * Values follow the Miltenyi palette already used across the app: the green as
+ * the primary series, with amber and red reserved for warning and alert.
+ */
+:root {
+  --foreground: #1a202c;
+  --muted-foreground: #64748b;
+
+  --chart-background: #ffffff;
+  --chart-foreground: #1a202c;
+  --chart-foreground-muted: #64748b;
+  --chart-label: #64748b;
+  --chart-grid: #e2e8f0;
+  --chart-crosshair: #94a3b8;
+
+  --chart-line-primary: #0b7a3e;
+  --chart-line-secondary: #2563eb;
+
+  --chart-tooltip-background: #0f172a;
+
+  --chart-indicator-color: #0b7a3e;
+  --chart-indicator-secondary-color: #2563eb;
+
+  --chart-marker-background: #ffffff;
+  --chart-marker-border: #0b7a3e;
+  --chart-marker-foreground: #1a202c;
+  --chart-marker-badge-background: #0b7a3e;
+  --chart-marker-badge-foreground: #ffffff;
+  --chart-segment-background: rgb(11 122 62 / 8%);
+
+  /* Categorical series, in the order a multi-series chart should use them. */
+  --chart-1: #0b7a3e;
+  --chart-2: #2563eb;
+  --chart-3: #d97706;
+  --chart-4: #7c3aed;
+  --chart-5: #dc2626;
+}
+
+/* The Service module renders on a dark surface. */
+.svc-root,
+[data-theme='dark'] {
+  --foreground: #e2e8f0;
+  --muted-foreground: #94a3b8;
+  --chart-background: #0f172a;
+  --chart-foreground: #e2e8f0;
+  --chart-foreground-muted: #94a3b8;
+  --chart-label: #94a3b8;
+  --chart-grid: #1e293b;
+  --chart-crosshair: #475569;
+  --chart-tooltip-background: #020617;
+  --chart-marker-background: #0f172a;
+  --chart-marker-foreground: #e2e8f0;
+}
