@@ -14,6 +14,7 @@ export default function AiProviderSettings({ notify }) {
   const [catalog, setCatalog] = useState([]);
   const [cfg, setCfg] = useState(null);
   const [key, setKey] = useState('');
+  const [customModel, setCustomModel] = useState(false);
   const [busy, setBusy] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState(null);
@@ -45,12 +46,18 @@ export default function AiProviderSettings({ notify }) {
   const current = catalog.find((p) => p.id === cfg.provider) || catalog[0];
   const set = (patch) => setCfg((c) => ({ ...c, ...patch }));
 
+  const suggested = current?.suggestedModels || [];
+  // Never present an empty model box: fall back to the provider's default so
+  // the control always shows what will actually be used.
+  const modelValue = (cfg.model || '').trim() || current?.defaultModel || '';
+  const isCustomModel = customModel;
+
   const save = async () => {
     setBusy(true);
     // Only send a key when one was typed; blank means "keep what is stored".
     const payload = {
       provider: cfg.provider,
-      model: cfg.model,
+      model: modelValue,
       baseUrl: cfg.baseUrl,
       temperature: Number(cfg.temperature),
       maxTokens: Number(cfg.maxTokens),
@@ -92,7 +99,10 @@ export default function AiProviderSettings({ notify }) {
               <button
                 key={p.id}
                 type="button"
-                onClick={() => set({ provider: p.id, model: p.defaultModel, baseUrl: p.defaultBaseUrl })}
+                onClick={() => {
+                  setCustomModel(false);
+                  set({ provider: p.id, model: p.defaultModel, baseUrl: p.defaultBaseUrl });
+                }}
                 style={{
                   display: 'flex',
                   alignItems: 'center',
@@ -124,18 +134,46 @@ export default function AiProviderSettings({ notify }) {
 
       <div>
         <label style={label}>Model</label>
-        <input
-          list="ai-model-list"
-          value={cfg.model || ''}
-          onChange={(e) => set({ model: e.target.value })}
+        {/* A real <select>, not a datalist. A datalist renders as a plain text
+            box with no arrow and no visible list until you type, so it read as
+            an empty field with nothing in it — exactly as reported. */}
+        <select
+          value={isCustomModel ? '__custom__' : modelValue}
+          onChange={(e) => {
+            const v = e.target.value;
+            if (v === '__custom__') {
+              setCustomModel(true);
+              return;
+            }
+            setCustomModel(false);
+            set({ model: v });
+          }}
           style={field}
-        />
-        <datalist id="ai-model-list">
-          {(current?.suggestedModels || []).map((m) => (
-            <option key={m} value={m} />
+        >
+          {suggested.map((m) => (
+            <option key={m} value={m}>
+              {m}
+              {m === current?.defaultModel ? ' (recommended)' : ''}
+            </option>
           ))}
-        </datalist>
-        <p style={hint}>Suggestions are listed, but any model id your account can reach will work.</p>
+          {/* A model saved earlier that is not in the suggested list must still
+              show, rather than silently snapping to something else. */}
+          {modelValue && !suggested.includes(modelValue) && <option value={modelValue}>{modelValue}</option>}
+          <option value="__custom__">Custom model id…</option>
+        </select>
+        {isCustomModel && (
+          <input
+            value={cfg.model || ''}
+            onChange={(e) => set({ model: e.target.value })}
+            placeholder={current?.defaultModel}
+            style={{ ...field, marginTop: 8, fontFamily: 'monospace' }}
+          />
+        )}
+        <p style={hint}>
+          {isCustomModel
+            ? 'Any model id your account can reach will work.'
+            : `Defaults to ${current?.defaultModel || '—'} for ${current?.label || 'this provider'}.`}
+        </p>
       </div>
 
       <div>
@@ -242,7 +280,7 @@ export default function AiProviderSettings({ notify }) {
 
       <div style={{ display: 'flex', gap: 8 }}>
         <button className="bp" onClick={save} disabled={busy} style={{ width: 'fit-content' }}>
-          <Check size={14} /> {busy ? 'Saving…' : 'Save Configuration'}
+          <Check size={14} /> {busy ? 'Saving…' : 'Save Model Settings'}
         </button>
         <button
           className="bs"

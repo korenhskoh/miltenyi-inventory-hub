@@ -590,5 +590,19 @@ ok(r.status === 400, 'an oversized question is rejected', String(r.status));
 r = await call('POST', '/api/ai/ask', { message: 'help' }, null);
 ok(r.status === 401, 'the assistant needs a login', String(r.status));
 
+// ── aiBotConfig is co-owned by two forms on one page ──
+// The provider form and the template/greeting form both write this key. A
+// plain replace meant saving one silently reset the other.
+await call('PUT', '/api/config/aiBotConfig', { value: { provider: 'anthropic', model: 'claude-sonnet-4-5', temperature: 0.7, apiKeys: { anthropic: 'sk-ant-merge-test' } } }, admin);
+await call('PUT', '/api/config/aiBotConfig', { value: { template: 'support', greeting: 'Hello', customInstructions: 'Be brief' } }, admin);
+r = await call('GET', '/api/ai/providers', null, admin);
+ok(r.json.config.provider === 'anthropic', 'saving the greeting does not reset the provider', String(r.json.config.provider));
+ok(r.json.config.model === 'claude-sonnet-4-5', 'nor the model', String(r.json.config.model));
+ok(r.json.config.temperature === 0.7, 'nor the generation settings', String(r.json.config.temperature));
+ok(r.json.config.hasKey.anthropic === true, 'nor the stored key', JSON.stringify(r.json.config.hasKey));
+r = await call('GET', '/api/config/aiBotConfig', null, admin);
+ok(r.json.template === 'support' && r.json.greeting === 'Hello', 'and the greeting itself is saved', JSON.stringify({ t: r.json.template, g: r.json.greeting }));
+ok(!JSON.stringify(r.json).includes('sk-ant-merge-test'), 'the merge still never exposes the key');
+
 console.log(`\n${fails === 0 ? 'ALL PASSED' : fails + ' FAILED'}`);
 process.exit(fails ? 1 : 0);

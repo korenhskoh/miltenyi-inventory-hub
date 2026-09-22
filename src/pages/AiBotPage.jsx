@@ -255,7 +255,7 @@ const AiBotPage = ({
             }}
             style={{ width: 'fit-content' }}
           >
-            <Check size={14} /> Save Configuration
+            <Check size={14} /> Save Bot Behaviour
           </button>
         </div>
       </div>
