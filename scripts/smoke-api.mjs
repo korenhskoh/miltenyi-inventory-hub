@@ -521,5 +521,49 @@ ok(r.json.user.mustChangePassword === false, 'the change-password flag is cleare
 r = await call('POST', '/api/auth/change-password', { currentPassword: 'brandnewpw1', newPassword: ADMIN_PW }, r.json.token);
 ok(r.status === 200, 'restored for the rest of the suite');
 
+// ── AI provider configuration ──
+r = await call('GET', '/api/ai/providers', null, admin);
+ok(r.status === 200 && r.json.providers?.length >= 3, 'provider catalog lists every adapter', JSON.stringify(r.json.providers?.map((p) => p.id)));
+ok(r.json.providers.every((p) => p.defaultModel && p.label), 'each provider describes itself for the settings UI');
+ok(r.json.config.provider === 'openai', 'openai is the default provider', String(r.json.config.provider));
+
+// A key must be storable and then NEVER readable back — not through the AI
+// route, and not through the generic config API either.
+r = await call('PUT', '/api/config/aiBotConfig', { value: { provider: 'openai', model: 'gpt-4o-mini', apiKeys: { openai: 'sk-super-secret-value' } } }, admin);
+ok(r.status === 200, 'ai config saved', String(r.status));
+ok(!JSON.stringify(r.json).includes('sk-super-secret-value'), 'the save response does not echo the key back');
+
+r = await call('GET', '/api/config/aiBotConfig', null, admin);
+ok(!JSON.stringify(r.json).includes('sk-super-secret-value'), 'config API never returns the key, even to an admin', JSON.stringify(r.json).slice(0, 150));
+ok(r.json.hasKey?.openai === true, 'but it does report that a key is set', JSON.stringify(r.json.hasKey));
+
+r = await call('GET', '/api/config', null, admin);
+ok(!JSON.stringify(r.json).includes('sk-super-secret-value'), 'the bulk config listing does not leak it either');
+
+r = await call('GET', '/api/ai/providers', null, admin);
+ok(!JSON.stringify(r.json).includes('sk-super-secret-value'), 'the AI route does not leak it either');
+ok(r.json.config.hasKey.openai === true, 'the AI route reports the key as set');
+
+// Saving other settings must not wipe the stored key.
+r = await call('PUT', '/api/config/aiBotConfig', { value: { provider: 'openai', model: 'gpt-4o', temperature: 0.5 } }, admin);
+r = await call('GET', '/api/ai/providers', null, admin);
+ok(r.json.config.hasKey.openai === true, 'a settings save preserves the stored key', JSON.stringify(r.json.config.hasKey));
+ok(r.json.config.model === 'gpt-4o', 'and still applies the new setting', String(r.json.config.model));
+
+// A second provider's key is stored alongside, not instead of, the first.
+r = await call('PUT', '/api/config/aiBotConfig', { value: { provider: 'openai', apiKeys: { anthropic: 'sk-ant-second' } } }, admin);
+r = await call('GET', '/api/ai/providers', null, admin);
+ok(r.json.config.hasKey.openai === true && r.json.config.hasKey.anthropic === true, 'keys are kept per provider', JSON.stringify(r.json.config.hasKey));
+
+// Authorisation.
+r = await call('GET', '/api/ai/providers', null, techPlain);
+ok(r.status === 403, 'provider settings need the aiBot permission', String(r.status));
+r = await call('POST', '/api/ai/test', {}, techPlain);
+ok(r.status === 403, 'testing a provider is admin-only', String(r.status));
+r = await call('POST', '/api/ai/chat', { messages: [{ role: 'user', content: 'hi' }] }, null);
+ok(r.status === 401, 'the assistant needs a login', String(r.status));
+r = await call('POST', '/api/ai/chat', { messages: [] }, admin);
+ok(r.status === 400, 'the assistant rejects an empty conversation', String(r.status));
+
 console.log(`\n${fails === 0 ? 'ALL PASSED' : fails + ' FAILED'}`);
 process.exit(fails ? 1 : 0);
