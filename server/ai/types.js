@@ -65,15 +65,23 @@ export function normalizeStopReason(raw) {
  * normalised. Every adapter goes through here so timeout and error handling
  * cannot drift between them.
  */
+export async function getJson(url, { headers, timeoutMs = 20000, provider } = {}) {
+  return request(url, { method: 'GET', headers, timeoutMs, provider });
+}
+
 export async function postJson(url, { headers, body, timeoutMs = 30000, provider }) {
+  return request(url, { method: 'POST', headers, body, timeoutMs, provider });
+}
+
+async function request(url, { method, headers, body, timeoutMs = 30000, provider }) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   let res;
   try {
     res = await fetch(url, {
-      method: 'POST',
+      method,
       headers: { 'Content-Type': 'application/json', ...headers },
-      body: JSON.stringify(body),
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
       signal: controller.signal,
     });
   } catch (e) {

@@ -1,17 +1,15 @@
-import { Bot, Database, Settings, MessageCircle, Upload, FileText, Trash2, Check } from 'lucide-react';
-import { Pill } from '../components/ui.jsx';
+import { Bot, Database, Settings, MessageCircle, Check, DollarSign } from 'lucide-react';
 import AiProviderSettings from '../components/AiProviderSettings.jsx';
+import AiUsagePanel from '../components/AiUsagePanel.jsx';
+import KnowledgeBasePanel from '../components/KnowledgeBasePanel.jsx';
 
 const AiBotPage = ({
   aiAdminTab,
   setAiAdminTab,
-  aiKnowledgeBase,
-  setAiKnowledgeBase,
   aiBotConfig,
   setAiBotConfig,
   aiConversationLogs,
   waAutoReply,
-  handleFileUpload,
   notify,
   dbSync,
   api,
@@ -24,7 +22,7 @@ const AiBotPage = ({
       <div>
         <h2 style={{ fontSize: 18, fontWeight: 700 }}>AI Bot Administration</h2>
         <p style={{ fontSize: 12, color: '#94A3B8' }}>
-          Configure knowledge base, bot behavior, and view conversation logs
+          Documents the bot may quote, which model answers, what it costs, and what it has been asked
         </p>
       </div>
     </div>
@@ -34,6 +32,7 @@ const AiBotPage = ({
       {[
         { id: 'knowledge', label: 'Knowledge Base', icon: Database },
         { id: 'config', label: 'Bot Configuration', icon: Settings },
+        { id: 'usage', label: 'Usage & Budget', icon: DollarSign },
         { id: 'logs', label: 'Conversation Logs', icon: MessageCircle },
       ].map((tab) => (
         <button
@@ -62,100 +61,33 @@ const AiBotPage = ({
     </div>
 
     {/* Knowledge Base Tab */}
+    {/*
+      This used to be a file list in React state: names and sizes, kept until
+      the page reloaded, never indexed and never read by the bot — while the
+      screen told people the bot would answer from them. It is now a real
+      corpus: chunked, embedded where a key allows it, retrieved per question
+      and cited in the answer.
+    */}
     {aiAdminTab === 'knowledge' && (
       <div className="card" style={{ padding: '24px' }}>
-        <div style={{ marginBottom: 20 }}>
-          <h3 style={{ fontSize: 15, fontWeight: 700, marginBottom: 8 }}>Upload Documents</h3>
-          <p style={{ fontSize: 12, color: '#64748B', marginBottom: 16 }}>
-            Upload product manuals, spec sheets, and guides. The bot will use these to answer customer questions.
-          </p>
-          <label
-            style={{
-              display: 'flex',
-              flexDirection: 'column',
-              alignItems: 'center',
-              justifyContent: 'center',
-              padding: '32px 24px',
-              border: '2px dashed #D1D5DB',
-              borderRadius: 12,
-              background: '#F9FAFB',
-              cursor: 'pointer',
-              transition: 'all 0.2s',
-            }}
-          >
-            <input
-              type="file"
-              multiple
-              accept=".pdf,.xlsx,.csv,.docx,.txt"
-              onChange={handleFileUpload}
-              style={{ display: 'none' }}
-            />
-            <Upload size={32} color="#9CA3AF" style={{ marginBottom: 12 }} />
-            <span style={{ fontSize: 14, fontWeight: 600, color: '#374151', marginBottom: 4 }}>
-              Drop files here or click to upload
-            </span>
-            <span style={{ fontSize: 12, color: '#9CA3AF' }}>PDF, XLSX, CSV, DOCX, TXT (max 10MB each)</span>
-          </label>
-        </div>
+        <h3 style={{ fontSize: 15, fontWeight: 700, marginBottom: 6 }}>Knowledge Base</h3>
+        <p style={{ fontSize: 12, color: '#64748B', marginBottom: 18 }}>
+          Procedures, specs and policies the assistant may quote. It names the document it used, so any answer can be
+          traced back to the page it came from.
+        </p>
+        <KnowledgeBasePanel notify={notify} />
+      </div>
+    )}
 
-        {aiKnowledgeBase.length > 0 && (
-          <div>
-            <h4 style={{ fontSize: 13, fontWeight: 600, marginBottom: 12 }}>
-              Uploaded Files ({aiKnowledgeBase.length})
-            </h4>
-            <div style={{ border: '1px solid #E2E8F0', borderRadius: 10, overflow: 'hidden' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
-                <thead>
-                  <tr style={{ background: '#F8FAFB' }}>
-                    <th className="th">File Name</th>
-                    <th className="th">Type</th>
-                    <th className="th">Size</th>
-                    <th className="th">Uploaded</th>
-                    <th className="th" style={{ width: 60 }}></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {aiKnowledgeBase.map((f) => (
-                    <tr key={f.id} className="tr" style={{ borderBottom: '1px solid #F0F2F5' }}>
-                      <td className="td" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                        <FileText size={14} color="#64748B" />
-                        {f.name}
-                      </td>
-                      <td className="td">
-                        <Pill bg="#EEF2FF" color="#4F46E5">
-                          {f.type}
-                        </Pill>
-                      </td>
-                      <td className="td" style={{ color: '#64748B' }}>
-                        {f.size}
-                      </td>
-                      <td className="td" style={{ color: '#94A3B8', fontSize: 11 }}>
-                        {f.uploadedAt}
-                      </td>
-                      <td className="td">
-                        <button
-                          onClick={() => setAiKnowledgeBase((prev) => prev.filter((x) => x.id !== f.id))}
-                          style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#DC2626' }}
-                        >
-                          <Trash2 size={14} />
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        )}
-
-        {aiKnowledgeBase.length === 0 && (
-          <div style={{ textAlign: 'center', padding: '24px', background: '#F8FAFB', borderRadius: 10 }}>
-            <Database size={32} color="#D1D5DB" style={{ marginBottom: 8 }} />
-            <p style={{ fontSize: 13, color: '#9CA3AF' }}>
-              No files uploaded yet. Upload documents to enhance the bot's knowledge.
-            </p>
-          </div>
-        )}
+    {/* Usage & Budget Tab */}
+    {aiAdminTab === 'usage' && (
+      <div className="card" style={{ padding: '24px' }}>
+        <h3 style={{ fontSize: 15, fontWeight: 700, marginBottom: 6 }}>Usage & Budget</h3>
+        <p style={{ fontSize: 12, color: '#64748B', marginBottom: 18 }}>
+          Every model call is priced and recorded here. The caps are checked before each call, so a runaway loop or a
+          busy day stops at a number you chose rather than at whatever the provider is willing to bill.
+        </p>
+        <AiUsagePanel notify={notify} />
       </div>
     )}
 
@@ -244,6 +176,28 @@ const AiBotPage = ({
               nothing read; it now drives the assistant and the WhatsApp bot.
             </p>
             <AiProviderSettings notify={notify} />
+          </div>
+
+          <div>
+            <label style={{ display: 'flex', alignItems: 'flex-start', gap: 10, cursor: 'pointer' }}>
+              <input
+                type="checkbox"
+                checked={aiBotConfig.semanticRouting === true}
+                onChange={(e) => setAiBotConfig((prev) => ({ ...prev, semanticRouting: e.target.checked }))}
+                style={{ marginTop: 3 }}
+              />
+              <span>
+                <span style={{ fontSize: 13, fontWeight: 600, color: '#0F172A' }}>
+                  Understand loosely worded requests
+                </span>
+                <span style={{ display: 'block', fontSize: 11.5, color: '#64748B', marginTop: 3, lineHeight: 1.5 }}>
+                  When nothing matches the built-in commands, the model works out which command was meant — so
+                  &ldquo;anything still waiting for sign off?&rdquo; runs the approvals list. Commands that change data
+                  are only ever suggested, never run: the bot replies with the exact command to send. Off by default,
+                  because it spends a little on messages that used to cost nothing.
+                </span>
+              </span>
+            </label>
           </div>
 
           <button

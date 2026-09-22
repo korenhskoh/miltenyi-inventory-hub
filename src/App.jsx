@@ -1500,7 +1500,6 @@ export default function App() {
   const [aiMessages, setAiMessages] = useState([]);
   const [aiProcessing, setAiProcessing] = useState(false);
   const [aiInput, setAiInput] = useState('');
-  const [aiKnowledgeBase, setAiKnowledgeBase] = useState([]);
   const [aiBotConfig, setAiBotConfig] = useState({
     template: 'sales',
     customInstructions: '',
@@ -3525,20 +3524,6 @@ export default function App() {
       stock: 'Show stock levels',
     };
     setAiInput(prompts[action] || '');
-  };
-
-  const handleFileUpload = (e) => {
-    const files = Array.from(e.target.files);
-    const newFiles = files.map((f) => ({
-      id: `KB-${String(aiKnowledgeBase.length + 1).padStart(3, '0')}`,
-      name: f.name,
-      size: (f.size / 1024).toFixed(1) + ' KB',
-      type: f.name.split('.').pop().toUpperCase(),
-      uploadedAt: todayLocal(),
-      uploadedBy: currentUser.name,
-    }));
-    setAiKnowledgeBase((prev) => [...prev, ...newFiles]);
-    notify('Files Uploaded', `${files.length} file(s) added to knowledge base`, 'success');
   };
 
   // ── Header mapping for CSV/Excel import ──
@@ -10437,13 +10422,10 @@ export default function App() {
               {...{
                 aiAdminTab,
                 setAiAdminTab,
-                aiKnowledgeBase,
-                setAiKnowledgeBase,
                 aiBotConfig,
                 setAiBotConfig,
                 aiConversationLogs,
                 waAutoReply,
-                handleFileUpload,
                 notify,
                 dbSync,
                 api,

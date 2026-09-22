@@ -4,9 +4,13 @@ import { requireAdmin } from '../middleware/auth.js';
 import { requirePermission } from '../middleware/permissions.js';
 import { getGlobalConfig } from './config.js';
 import logger from '../logger.js';
-import { chat, testConnection, providerCatalog, redactConfig, AiError } from '../ai/index.js';
+import { testConnection, providerCatalog, redactConfig, listModels, AiError } from '../ai/index.js';
+import { runChat, checkBudget, spendSnapshot, resolveLimits, DEFAULT_LIMITS } from '../ai/usage.js';
+import { pricingCatalog } from '../ai/pricing.js';
 import { buildSystemPrompt, buildContext, findMaterialNo } from '../ai/assistant.js';
 import { handleBotMessage } from '../waBot.js';
+import { query } from '../db.js';
+import { APP_TIMEZONE } from '../appDates.js';
 
 const router = Router();
 
@@ -21,6 +25,8 @@ function explain(err) {
     network: [502, 'Could not reach the AI provider.'],
     server: [502, 'The AI provider had an error. Try again shortly.'],
     bad_request: [400, err.message],
+    // Not an error the user should read as a fault: the cap did what it is for.
+    budget: [429, err.message],
   };
   const [status, message] = map[err.code] || [500, 'The assistant is unavailable right now.'];
   return { status, error: message, code: err.code };
@@ -33,6 +39,31 @@ router.get(
   asyncHandler(async (req, res) => {
     const cfg = (await getGlobalConfig('aiBotConfig')) || {};
     res.json({ providers: providerCatalog(), config: redactConfig(cfg) });
+  }),
+);
+
+// GET /models — the provider's own catalog, so the picker is never out of date.
+router.get(
+  '/models',
+  requirePermission('aiBot'),
+  asyncHandler(async (req, res) => {
+    const cfg = (await getGlobalConfig('aiBotConfig')) || {};
+    try {
+      res.json(await listModels(cfg, req.query.provider));
+    } catch (err) {
+      // A failed lookup must still leave a usable picker, so the fallback list
+      // goes back with a note rather than an error the UI has to handle.
+      const { error, code } = explain(err);
+      const fallback = providerCatalog().find((p) => p.id === (req.query.provider || cfg.provider));
+      logger.warn({ code: err?.code }, 'Could not list provider models');
+      res.json({
+        provider: fallback?.id || cfg.provider,
+        models: fallback?.suggestedModels || [],
+        live: false,
+        error,
+        code,
+      });
+    }
   }),
 );
 
@@ -107,11 +138,22 @@ router.post(
 
     const botConfig = (await getGlobalConfig('aiBotConfig')) || {};
     const lastUser = [...trimmed].reverse().find((m) => m.role === 'user');
-    const context = await buildContext({ materialNo: findMaterialNo(lastUser?.content) });
+    const context = await buildContext({
+      materialNo: findMaterialNo(lastUser?.content),
+      question: lastUser?.content || null,
+      config: botConfig,
+    });
     const system = buildSystemPrompt(botConfig, context);
 
     try {
-      const result = await chat({ system, messages: trimmed }, botConfig);
+      const result = await runChat({
+        surface: 'assistant',
+        system,
+        messages: trimmed,
+        config: botConfig,
+        userId: req.user.id,
+        sessionKey: `app:${req.user.id}`,
+      });
       logger.info(
         { provider: result.provider, usage: result.usage, usedFallback: !!result.usedFallback },
         'AI assistant replied',
@@ -128,6 +170,118 @@ router.post(
       logger.warn({ code: err?.code }, 'AI assistant call failed');
       res.status(status).json({ error, code });
     }
+  }),
+);
+
+// ── Cost controls ───────────────────────────────────────────────────────────
+//
+// A provider key is a payment instrument. These endpoints exist so that what
+// it has been spent on is answerable from inside the app, by the people who
+// own the bill, rather than only from the provider's own dashboard.
+
+// GET /usage — what the budget screen needs in one call.
+router.get(
+  '/usage',
+  requirePermission('aiBot'),
+  asyncHandler(async (req, res) => {
+    const cfg = (await getGlobalConfig('aiBotConfig')) || {};
+    const limits = resolveLimits(cfg);
+    const [snapshot, bySurface, byUser] = await Promise.all([
+      spendSnapshot(null, APP_TIMEZONE),
+      query(
+        `SELECT surface,
+                COUNT(*)::int AS calls,
+                COALESCE(SUM(total_tokens), 0)::int AS tokens,
+                COALESCE(SUM(cost_usd), 0)::float AS cost,
+                COUNT(*) FILTER (WHERE NOT ok)::int AS failures
+         FROM ai_usage
+         WHERE created_at >= NOW() - INTERVAL '30 days'
+         GROUP BY surface
+         ORDER BY cost DESC`,
+      ),
+      query(
+        `SELECT COALESCE(u.name, a.user_id, 'WhatsApp / unlinked') AS name,
+                COUNT(*)::int AS calls,
+                COALESCE(SUM(a.cost_usd), 0)::float AS cost
+         FROM ai_usage a
+         LEFT JOIN users u ON u.id = a.user_id
+         WHERE a.created_at >= NOW() - INTERVAL '30 days'
+         GROUP BY 1
+         ORDER BY cost DESC
+         LIMIT 10`,
+      ),
+    ]);
+    res.json({
+      limits,
+      defaults: DEFAULT_LIMITS,
+      timezone: APP_TIMEZONE,
+      today: { cost: snapshot.day_cost, calls: snapshot.day_calls },
+      month: { cost: snapshot.month_cost },
+      bySurface: bySurface.rows,
+      byUser: byUser.rows,
+    });
+  }),
+);
+
+// GET /usage/daily — one row per day for the spend chart.
+router.get(
+  '/usage/daily',
+  requirePermission('aiBot'),
+  asyncHandler(async (req, res) => {
+    const days = Math.min(Math.max(parseInt(req.query.days, 10) || 30, 1), 180);
+    const r = await query(
+      `SELECT to_char(date_trunc('day', created_at AT TIME ZONE $1), 'YYYY-MM-DD') AS day,
+              COUNT(*)::int AS calls,
+              COALESCE(SUM(total_tokens), 0)::int AS tokens,
+              COALESCE(SUM(cost_usd), 0)::float AS cost
+       FROM ai_usage
+       WHERE created_at >= NOW() - ($2 || ' days')::interval
+       GROUP BY 1
+       ORDER BY 1`,
+      [APP_TIMEZONE, String(days)],
+    );
+    res.json({ days: r.rows });
+  }),
+);
+
+// GET /usage/log — the most recent calls, newest first.
+router.get(
+  '/usage/log',
+  requirePermission('aiBot'),
+  asyncHandler(async (req, res) => {
+    const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 50, 1), 200);
+    const r = await query(
+      `SELECT a.id, a.created_at, a.surface, a.provider, a.model, a.prompt_tokens, a.completion_tokens,
+              a.total_tokens, a.cost_usd::float AS cost_usd, a.latency_ms, a.ok, a.error_code,
+              a.used_fallback, COALESCE(u.name, a.user_id) AS user_name
+       FROM ai_usage a
+       LEFT JOIN users u ON u.id = a.user_id
+       ORDER BY a.created_at DESC
+       LIMIT $1`,
+      [limit],
+    );
+    res.json({ rows: r.rows });
+  }),
+);
+
+// GET /pricing — the rate table, defaults merged with any admin override.
+router.get(
+  '/pricing',
+  requirePermission('aiBot'),
+  asyncHandler(async (req, res) => {
+    const cfg = (await getGlobalConfig('aiBotConfig')) || {};
+    res.json({ pricing: pricingCatalog(cfg.pricing) });
+  }),
+);
+
+// GET /budget — is there room for one more call right now, and why not.
+router.get(
+  '/budget',
+  requirePermission('dashboard'),
+  asyncHandler(async (req, res) => {
+    const cfg = (await getGlobalConfig('aiBotConfig')) || {};
+    const gate = await checkBudget({ userId: req.user.id, config: cfg });
+    res.json({ ok: gate.ok, reason: gate.reason || null, message: gate.message || null });
   }),
 );
 

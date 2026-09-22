@@ -1,4 +1,4 @@
-import { postJson, normalizeStopReason } from '../types.js';
+import { postJson, getJson, normalizeStopReason } from '../types.js';
 
 /**
  * OpenAI, and everything that speaks its API.
@@ -11,12 +11,19 @@ import { postJson, normalizeStopReason } from '../types.js';
 const openai = {
   id: 'openai',
   label: 'OpenAI',
-  defaultModel: 'gpt-4o-mini',
+  defaultModel: 'gpt-5.6-luna',
   defaultBaseUrl: 'https://api.openai.com/v1',
   keyHint: 'sk-…',
   keyUrl: 'https://platform.openai.com/api-keys',
-  // Offered in the UI; any model id the account can reach may be typed in.
-  suggestedModels: ['gpt-4o-mini', 'gpt-4o', 'gpt-4.1-mini', 'gpt-4.1'],
+  // A fallback list only: the Settings screen asks the provider for its real
+  // catalog whenever a key is stored, because a hard-coded list is out of date
+  // the week after it is written. Any model id the account can reach may also
+  // be typed in.
+  suggestedModels: ['gpt-5.6-luna', 'gpt-5.6-terra', 'gpt-5.6-sol', 'gpt-6-astra', 'gpt-5.3-codex'],
+  // What the knowledge base uses to turn text into vectors. Small is the right
+  // default here: the corpus is product documentation, not literature, and the
+  // large model costs six times as much for accuracy nobody would notice.
+  embeddingModel: 'text-embedding-3-small',
 
   async chat({ system, messages, model, apiKey, baseUrl, maxTokens, temperature, timeoutMs }) {
     const url = `${(baseUrl || openai.defaultBaseUrl).replace(/\/+$/, '')}/chat/completions`;
@@ -43,6 +50,35 @@ const openai = {
       stopReason: normalizeStopReason(choice?.finish_reason),
       model: json.model || model || openai.defaultModel,
     };
+  },
+
+  /** Batch several texts in one request — the API takes an array natively. */
+  async embed({ input, model, apiKey, baseUrl, timeoutMs }) {
+    const url = `${(baseUrl || openai.defaultBaseUrl).replace(/\/+$/, '')}/embeddings`;
+    const json = await postJson(url, {
+      headers: { Authorization: `Bearer ${apiKey}` },
+      timeoutMs,
+      provider: 'openai',
+      body: { model: model || openai.embeddingModel, input },
+    });
+    return {
+      // The API may return them out of order; `index` is authoritative.
+      vectors: (json.data || []).sort((a, b) => a.index - b.index).map((d) => d.embedding),
+      model: json.model || model || openai.embeddingModel,
+      usage: { inputTokens: json.usage?.prompt_tokens ?? 0, outputTokens: 0 },
+    };
+  },
+
+  /** The account's real catalog. Chat-capable ids only, newest first. */
+  async listModels({ apiKey, baseUrl, timeoutMs }) {
+    const url = `${(baseUrl || openai.defaultBaseUrl).replace(/\/+$/, '')}/models`;
+    const json = await getJson(url, { headers: { Authorization: `Bearer ${apiKey}` }, timeoutMs, provider: 'openai' });
+    return (json.data || [])
+      .map((m) => m.id)
+      .filter(
+        (id) => /^(gpt|o\d|chat-)/i.test(id) && !/(embedding|audio|image|tts|whisper|moderation|realtime)/i.test(id),
+      )
+      .sort();
   },
 };
 

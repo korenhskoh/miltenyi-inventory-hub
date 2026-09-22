@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { chat, resolveConfig, redactConfig, providerCatalog, PROVIDER_IDS, AiError } from './index.js';
+import { chat, resolveConfig, redactConfig, providerCatalog, PROVIDER_IDS, REGISTRY, AiError } from './index.js';
 
 let calls;
 function mockFetch(handler) {
@@ -33,7 +33,8 @@ describe('resolveConfig', () => {
   it('defaults everything from an empty config', () => {
     const c = resolveConfig({});
     expect(c.provider).toBe('openai');
-    expect(c.model).toBe('gpt-4o-mini');
+    // Not a literal: model ids change, and the default is the adapter's.
+    expect(c.model).toBe(REGISTRY.openai.defaultModel);
     expect(c.enabled).toBe(false); // no key
     expect(c.maxTokens).toBeGreaterThan(0);
   });

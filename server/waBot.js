@@ -3,6 +3,8 @@ import logger from './logger.js';
 import { matchIntent } from './waBotPatterns.js';
 import { commandHandlers, stateHandlers, confirmExecutors } from './waBotCommands.js';
 import { answerWithModel, HISTORY_LIMIT } from './ai/fallback.js';
+import { routeIntent } from './ai/router.js';
+import { getGlobalConfig } from './routes/config.js';
 
 const SESSION_TIMEOUT = 10 * 60 * 1000; // 10 minutes
 const CLEANUP_INTERVAL = 5 * 60 * 1000; // 5 minutes
@@ -129,12 +131,51 @@ export async function handleBotMessage(text, jid, user = null) {
     const handler = commandHandlers[intent];
     if (handler) return await handler(params, session, jid);
 
-    // Nothing matched. Before falling back to "I didn't understand", let the
-    // model try — it gets live figures and answers in words. It cannot act:
-    // every command that changes anything is a rule above this line, with its
-    // own permission check. If no provider is configured, or the call fails,
-    // answerWithModel returns null and the original reply is used unchanged.
-    const aiAnswer = await answerWithModel(trimmed, { history: session.history });
+    // ── 4. Nothing matched the regexes ──
+    //
+    // Two chances left, in order of cost and precision. First, ask the model
+    // which KNOWN command this was — "any parts still waiting for sign off?"
+    // is list_approvals, phrased in a way no regex will ever cover. That runs
+    // the real handler, with its real permission check, so the answer is the
+    // same one the exact command would have produced.
+    const surface = jid.startsWith('app:') ? 'assistant' : 'whatsapp';
+    let botConfig = {};
+    try {
+      botConfig = (await getGlobalConfig('aiBotConfig')) || {};
+    } catch (e) {
+      logger.warn({ err: e }, 'Could not read AI config for routing');
+    }
+
+    const routed = await routeIntent(trimmed, {
+      config: botConfig,
+      userId: session.user?.id || null,
+      sessionKey: jid,
+    });
+
+    if (routed) {
+      // Anything that changes data is offered, never executed. A routing
+      // mistake on a read shows the wrong list; on a delete it destroys an
+      // order nobody named.
+      if (!routed.safe) {
+        return `Did you mean to ${routed.intent.replace(/_/g, ' ')}? Send this to do it:\n\n*${routed.suggestion}*`;
+      }
+      const routedHandler = commandHandlers[routed.intent];
+      if (routedHandler) return await routedHandler(routed.params, session, jid);
+    }
+
+    // Second: let the model answer in words. It gets live figures and explains
+    // them. It cannot act — every command that changes anything is a rule above
+    // this line, with its own permission check. If no provider is configured,
+    // or the call fails, answerWithModel returns null and the original reply is
+    // used unchanged.
+    const aiAnswer = await answerWithModel(trimmed, {
+      history: session.history,
+      // Who to bill and rate-limit. A WhatsApp sender with no linked account
+      // still gets counted globally, just not per-person.
+      userId: session.user?.id || null,
+      sessionKey: jid,
+      surface,
+    });
     if (aiAnswer) {
       session.history = [
         ...session.history,

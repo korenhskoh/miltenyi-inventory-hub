@@ -342,3 +342,68 @@ ALTER COLUMN material_no TYPE TEXT;
 -- force a change before anything else happens.
 ALTER TABLE users
 ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN DEFAULT FALSE;
+
+-- ── AI usage log ────────────────────────────────────────────────────────────
+-- One row per model call, successful or not. This is what makes spend visible:
+-- without it the only evidence a provider bill exists is the provider's own
+-- dashboard, and nobody can tell which surface or which person caused it.
+CREATE TABLE IF NOT EXISTS ai_usage (
+  id BIGSERIAL PRIMARY KEY,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  -- 'assistant' | 'whatsapp' | 'routing' | 'embedding' | 'test'
+  surface TEXT NOT NULL,
+  user_id TEXT,
+  session_key TEXT,
+  provider TEXT NOT NULL,
+  model TEXT NOT NULL,
+  prompt_tokens INTEGER DEFAULT 0,
+  completion_tokens INTEGER DEFAULT 0,
+  total_tokens INTEGER DEFAULT 0,
+  -- Priced at call time from the rate table, so a later price change does not
+  -- silently rewrite history.
+  cost_usd NUMERIC(12, 6) DEFAULT 0,
+  latency_ms INTEGER,
+  ok BOOLEAN DEFAULT TRUE,
+  error_code TEXT,
+  used_fallback BOOLEAN DEFAULT FALSE
+);
+
+CREATE INDEX IF NOT EXISTS idx_ai_usage_created ON ai_usage(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_ai_usage_user_created ON ai_usage(user_id, created_at DESC);
+
+-- ── Knowledge base ──────────────────────────────────────────────────────────
+-- Documents the assistant may quote from. The text lives here rather than on
+-- disk because the app runs on ephemeral containers: a file written beside the
+-- process is gone at the next deploy.
+CREATE TABLE IF NOT EXISTS kb_documents (
+  id TEXT PRIMARY KEY,
+  title TEXT NOT NULL,
+  source TEXT,
+  mime TEXT,
+  bytes INTEGER DEFAULT 0,
+  chunk_count INTEGER DEFAULT 0,
+  -- 'ready' once chunked; 'embedded' once vectors exist; 'error' with a reason.
+  status TEXT DEFAULT 'ready',
+  error TEXT,
+  embedding_model TEXT,
+  uploaded_by TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Chunks are what retrieval actually scores. The embedding is a plain REAL[]
+-- rather than a pgvector column: pgvector is not guaranteed on a managed
+-- Postgres, and at this corpus size scoring in Node is milliseconds. A chunk
+-- with no embedding still ranks through the lexical path, so the knowledge base
+-- works before — and without — any embedding provider.
+CREATE TABLE IF NOT EXISTS kb_chunks (
+  id BIGSERIAL PRIMARY KEY,
+  doc_id TEXT NOT NULL REFERENCES kb_documents(id) ON DELETE CASCADE,
+  ordinal INTEGER NOT NULL,
+  content TEXT NOT NULL,
+  tokens INTEGER DEFAULT 0,
+  embedding REAL[],
+  embedding_dim INTEGER
+);
+
+CREATE INDEX IF NOT EXISTS idx_kb_chunks_doc ON kb_chunks(doc_id, ordinal);

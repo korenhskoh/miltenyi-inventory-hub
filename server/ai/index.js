@@ -168,6 +168,35 @@ export async function chat({ system, messages }, rawConfig) {
   }
 }
 
+/**
+ * Ask the provider what models this account can actually use.
+ *
+ * A list written into the source is stale within weeks — model ids change
+ * faster than this app ships. So the picker is populated from the provider
+ * itself whenever a key is stored, and the hard-coded `suggestedModels` is only
+ * the fallback for "no key yet" and "the provider's list endpoint refused".
+ */
+export async function listModels(rawConfig = {}, providerId = null) {
+  const cfg = resolveConfig(rawConfig);
+  const id = providerId && PROVIDER_IDS.includes(providerId) ? providerId : cfg.provider;
+  const adapter = REGISTRY[id];
+  const keys = rawConfig?.apiKeys && typeof rawConfig.apiKeys === 'object' ? rawConfig.apiKeys : {};
+  const apiKey = keys[id] || (id === cfg.provider ? cfg.apiKey : '') || '';
+
+  if (!apiKey || typeof adapter.listModels !== 'function') {
+    return { provider: id, models: adapter.suggestedModels, live: false };
+  }
+  const models = await adapter.listModels({
+    apiKey,
+    baseUrl: id === cfg.provider ? cfg.baseUrl : adapter.defaultBaseUrl,
+    timeoutMs: Math.min(cfg.timeoutMs, 15000),
+  });
+  const list = Array.isArray(models) ? models.filter(Boolean) : [];
+  // An empty catalog is not an answer worth showing an empty dropdown for.
+  if (list.length === 0) return { provider: id, models: adapter.suggestedModels, live: false };
+  return { provider: id, models: list, live: true };
+}
+
 /** A cheap round trip so Settings can prove a key works before anyone relies on it. */
 export async function testConnection(rawConfig) {
   const cfg = resolveConfig(rawConfig);
