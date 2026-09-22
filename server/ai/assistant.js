@@ -9,6 +9,7 @@
  */
 import { query } from '../db.js';
 import logger from '../logger.js';
+import { searchKb, formatPassages } from './kb.js';
 
 const TEMPLATES = {
   sales: 'You help the sales team with pricing, availability and order status. Be brief and commercial.',
@@ -28,6 +29,7 @@ export function buildSystemPrompt(botConfig = {}, context = '') {
     '',
     'Rules you must follow:',
     '- Answer only from the DATA section below and the conversation. If the data does not contain the answer, say so plainly and suggest which page to check.',
+    '- When a reference document answers the question, say which document it came from. Do not generalise beyond what it says.',
     '- Never invent part numbers, prices, quantities, dates or order ids. An approximate figure is worse than no figure here.',
     '- You cannot create, approve, change or delete anything. If asked to, explain the exact command or page that does it.',
     '- Prices are Singapore dollars. Dates are day-month-year.',
@@ -46,8 +48,20 @@ export function buildSystemPrompt(botConfig = {}, context = '') {
  * be relevant. Sending the whole database would cost a fortune per message, and
  * bury the answer.
  */
-export async function buildContext({ materialNo } = {}) {
+export async function buildContext({ materialNo, question = null, config = null } = {}) {
   const parts = [];
+
+  // Uploaded documents first: when the answer is written down somewhere, that
+  // passage is the answer, and the live figures below are only background.
+  if (question) {
+    try {
+      const hits = await searchKb(question, { config: config || {} });
+      const passages = formatPassages(hits);
+      if (passages) parts.push(passages);
+    } catch (e) {
+      logger.warn({ err: e }, 'AI context: knowledge base unavailable');
+    }
+  }
   try {
     const stats = await query(`
       SELECT COUNT(*)::int AS total,

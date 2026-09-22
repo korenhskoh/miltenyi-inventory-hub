@@ -159,6 +159,117 @@ async function testAiProvider({ provider, apiKey } = {}) {
   }
 }
 
+/** The provider's own model catalog, so the picker cannot go stale. */
+async function getAiModels(provider) {
+  try {
+    const qs = provider ? `?provider=${encodeURIComponent(provider)}` : '';
+    const res = await fetch(`${BASE}/api/ai/models${qs}`, { headers: authHeadersGet() });
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
+/** Spend so far, the caps it is measured against, and who used it. */
+async function getAiUsage() {
+  try {
+    const res = await fetch(`${BASE}/api/ai/usage`, { headers: authHeadersGet() });
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
+async function getAiUsageDaily(days = 30) {
+  try {
+    const res = await fetch(`${BASE}/api/ai/usage/daily?days=${days}`, { headers: authHeadersGet() });
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
+async function getAiUsageLog(limit = 50) {
+  try {
+    const res = await fetch(`${BASE}/api/ai/usage/log?limit=${limit}`, { headers: authHeadersGet() });
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
+// ── Knowledge base ──────────────────────────────────────────────────────────
+
+async function getKbDocuments() {
+  try {
+    const res = await fetch(`${BASE}/api/kb`, { headers: authHeadersGet() });
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Add a document. Either `text` (pasted) or a file's `content`, which for a
+ * spreadsheet is base64 — the server does the extraction, because it is the
+ * side that already has the xlsx reader.
+ */
+async function addKbDocument(payload) {
+  try {
+    const res = await fetch(`${BASE}/api/kb`, {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, error: data.error || 'Could not add the document.' };
+    return { ok: true, ...data };
+  } catch {
+    return { ok: false, error: 'Could not reach the server.' };
+  }
+}
+
+async function deleteKbDocument(id) {
+  try {
+    const res = await fetch(`${BASE}/api/kb/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+      headers: authHeaders(),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+async function reindexKbDocument(id) {
+  try {
+    const res = await fetch(`${BASE}/api/kb/${encodeURIComponent(id)}/reindex`, {
+      method: 'POST',
+      headers: authHeaders(),
+    });
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
+/** Show what the assistant would retrieve, before blaming the model. */
+async function searchKb(q) {
+  try {
+    const res = await fetch(`${BASE}/api/kb/search?q=${encodeURIComponent(q)}`, { headers: authHeadersGet() });
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
 /** Change the signed-in user's own password. */
 async function changePassword(currentPassword, newPassword) {
   try {
@@ -1281,7 +1392,16 @@ const api = {
   changePassword,
   askAssistant,
   getAiProviders,
+  getAiModels,
   testAiProvider,
+  getAiUsage,
+  getAiUsageDaily,
+  getAiUsageLog,
+  getKbDocuments,
+  addKbDocument,
+  deleteKbDocument,
+  reindexKbDocument,
+  searchKb,
   getPublicLogo,
   onAuthError,
   resetAuthError,

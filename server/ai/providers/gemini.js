@@ -1,4 +1,4 @@
-import { postJson, normalizeStopReason } from '../types.js';
+import { postJson, getJson, normalizeStopReason } from '../types.js';
 
 /**
  * Google Gemini.
@@ -11,11 +11,19 @@ import { postJson, normalizeStopReason } from '../types.js';
 const gemini = {
   id: 'gemini',
   label: 'Google Gemini',
-  defaultModel: 'gemini-2.0-flash',
+  defaultModel: 'gemini-3.8-flash',
   defaultBaseUrl: 'https://generativelanguage.googleapis.com/v1beta',
   keyHint: 'AIza…',
   keyUrl: 'https://aistudio.google.com/app/apikey',
-  suggestedModels: ['gemini-2.0-flash', 'gemini-2.5-flash', 'gemini-2.5-pro'],
+  // Fallback list; the live catalog is fetched when a key is stored.
+  suggestedModels: [
+    'gemini-3.8-flash',
+    'gemini-3.5-flash-lite',
+    'gemini-3.1-flash-lite',
+    'gemini-3.1-pro-preview',
+    'gemini-2.5-pro',
+  ],
+  embeddingModel: 'gemini-embedding-001',
 
   async chat({ system, messages, model, apiKey, baseUrl, maxTokens, temperature, timeoutMs }) {
     const chosen = model || gemini.defaultModel;
@@ -54,6 +62,44 @@ const gemini = {
       stopReason: normalizeStopReason(candidate?.finishReason),
       model: json.modelVersion || chosen,
     };
+  },
+
+  /**
+   * Gemini has no multi-input embeddings endpoint on v1beta, so this batches
+   * through :batchEmbedContents, which takes one request object per text.
+   */
+  async embed({ input, model, apiKey, baseUrl, timeoutMs }) {
+    const chosen = model || gemini.embeddingModel;
+    const base = (baseUrl || gemini.defaultBaseUrl).replace(/\/+$/, '');
+    const url = `${base}/models/${encodeURIComponent(chosen)}:batchEmbedContents`;
+    const json = await postJson(url, {
+      headers: { 'x-goog-api-key': apiKey },
+      timeoutMs,
+      provider: 'gemini',
+      body: {
+        requests: input.map((text) => ({
+          model: `models/${chosen}`,
+          content: { parts: [{ text }] },
+        })),
+      },
+    });
+    return {
+      vectors: (json.embeddings || []).map((e) => e.values),
+      model: chosen,
+      // Gemini does not report embedding token usage; the rate table prices it
+      // at zero, so an estimate here would only add noise.
+      usage: { inputTokens: 0, outputTokens: 0 },
+    };
+  },
+
+  /** Gemini returns "models/<id>"; strip the prefix and drop non-chat models. */
+  async listModels({ apiKey, baseUrl, timeoutMs }) {
+    const url = `${(baseUrl || gemini.defaultBaseUrl).replace(/\/+$/, '')}/models?pageSize=200`;
+    const json = await getJson(url, { headers: { 'x-goog-api-key': apiKey }, timeoutMs, provider: 'gemini' });
+    return (json.models || [])
+      .filter((m) => (m.supportedGenerationMethods || []).includes('generateContent'))
+      .map((m) => String(m.name || '').replace(/^models\//, ''))
+      .filter((id) => id && !/embedding|aqa|imagen|veo/i.test(id));
   },
 };
 

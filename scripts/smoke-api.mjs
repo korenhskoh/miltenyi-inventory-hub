@@ -604,5 +604,63 @@ r = await call('GET', '/api/config/aiBotConfig', null, admin);
 ok(r.json.template === 'support' && r.json.greeting === 'Hello', 'and the greeting itself is saved', JSON.stringify({ t: r.json.template, g: r.json.greeting }));
 ok(!JSON.stringify(r.json).includes('sk-ant-merge-test'), 'the merge still never exposes the key');
 
+// ── Cost controls ───────────────────────────────────────────────────────────
+// The point of the budget is that it is checked BEFORE a call, so these prove
+// the accounting endpoints work and that a zero cap actually refuses.
+r = await call('GET', '/api/ai/usage', null, admin);
+ok(r.status === 200 && r.json.limits && r.json.today, 'usage reports spend and limits', JSON.stringify(r.json.today));
+ok(typeof r.json.limits.dailyCostUsd === 'number', 'a daily cap is set by default', String(r.json.limits.dailyCostUsd));
+
+r = await call('GET', '/api/ai/usage/daily?days=7', null, admin);
+ok(r.status === 200 && Array.isArray(r.json.days), 'the daily series returns rows', String(r.json.days?.length));
+r = await call('GET', '/api/ai/usage/log?limit=5', null, admin);
+ok(r.status === 200 && Array.isArray(r.json.rows), 'the usage log returns rows', String(r.json.rows?.length));
+r = await call('GET', '/api/ai/pricing', null, admin);
+ok(r.status === 200 && r.json.pricing?.openai, 'the rate table is readable');
+
+// A zero cap means "no spending at all", and must refuse rather than default.
+await call('PUT', '/api/config/aiBotConfig', { value: { limits: { dailyCostUsd: 0 } } }, admin);
+r = await call('GET', '/api/ai/budget', null, admin);
+ok(r.status === 200 && r.json.ok === false && r.json.reason === 'daily_cost', 'a zero cap refuses the next call', JSON.stringify(r.json));
+await call('PUT', '/api/config/aiBotConfig', { value: { limits: { dailyCostUsd: 5 } } }, admin);
+r = await call('GET', '/api/ai/budget', null, admin);
+ok(r.json.ok === true, 'raising the cap allows it again', JSON.stringify(r.json));
+
+// Budget settings are co-owned with the provider form, like every other field.
+r = await call('GET', '/api/ai/providers', null, admin);
+ok(r.json.config.provider === 'anthropic', 'saving a budget does not reset the provider', String(r.json.config.provider));
+
+// ── Live model catalog ──────────────────────────────────────────────────────
+// With a bogus key the provider lookup fails; the picker must still be usable.
+r = await call('GET', '/api/ai/models?provider=openai', null, admin);
+ok(r.status === 200 && Array.isArray(r.json.models) && r.json.models.length > 0, 'the model list is never empty', String(r.json.models?.length));
+
+// ── Knowledge base ──────────────────────────────────────────────────────────
+r = await call('GET', '/api/kb', null, admin);
+ok(r.status === 200 && Array.isArray(r.json.documents), 'the knowledge base lists documents');
+
+r = await call('POST', '/api/kb', { title: 'Storage policy', text: 'Reagent 130-095-244 must be stored between 2 and 8 degrees Celsius. Never freeze it. Calibration of the MACS separator is annual and must be done by a trained service engineer.' }, admin);
+ok(r.status === 201 && r.json.chunks >= 1, 'a pasted document is indexed', JSON.stringify(r.json));
+const kbId = r.json.id;
+
+r = await call('GET', '/api/kb/search?q=' + encodeURIComponent('what temperature for 130-095-244'), null, admin);
+ok(r.status === 200 && r.json.hits.length > 0 && /2 and 8/.test(r.json.hits[0].content), 'keyword search finds the passage without any embedding provider', JSON.stringify(r.json.hits[0]?.title));
+
+r = await call('GET', '/api/kb/search?q=' + encodeURIComponent('zzzz nothing about helicopters'), null, admin);
+ok(r.status === 200 && r.json.hits.length === 0, 'a question the corpus cannot answer returns nothing rather than the least-bad match', String(r.json.hits.length));
+
+r = await call('POST', '/api/kb', { title: 'Empty', text: '   ' }, admin);
+ok(r.status === 400, 'an empty document is rejected', String(r.status));
+r = await call('POST', '/api/kb', { title: 'Manual', filename: 'manual.pdf', mime: 'application/pdf', content: 'JVBERi0=', encoding: 'base64' }, admin);
+ok(r.status === 400 && /\.txt/.test(r.json.error || ''), 'a PDF is refused with instructions, not indexed half-read', String(r.json.error).slice(0, 50));
+
+r = await call('GET', '/api/kb', null, tech);
+ok(r.status === 403, 'the knowledge base needs the AI Bot permission', String(r.status));
+
+r = await call('DELETE', '/api/kb/' + kbId, null, admin);
+ok(r.status === 200, 'a document can be deleted', String(r.status));
+r = await call('GET', '/api/kb/search?q=' + encodeURIComponent('what temperature for 130-095-244'), null, admin);
+ok(r.json.hits.length === 0, 'and its passages go with it', String(r.json.hits.length));
+
 console.log(`\n${fails === 0 ? 'ALL PASSED' : fails + ' FAILED'}`);
 process.exit(fails ? 1 : 0);

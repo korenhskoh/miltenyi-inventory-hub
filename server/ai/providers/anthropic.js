@@ -1,4 +1,4 @@
-import { postJson, normalizeStopReason } from '../types.js';
+import { postJson, getJson, normalizeStopReason } from '../types.js';
 
 /**
  * Anthropic's Messages API.
@@ -11,11 +11,12 @@ import { postJson, normalizeStopReason } from '../types.js';
 const anthropic = {
   id: 'anthropic',
   label: 'Anthropic',
-  defaultModel: 'claude-sonnet-4-5',
+  defaultModel: 'claude-sonnet-5',
   defaultBaseUrl: 'https://api.anthropic.com/v1',
   keyHint: 'sk-ant-…',
   keyUrl: 'https://console.anthropic.com/settings/keys',
-  suggestedModels: ['claude-sonnet-4-5', 'claude-opus-4-1', 'claude-haiku-4-5'],
+  // Fallback list; the live catalog is fetched when a key is stored.
+  suggestedModels: ['claude-haiku-4-5-20251001', 'claude-sonnet-5', 'claude-opus-5', 'claude-fable-5-1'],
 
   async chat({ system, messages, model, apiKey, baseUrl, maxTokens, temperature, timeoutMs }) {
     const url = `${(baseUrl || anthropic.defaultBaseUrl).replace(/\/+$/, '')}/messages`;
@@ -53,6 +54,17 @@ const anthropic = {
       stopReason: normalizeStopReason(json.stop_reason),
       model: json.model || model || anthropic.defaultModel,
     };
+  },
+
+  /** Anthropic publishes the account's catalog at /v1/models, newest first. */
+  async listModels({ apiKey, baseUrl, timeoutMs }) {
+    const url = `${(baseUrl || anthropic.defaultBaseUrl).replace(/\/+$/, '')}/models?limit=100`;
+    const json = await getJson(url, {
+      headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
+      timeoutMs,
+      provider: 'anthropic',
+    });
+    return (json.data || []).map((m) => m.id);
   },
 };
 

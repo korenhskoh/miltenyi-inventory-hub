@@ -13,6 +13,9 @@ import api from '../api.js';
 export default function AiProviderSettings({ notify }) {
   const [catalog, setCatalog] = useState([]);
   const [cfg, setCfg] = useState(null);
+  // The provider's own model list, once a key exists. Falls back to the built-in
+  // suggestions, which are only ever a guess about what the account can reach.
+  const [liveModels, setLiveModels] = useState({ models: null, live: false, error: null });
   const [key, setKey] = useState('');
   const [customModel, setCustomModel] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -41,12 +44,32 @@ export default function AiProviderSettings({ notify }) {
     };
   }, []);
 
+  const provider = cfg?.provider;
+  useEffect(() => {
+    // Model ids change faster than this app ships, so the list comes from the
+    // provider whenever a key is stored. Re-fetched on every provider switch.
+    if (!provider) return undefined;
+    let alive = true;
+    (async () => {
+      // Cleared inside the async body, not synchronously in the effect: a
+      // set-state during render is what the cascading-render rule is about.
+      setLiveModels({ models: null, live: false, error: null });
+      const res = await api.getAiModels(provider);
+      if (!alive || !res || res.provider !== provider) return;
+      setLiveModels({ models: res.models || null, live: Boolean(res.live), error: res.error || null });
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [provider]);
+
   if (!cfg) return <div style={{ fontSize: 12, color: '#94A3B8' }}>Loading providers…</div>;
 
   const current = catalog.find((p) => p.id === cfg.provider) || catalog[0];
   const set = (patch) => setCfg((c) => ({ ...c, ...patch }));
 
-  const suggested = current?.suggestedModels || [];
+  // Live catalog when we have one, the built-in list until then.
+  const suggested = liveModels.models?.length ? liveModels.models : current?.suggestedModels || [];
   // Never present an empty model box: fall back to the provider's default so
   // the control always shows what will actually be used.
   const modelValue = (cfg.model || '').trim() || current?.defaultModel || '';
@@ -172,7 +195,11 @@ export default function AiProviderSettings({ notify }) {
         <p style={hint}>
           {isCustomModel
             ? 'Any model id your account can reach will work.'
-            : `Defaults to ${current?.defaultModel || '—'} for ${current?.label || 'this provider'}.`}
+            : liveModels.live
+              ? `${suggested.length} models available on this key, straight from ${current?.label}.`
+              : liveModels.error
+                ? `Could not read ${current?.label}'s model list (${liveModels.error}) — showing the built-in list.`
+                : `Built-in list. Save a key and reopen to load what ${current?.label || 'the provider'} actually offers.`}
         </p>
       </div>
 
