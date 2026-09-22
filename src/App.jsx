@@ -9998,8 +9998,20 @@ export default function App() {
                         value={editingOrder.status || 'Pending Approval'}
                         onChange={(e) => {
                           const s = e.target.value;
+                          // 'Pending Approval' has to reset approval_status too.
+                          // Part Arrival gates on approvalStatus, not status, so
+                          // an order pulled back for correction stayed
+                          // receivable — it could be delivered and paid for
+                          // without anyone approving the corrected figures. The
+                          // batch path fixes this; the single-order modal did not.
                           const approvalSync =
-                            s === 'Approved' ? 'approved' : s === 'Rejected' ? 'rejected' : undefined;
+                            s === 'Approved'
+                              ? 'approved'
+                              : s === 'Rejected'
+                                ? 'rejected'
+                                : s === 'Pending Approval'
+                                  ? 'pending'
+                                  : undefined;
                           setEditingOrder((prev) => ({
                             ...prev,
                             status: s,

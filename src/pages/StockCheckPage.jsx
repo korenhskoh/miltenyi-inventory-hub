@@ -322,6 +322,11 @@ const StockCheckPage = ({
                     status: 'Completed',
                     disc: discrepancies,
                     notes: `Completed by ${currentUser.name}. ${discrepancies} discrepancies found.`,
+                    // The counts themselves. Without this the record kept the
+                    // zeroes written at upload time, so the discrepancy total was
+                    // right while the exported report showed every physical
+                    // quantity as 0 — an hour of counting, unrecoverable.
+                    inventory: stockInventoryList,
                   };
                   const targetId = activeCheckId ?? stockChecks.find((s) => s.status === 'In Progress')?.id;
                   if (targetId) {

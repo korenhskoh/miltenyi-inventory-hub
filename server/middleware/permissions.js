@@ -40,7 +40,7 @@ export function invalidatePermissionCache(userId) {
   else cache.clear();
 }
 
-async function loadUser(userId) {
+export async function loadUser(userId) {
   const hit = cache.get(userId);
   if (hit && Date.now() - hit.at < CACHE_TTL_MS) return hit;
   const r = await query('SELECT role, status, permissions FROM users WHERE id = $1', [userId]);
@@ -61,6 +61,22 @@ async function loadUser(userId) {
   };
   cache.set(userId, entry);
   return entry;
+}
+
+/**
+ * The account behind a token, as the DATABASE sees it right now.
+ *
+ * `verifyToken` uses this so that suspending or deleting an account takes
+ * effect immediately. Without it a token stayed good for its full 24 hours:
+ * the only way to actually revoke someone was to wait them out.
+ *
+ * Returns null when the account no longer exists. Throws only when the lookup
+ * itself fails, which the caller reports as unavailable rather than as denied.
+ */
+export async function currentAccount(userId) {
+  if (!userId) return null;
+  const u = await loadUser(userId);
+  return u.role ? u : null;
 }
 
 /**

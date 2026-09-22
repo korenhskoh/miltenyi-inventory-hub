@@ -191,11 +191,19 @@ export const MAX_CACHED_CHUNKS = 5000;
 
 async function loadChunks() {
   if (chunkCache) return chunkCache;
+  // Newest documents first.
+  //
+  // This used to order by doc_id, which is derived from a timestamp — so the
+  // LIMIT silently dropped the most RECENTLY uploaded documents once the corpus
+  // passed the cap. Someone would add a document, be told it was indexed, and
+  // find it never matched anything. Ordering by the document's own date keeps
+  // the newest material searchable and drops the oldest instead, which is the
+  // right way round; the count is reported so the UI can say so.
   const r = await query(
-    `SELECT c.id, c.doc_id, c.ordinal, c.content, c.embedding, d.title
+    `SELECT c.id, c.doc_id, c.ordinal, c.content, c.embedding, c.embedding_dim, d.title
      FROM kb_chunks c
      JOIN kb_documents d ON d.id = c.doc_id
-     ORDER BY c.doc_id, c.ordinal
+     ORDER BY d.created_at DESC, c.doc_id, c.ordinal
      LIMIT $1`,
     [MAX_CACHED_CHUNKS],
   );
@@ -210,6 +218,7 @@ async function loadChunks() {
       title: row.title,
       content: row.content,
       embedding: row.embedding || null,
+      embeddingDim: row.embedding_dim || (row.embedding ? row.embedding.length : 0),
       tokens,
       termFreq,
     };
@@ -248,14 +257,20 @@ export async function searchKb(questionText, { topK = 4, config = {}, minScore =
   // Vectors are a bonus, not a requirement: no embedding provider, or a corpus
   // ingested before one was configured, simply means lexical-only ranking.
   let semantic = docs.map(() => 0);
-  let usedVectors = false;
+  // Per chunk, not per query: a chunk embedded with a DIFFERENT model has a
+  // different vector length, and cosine between the two is meaningless. Before,
+  // one re-indexed document was enough to switch the whole query into hybrid
+  // mode, and every chunk from the old model then scored 0.65 × 0 — dropping
+  // below the floor and vanishing from results with no error anywhere. Those
+  // chunks are now simply ranked on words, which is what they can support.
+  let comparable = docs.map(() => false);
   if (docs.some((d) => Array.isArray(d.embedding) && d.embedding.length)) {
     const embedded = await embedTexts([text], config);
     if (embedded?.vectors?.[0]) {
       const qv = embedded.vectors[0];
       // Cosine runs -1..1; anything negative is unrelated, so it floors at 0.
       semantic = docs.map((d) => Math.max(0, cosine(qv, d.embedding)));
-      usedVectors = true;
+      comparable = docs.map((d) => Array.isArray(d.embedding) && d.embedding.length === qv.length);
     }
   }
 
@@ -264,7 +279,7 @@ export async function searchKb(questionText, { topK = 4, config = {}, minScore =
     title: d.title,
     ordinal: d.ordinal,
     content: d.content,
-    score: usedVectors ? 0.65 * semantic[i] + 0.35 * lexical[i] : lexical[i],
+    score: comparable[i] ? 0.65 * semantic[i] + 0.35 * lexical[i] : lexical[i],
   }));
 
   return scored

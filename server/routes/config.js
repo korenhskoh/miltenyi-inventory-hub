@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { query } from '../db.js';
 import logger from '../logger.js';
-import { userHasPermission } from '../middleware/permissions.js';
+import { userHasPermission, isActiveAdmin } from '../middleware/permissions.js';
 
 const router = Router();
 
@@ -22,6 +22,42 @@ const GLOBAL_KEYS = new Set([
   'waMessageTemplates',
 ]);
 export const CONFIG_GLOBAL_KEYS = GLOBAL_KEYS;
+
+// Which permission may READ each global key.
+//
+// These are operational settings — SMTP host and sender, approver addresses,
+// the WhatsApp allow-list, schedules — and every authenticated account could
+// read all of them. They are now scoped to the screen that owns them, so the
+// people who work with a setting still see it and nobody else does.
+//
+// Note that `notifications` and `whatsapp` are ON by default for every account
+// (see DEFAULT_USER_PERMS), so they are not a meaningful gate on their own. The
+// keys holding infrastructure detail or personal data — mail server, recipient
+// lists, the WhatsApp number allow-list — are therefore `settings` only. The
+// template and rule keys stay visible to whoever works that screen, since they
+// are content rather than credentials.
+//
+// The two keys not listed here, priceConfig and customLogo, stay readable by
+// everyone: prices and branding are rendered on pages every user has.
+const READ_PERMISSIONS = {
+  emailConfig: ['settings'],
+  scheduledNotifs: ['settings'],
+  waAllowedSenders: ['settings'],
+  emailTemplates: ['settings', 'notifications'],
+  waNotifyRules: ['settings', 'whatsapp'],
+  waMessageTemplates: ['settings', 'whatsapp'],
+  waAutoReply: ['settings', 'whatsapp'],
+  aiBotConfig: ['settings', 'aiBot'],
+};
+
+async function canReadKey(user, key) {
+  const needed = READ_PERMISSIONS[key];
+  if (!needed) return true;
+  for (const perm of needed) {
+    if (await userHasPermission(user, perm)) return true;
+  }
+  return false;
+}
 
 // Secrets inside config values that must never be returned to a client.
 // (The server uses the stored values itself — see /api/send-email and the AI
@@ -104,9 +140,13 @@ router.get('/', async (req, res) => {
        ORDER BY key, CASE WHEN user_id = $1 THEN 0 ELSE 1 END`,
       [userId, globalKeys],
     );
-    const isAdmin = req.user.role === 'admin';
+    // From the DATABASE, not the token's role claim. A token lives 24 hours, so
+    // trusting the claim handed a just-demoted admin the stored SMTP password
+    // for the rest of the day.
+    const isAdmin = await isActiveAdmin(req.user);
     const configObj = {};
     for (const row of result.rows) {
+      if (!(await canReadKey(req.user, row.key))) continue;
       configObj[row.key] = stripSecrets(row.key, row.value, isAdmin);
     }
     res.json(configObj);
@@ -119,8 +159,12 @@ router.get('/', async (req, res) => {
 router.get('/:key', async (req, res) => {
   try {
     const { key } = req.params;
+    if (!(await canReadKey(req.user, key))) {
+      return res.status(403).json({ error: `Permission required to read ${key}` });
+    }
+
     const userId = effectiveUserId(key, req.user);
-    const isAdmin = req.user.role === 'admin';
+    const isAdmin = await isActiveAdmin(req.user);
     const result = await query('SELECT * FROM app_config WHERE key = $1 AND user_id = $2', [key, userId]);
 
     // Fallback to global if per-user not found
@@ -147,6 +191,12 @@ router.put('/:key', async (req, res) => {
   try {
     const { key } = req.params;
     let { value } = req.body;
+
+    // A body with no value used to store SQL NULL and answer 200 — a client bug
+    // or a retry that lost its body silently wiped the SMTP settings.
+    if (value === undefined) {
+      return res.status(400).json({ error: 'A value is required.' });
+    }
 
     // Global keys: admins, or users granted the Settings (or AI Bot) permission
     if (GLOBAL_KEYS.has(key)) {
@@ -215,7 +265,7 @@ router.put('/:key', async (req, res) => {
     // leaked the stored smtpPass / apiKey to any non-admin allowed to save settings.
     res.json({
       key: result.rows[0].key,
-      value: stripSecrets(key, result.rows[0].value, req.user.role === 'admin'),
+      value: stripSecrets(key, result.rows[0].value, await isActiveAdmin(req.user)),
     });
   } catch (e) {
     res.status(500).json({ error: e.message });

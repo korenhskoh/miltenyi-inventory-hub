@@ -13,9 +13,42 @@ async function botCan(session, key) {
   return userHasPermission({ id: session.user.id, role: session.user.role }, key);
 }
 
+/**
+ * Did this sender raise the order?
+ *
+ * orders.order_by holds a display name, so it is resolved against the users
+ * table rather than compared to whatever the session carries. An order with no
+ * owner recorded belongs to nobody, which is not the same as belonging to you.
+ */
+async function ownsOrder(session, order) {
+  const owner = String(order?.order_by ?? '')
+    .trim()
+    .toLowerCase();
+  if (!owner || !session?.user?.id) return false;
+  const r = await query('SELECT name, username FROM users WHERE id = $1', [session.user.id]);
+  if (!r.rows.length) return false;
+  const { name, username } = r.rows[0];
+  const norm = (v) =>
+    String(v ?? '')
+      .trim()
+      .toLowerCase();
+  return owner === norm(name) || owner === norm(username);
+}
+
 // ── Helpers ──
 const PAGE_SIZE = 5;
 const fmtPrice = (n) => (n != null && Number(n) > 0 ? `S$${Number(n).toFixed(2)}` : '—');
+
+/**
+ * The first price that is actually a price.
+ *
+ * node-postgres hands back NUMERIC as a STRING, so a column sitting at its
+ * default of 0.00 arrives as '0.00' — which is truthy. A plain `a || b || c`
+ * therefore stopped at the zero and never reached the transfer price, and the
+ * order was written at S$0: it went through approval costed at nothing, while
+ * the web app showed a real figure because it compares numerically in SQL.
+ */
+export const firstPrice = (...values) => values.map(Number).find((n) => Number.isFinite(n) && n > 0) ?? 0;
 const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('en-SG') : '—');
 const ALLOWED_STATUSES = ['Pending', 'Pending Approval', 'Approved', 'Received', 'Rejected', 'Cancelled'];
 
@@ -122,7 +155,7 @@ async function handleCreateOrder(params, session) {
   if (!r.rows.length) return `❌ Part *${materialNo}* not found in catalog.`;
 
   const p = r.rows[0];
-  const unitPrice = Number(p.sg_price || p.transfer_price || p.dist_price || 0);
+  const unitPrice = firstPrice(p.sg_price, p.transfer_price, p.dist_price);
   const total = unitPrice * qty;
   session.state = 'order_confirm';
   session.data = { materialNo, description: p.description, qty, price: unitPrice, total };
@@ -140,10 +173,10 @@ async function handleCreateOrderMaterial(text, session) {
 
   session.data.materialNo = materialNo;
   session.data.description = r.rows[0].description;
-  session.data.price = Number(r.rows[0].sg_price || r.rows[0].transfer_price || r.rows[0].dist_price || 0);
+  session.data.price = firstPrice(r.rows[0].sg_price, r.rows[0].transfer_price, r.rows[0].dist_price);
   session.state = 'create_order_qty';
 
-  return `✅ *${r.rows[0].description}*\nUnit price: ${fmtPrice(r.rows[0].sg_price || r.rows[0].transfer_price || r.rows[0].dist_price)}\n\nHow many do you need? Enter quantity:`;
+  return `✅ *${r.rows[0].description}*\nUnit price: ${fmtPrice(session.data.price)}\n\nHow many do you need? Enter quantity:`;
 }
 
 async function handleCreateOrderQty(text, session) {
@@ -159,7 +192,9 @@ async function handleCreateOrderQty(text, session) {
 }
 
 async function executeOrderConfirm(session) {
-  if (!session?.user?.id) return DENIED('create orders');
+  // A linked account is not the same as a permitted one: the REST route requires
+  // the orders permission, so the bot does too.
+  if (!(await botCan(session, 'orders'))) return DENIED('create orders');
   const d = session.data;
   const now = new Date();
   const month = currentMonth();
@@ -258,12 +293,31 @@ async function handleUpdateOrder(params, session) {
   const r = await query('SELECT * FROM orders WHERE id = $1', [orderId]);
   if (!r.rows.length) return `❌ Order *${orderId}* not found.`;
 
-  // Changing an order to Approved/Rejected is an approval decision; marking it
-  // Received closes it out and is only valid once it has been approved.
+  // Changing ANY order's status is an edit, and the REST route enforces
+  // ownership-or-editAllOrders for exactly this. Checking only the
+  // Approved/Rejected cases left the bot as a second door around that control:
+  // through /api/ai/ask, any account with the default permissions could cancel
+  // somebody else's approved order, or pull it back out of approval.
+  if (!(await botCan(session, 'editAllOrders')) && !(await ownsOrder(session, r.rows[0]))) {
+    return DENIED('change orders raised by someone else');
+  }
+
+  // Approved/Rejected is an approval decision; pulling an order back to Pending
+  // Approval un-does one, which needs the same permission. Received closes the
+  // order out and is only valid once it has been approved.
   const decided = ['Approved', 'Rejected'].includes(matched);
-  if (decided && !(await botCan(session, 'approvals'))) return DENIED('approve or reject orders');
+  const undoesApproval = matched === 'Pending Approval' && r.rows[0].approval_status === 'approved';
+  if ((decided || undoesApproval) && !(await botCan(session, 'approvals'))) {
+    return DENIED('approve or reject orders');
+  }
   if (matched === 'Received' && r.rows[0].approval_status !== 'approved') {
     return `❌ *${orderId}* must be approved before it can be marked Received.`;
+  }
+  // Marking an order Received here would set the status without booking any
+  // stock, and would then make the real arrival endpoint a no-op through its
+  // idempotency guard — the units would be permanently missing from inventory.
+  if (matched === 'Received') {
+    return `To record a delivery, use the Part Arrival page so the quantity is booked into stock.\n\nThis keeps *${orderId}* and the inventory in step.`;
   }
 
   const extra = decided ? ", approval_status = '" + matched.toLowerCase() + "'" : '';

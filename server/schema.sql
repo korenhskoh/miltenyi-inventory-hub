@@ -292,7 +292,7 @@ CREATE INDEX IF NOT EXISTS idx_local_inventory_category ON local_inventory(categ
 -- Inventory transaction log for tracking all quantity changes
 CREATE TABLE IF NOT EXISTS inventory_transactions (
   id SERIAL PRIMARY KEY,
-  inventory_id INTEGER REFERENCES local_inventory(id) ON DELETE CASCADE,
+  inventory_id INTEGER REFERENCES local_inventory(id) ON DELETE SET NULL,
   material_no VARCHAR(30) NOT NULL,
   lots_number VARCHAR(100),
   quantity_change INTEGER NOT NULL,
@@ -407,3 +407,24 @@ CREATE TABLE IF NOT EXISTS kb_chunks (
 );
 
 CREATE INDEX IF NOT EXISTS idx_kb_chunks_doc ON kb_chunks(doc_id, ordinal);
+
+
+-- Deleting a stock item used to take its entire movement history with it:
+-- every charge-out, arrival, import and reconciliation row for that part, which
+-- is the audit trail for physical stock. The rows carry material_no and
+-- lots_number of their own, so they stay readable once the item is gone.
+ALTER TABLE inventory_transactions
+DROP CONSTRAINT IF EXISTS inventory_transactions_inventory_id_fkey;
+
+ALTER TABLE inventory_transactions
+ADD CONSTRAINT inventory_transactions_inventory_id_fkey
+FOREIGN KEY (inventory_id) REFERENCES local_inventory(id) ON DELETE SET NULL;
+
+-- The referencing side of a foreign key gets no index automatically, and this
+-- is the fastest-growing table in the app: without it, opening an item's
+-- history is a sequential scan, as is every delete that has to enforce the
+-- constraint above.
+CREATE INDEX IF NOT EXISTS idx_inv_txn_inventory ON inventory_transactions(inventory_id, created_at DESC);
+
+-- The default inventory listing sorts on updated_at on every page load.
+CREATE INDEX IF NOT EXISTS idx_local_inventory_updated ON local_inventory(updated_at DESC);

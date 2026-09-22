@@ -76,7 +76,7 @@ async function generateReportData(reportTypes) {
     if (reportTypes.lowStockAlert) {
       const result = await dbQuery(`
         SELECT COUNT(*)::int AS check_count, COALESCE(SUM(disc), 0) AS total_disc
-        FROM (SELECT disc FROM stock_checks ORDER BY created_at DESC LIMIT 5) recent
+        FROM (SELECT disc FROM stock_checks ORDER BY date DESC, id DESC LIMIT 5) recent
       `);
       const row = result.rows[0] || {};
       data.recentStockChecks = row.check_count || 0;
@@ -493,5 +493,10 @@ export async function reloadScheduler(getWaContext) {
 /**
  * Run report on demand (for testing or manual trigger)
  */
+/** Stop the cron task. Used on shutdown so a deploy does not leave it running. */
+export function stopScheduler() {
+  stopCronJob();
+}
+
 export { runScheduledReport };
 // resetTransporter is also exported above for use when email config changes

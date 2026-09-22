@@ -5,8 +5,8 @@ import { requirePermission } from '../middleware/permissions.js';
 import { getGlobalConfig } from './config.js';
 import logger from '../logger.js';
 import { testConnection, providerCatalog, redactConfig, listModels, AiError } from '../ai/index.js';
-import { runChat, checkBudget, spendSnapshot, resolveLimits, DEFAULT_LIMITS } from '../ai/usage.js';
-import { pricingCatalog } from '../ai/pricing.js';
+import { runChat, checkBudget, spendSnapshot, resolveLimits, recordUsage, DEFAULT_LIMITS } from '../ai/usage.js';
+import { pricingCatalog, costOf } from '../ai/pricing.js';
 import { buildSystemPrompt, buildContext, findMaterialNo } from '../ai/assistant.js';
 import { handleBotMessage } from '../waBot.js';
 import { query } from '../db.js';
@@ -79,8 +79,35 @@ router.post(
       ? { ...stored, apiKeys: { ...(stored.apiKeys || {}), [req.body.provider || stored.provider]: req.body.apiKey } }
       : stored;
     const cfg = { ...merged, ...(req.body?.provider ? { provider: req.body.provider } : {}) };
+    // The test is a real provider call, so it is priced and logged like any
+    // other. Leaving it out made the spend screen under-report every time
+    // someone pressed Test.
+    const record = async (outcome) => {
+      const { usd } = costOf(
+        {
+          provider: outcome.provider,
+          model: outcome.model,
+          inputTokens: outcome.usage?.inputTokens,
+          outputTokens: outcome.usage?.outputTokens,
+        },
+        cfg?.pricing,
+      );
+      await recordUsage({
+        surface: 'test',
+        userId: req.user.id,
+        provider: outcome.provider,
+        model: outcome.model,
+        inputTokens: outcome.usage?.inputTokens,
+        outputTokens: outcome.usage?.outputTokens,
+        costUsd: outcome.ok ? usd : 0,
+        latencyMs: outcome.ms,
+        ok: outcome.ok,
+        errorCode: outcome.errorCode || null,
+      });
+    };
+
     try {
-      res.json(await testConnection(cfg));
+      res.json(await testConnection(cfg, record));
     } catch (err) {
       const { status, error, code } = explain(err);
       logger.warn({ code: err?.code, provider: err?.provider }, 'AI connection test failed');

@@ -62,7 +62,10 @@ export function usePaginationState({ storageKey, initialSize = 50, resetKey } = 
  */
 export function usePagination(items, options) {
   const state = usePaginationState(options);
-  return { ...paginate(items, state.page, state.pageSize), ...state };
+  // `paginate` clamps the page to what actually exists; spreading state AFTER it
+  // put the unclamped number back, so deleting the rows on the last page left
+  // the control reading "Page 8 of 7" beside a table showing page 7.
+  return { ...state, ...paginate(items, state.page, state.pageSize) };
 }
 
 export { paginate };

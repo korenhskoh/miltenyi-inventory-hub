@@ -1,5 +1,5 @@
 // WhatsApp Message Templates (Baileys)
-export const messageTemplates = {
+const templates = {
   orderCreated: (data) => `\u{1F6D2} *New Order Created*
 
 Order ID: ${data.orderId}
@@ -20,6 +20,17 @@ Order ID: ${data.orderId}
 Item: ${data.description}
 Received: ${data.received}/${data.ordered}
 ${data.remaining > 0 ? `Still Pending: ${data.remaining}` : '\u2705 Fully Received'}
+
+_Miltenyi Inventory Hub SG_`,
+
+  backOrderUpdate: (data) => `\u{1F4E6} *Short Delivery*
+
+Order ID: ${data.orderId}
+Item: ${data.description}
+Received: ${data.qtyReceived} of ${data.quantity}
+Still Outstanding: ${data.backOrders}
+Verified By: ${data.verifiedBy}
+Date: ${data.date}
 
 _Miltenyi Inventory Hub SG_`,
 
@@ -69,3 +80,33 @@ _Miltenyi Inventory Hub SG_`,
 
   custom: (data) => data.message,
 };
+
+/**
+ * Render with a missing field showing as an em dash rather than "undefined".
+ *
+ * These templates interpolate `data.x` directly, so any caller that omits a
+ * field broadcast the literal text "undefined" to everyone — and a POST to
+ * /api/whatsapp/send with a template but no data threw, answering 500 instead
+ * of a useful 400. Reading through a proxy fixes every template at once,
+ * including any added later.
+ */
+const withDefaults = (data) =>
+  new Proxy(data && typeof data === 'object' ? data : {}, {
+    get(target, key) {
+      const v = target[key];
+      if (v === undefined || v === null || v === '') return '—';
+      return v;
+    },
+  });
+
+export const messageTemplates = Object.fromEntries(
+  Object.entries(templates).map(([key, fn]) => [
+    key,
+    (data) => {
+      // `custom` is the user's own message; an em dash for a missing one would
+      // be nonsense, so it keeps the plain behaviour with an explicit fallback.
+      if (key === 'custom') return String(data?.message ?? '').trim() || '(empty message)';
+      return fn(withDefaults(data));
+    },
+  ]),
+);

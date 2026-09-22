@@ -248,11 +248,18 @@ router.post(
           try {
             const materialNo = item.materialNo || item.material_no;
             const lotsNumber = item.lotsNumber || item.lots_number || null;
-            const qty = Math.abs(parseInt(item.quantity) || 1);
+            // `|| 1` turned a cleared field into a real movement: charging out
+            // zero removed one unit and reported success. The arrival handler
+            // next door already skips an unusable quantity; match it.
+            const qty = Math.abs(parseInt(item.quantity, 10) || 0);
             const notes = item.notes || '';
 
             if (!materialNo) {
               errors.push({ row: idx + 1, error: 'materialNo required' });
+              continue;
+            }
+            if (!qty) {
+              errors.push({ row: idx + 1, materialNo, error: 'Quantity must be at least 1' });
               continue;
             }
 
@@ -316,7 +323,6 @@ router.post(
   // requireAdmin re-checks against the database.
   requireAdmin,
   asyncHandler(async (req, res) => {
-
     const { items } = req.body;
     if (!Array.isArray(items) || items.length === 0) return res.status(400).json({ error: 'items array required' });
 

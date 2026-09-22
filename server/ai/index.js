@@ -197,19 +197,44 @@ export async function listModels(rawConfig = {}, providerId = null) {
   return { provider: id, models: list, live: true };
 }
 
-/** A cheap round trip so Settings can prove a key works before anyone relies on it. */
-export async function testConnection(rawConfig) {
+/**
+ * A cheap round trip so Settings can prove a key works before anyone relies on it.
+ *
+ * `onComplete` lets the caller record the spend. This call used to go straight
+ * to the provider without touching the usage log, so the spend screen
+ * under-reported every time someone pressed Test.
+ */
+export async function testConnection(rawConfig, onComplete = null) {
   const cfg = resolveConfig(rawConfig);
   const started = Date.now();
-  const res = await callProvider(cfg.provider, {
-    system: 'Reply with the single word: ok',
-    messages: [{ role: 'user', content: 'ping' }],
-    model: cfg.model,
-    apiKey: cfg.apiKey,
-    baseUrl: cfg.baseUrl,
-    maxTokens: 16,
-    temperature: 0,
-    timeoutMs: Math.min(cfg.timeoutMs, 15000),
+  let res;
+  try {
+    res = await callProvider(cfg.provider, {
+      system: 'Reply with the single word: ok',
+      messages: [{ role: 'user', content: 'ping' }],
+      model: cfg.model,
+      apiKey: cfg.apiKey,
+      baseUrl: cfg.baseUrl,
+      maxTokens: 16,
+      temperature: 0,
+      timeoutMs: Math.min(cfg.timeoutMs, 15000),
+    });
+  } catch (err) {
+    await onComplete?.({
+      ok: false,
+      provider: cfg.provider,
+      model: cfg.model,
+      errorCode: err?.code,
+      ms: Date.now() - started,
+    });
+    throw err;
+  }
+  await onComplete?.({
+    ok: true,
+    provider: res.provider || cfg.provider,
+    model: res.model,
+    usage: res.usage,
+    ms: Date.now() - started,
   });
   return { ok: true, provider: cfg.provider, model: res.model, ms: Date.now() - started, reply: res.text.trim() };
 }
