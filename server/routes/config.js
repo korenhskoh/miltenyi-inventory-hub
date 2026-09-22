@@ -23,16 +23,45 @@ const GLOBAL_KEYS = new Set([
 ]);
 export const CONFIG_GLOBAL_KEYS = GLOBAL_KEYS;
 
-// Secrets inside config values that non-admins must never receive.
-// (The server uses the stored values itself — see /api/send-email.)
+// Secrets inside config values that must never be returned to a client.
+// (The server uses the stored values itself — see /api/send-email and the AI
+// provider layer.)
 const SECRET_PATHS = {
   emailConfig: ['smtpPass'],
   aiBotConfig: ['apiKey'],
 };
 
+// Secrets that are write-only for EVERYONE, admins included. A provider API key
+// has no reason to travel to a browser: the server is what calls the provider.
+// Previously these came back in full to any admin, putting a live credential in
+// the page for no purpose. `apiKeys` is the per-provider map.
+const WRITE_ONLY_PATHS = {
+  aiBotConfig: ['apiKey', 'apiKeys'],
+};
+
 function stripSecrets(key, value, isAdmin) {
-  if (isAdmin || !SECRET_PATHS[key] || !value || typeof value !== 'object') return value;
-  const copy = { ...value };
+  if (!value || typeof value !== 'object') return value;
+  let copy = value;
+
+  const writeOnly = WRITE_ONLY_PATHS[key];
+  if (writeOnly) {
+    copy = { ...copy };
+    for (const p of writeOnly) {
+      if (p in copy) delete copy[p];
+    }
+    // Say WHICH providers have a key stored, without revealing any of them, so
+    // the settings UI can show "key set" without ever holding the value.
+    const keys = value.apiKeys && typeof value.apiKeys === 'object' ? value.apiKeys : {};
+    copy.hasKey = Object.fromEntries(
+      [...new Set([...Object.keys(keys), ...(value.apiKey ? [value.provider || 'openai'] : [])])].map((id) => [
+        id,
+        Boolean(keys[id] || (id === (value.provider || 'openai') && value.apiKey)),
+      ]),
+    );
+  }
+
+  if (isAdmin || !SECRET_PATHS[key]) return copy;
+  copy = { ...copy };
   for (const p of SECRET_PATHS[key]) {
     if (p in copy) copy[p] = '';
   }
@@ -123,12 +152,28 @@ router.put('/:key', async (req, res) => {
     const userId = effectiveUserId(key, req.user);
 
     // If a client sends back a blanked-out secret, keep the stored one.
-    if (SECRET_PATHS[key] && value && typeof value === 'object') {
+    if ((SECRET_PATHS[key] || WRITE_ONLY_PATHS[key]) && value && typeof value === 'object') {
       const current = await query('SELECT value FROM app_config WHERE key = $1 AND user_id = $2', [key, userId]);
       const stored = current.rows[0]?.value || {};
       value = { ...value };
-      for (const p of SECRET_PATHS[key]) {
+      for (const p of SECRET_PATHS[key] || []) {
         if ((value[p] === '' || value[p] === undefined) && stored[p]) value[p] = stored[p];
+      }
+      // Write-only fields are never sent back to the client, so an update will
+      // always arrive without them. Carry the stored values forward, merging
+      // per provider so saving a key for one does not wipe the others.
+      if (WRITE_ONLY_PATHS[key]) {
+        if (value.apiKey === undefined && stored.apiKey) value.apiKey = stored.apiKey;
+        const incoming = value.apiKeys && typeof value.apiKeys === 'object' ? value.apiKeys : {};
+        const existing = stored.apiKeys && typeof stored.apiKeys === 'object' ? stored.apiKeys : {};
+        const merged = { ...existing };
+        for (const [id, k] of Object.entries(incoming)) {
+          // An empty string means "leave it alone", not "delete it".
+          if (typeof k === 'string' && k.trim()) merged[id] = k.trim();
+        }
+        if (Object.keys(merged).length) value.apiKeys = merged;
+        // hasKey is a read-side hint; never store it.
+        delete value.hasKey;
       }
     }
 

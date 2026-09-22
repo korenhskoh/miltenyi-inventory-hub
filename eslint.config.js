@@ -71,6 +71,10 @@ export default [
         Buffer: true,
         URL: true,
         URLSearchParams: true,
+        // Node 18+ has these globally; the AI provider layer uses them.
+        fetch: true,
+        AbortController: true,
+        performance: true,
       },
     },
     rules: {

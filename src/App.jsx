@@ -123,6 +123,7 @@ import {
 } from './components/ui.jsx';
 import Pagination, { usePagination } from './components/Pagination.jsx';
 import ChangePasswordModal from './components/ChangePasswordModal.jsx';
+import LoginIntro, { IntroRule } from './components/LoginIntro.jsx';
 import { todayLocal, toLocalYmd } from './lib/dates.js';
 import { getCatalogPrice, getEffectiveUnitPrice, getEffectiveTotal } from './lib/pricing.js';
 import { computeArrival, arrivalDelta } from './lib/arrival.js';
@@ -3470,144 +3471,11 @@ export default function App() {
   }, [page]);
 
   // ════════════════════════════ AI BOT PROCESSING ════════════════════════════
-  const processAiMessage = async (userMessage) => {
-    const msg = userMessage.toLowerCase().trim();
-    const catalogLookupLocal = partsCatalog.reduce((acc, p) => {
-      acc[p.m] = p;
-      return acc;
-    }, {});
-
-    // Price check pattern
-    const priceMatch = msg.match(/price.*?(\d{3}-\d{3}-\d{3})|^(\d{3}-\d{3}-\d{3})/);
-    if (priceMatch || msg.includes('price')) {
-      const matNo = priceMatch ? priceMatch[1] || priceMatch[2] : null;
-      if (matNo && catalogLookupLocal[matNo]) {
-        const p = catalogLookupLocal[matNo];
-        return {
-          type: 'price',
-          text: `📦 **${p.d}** (${matNo})\n\n💰 **Prices (${priceConfig.year}):**\n• Unit Price: ${fmt(p.sg)}\n• Distributor: ${fmt(p.dist)}\n• RSP Price: ${fmt(p.tp)}\n\nWould you like to place an order?`,
-        };
-      }
-      if (matNo)
-        return {
-          type: 'not_found',
-          text: `I couldn't find part number **${matNo}** in the catalog. Please verify the material number.`,
-        };
-      return { type: 'prompt', text: 'Please provide a material number (e.g., 130-095-005) to check the price.' };
-    }
-
-    // Order status pattern
-    const orderMatch = msg.match(/status.*?(ord-\d+)|(ord-\d+).*status|order.*(ord-\d+)/i);
-    if (orderMatch || msg.includes('status') || msg.includes('track')) {
-      const orderId = orderMatch ? (orderMatch[1] || orderMatch[2] || orderMatch[3])?.toUpperCase() : null;
-      if (orderId) {
-        const order = orders.find((o) => o.id === orderId);
-        if (order) {
-          return {
-            type: 'order',
-            text: `📋 **Order ${order.id}**\n\n• Item: ${order.description}\n• Qty: ${order.quantity}\n• Status: **${order.status}**\n• Ordered: ${fmtDate(order.orderDate)}\n• Arrival: ${order.arrivalDate ? fmtDate(order.arrivalDate) : 'Pending'}\n• Received: ${order.qtyReceived}/${order.quantity}`,
-          };
-        }
-        return { type: 'not_found', text: `Order **${orderId}** not found. Please check the order ID.` };
-      }
-      return { type: 'prompt', text: 'Please provide an order ID (e.g., ORD-027) to check the status.' };
-    }
-
-    // Stock check pattern
-    if (msg.includes('stock') || msg.includes('inventory') || msg.includes('available')) {
-      const stockItems = stockChecks.slice(0, 3);
-      return {
-        type: 'stock',
-        text: `📊 **Recent Stock Checks:**\n\n${stockItems.map((s) => `• ${s.id}: ${s.items} items checked, ${s.disc} discrepancies (${s.status})`).join('\n')}\n\nFor detailed stock info, check the Stock Check page.`,
-      };
-    }
-
-    // Place order pattern
-    const placeOrderMatch =
-      msg.match(/order\s*(\d+)?\s*[x×]?\s*(\d{3}-\d{3}-\d{3})/i) ||
-      msg.match(/(\d{3}-\d{3}-\d{3})\s*[x×]?\s*(\d+)?.*order/i);
-    if (msg.includes('place order') || msg.includes('create order') || placeOrderMatch) {
-      if (placeOrderMatch) {
-        const matNo = placeOrderMatch[2] || placeOrderMatch[1];
-        const qty = placeOrderMatch[1] || placeOrderMatch[2] || 1;
-        if (catalogLookupLocal[matNo]) {
-          const p = catalogLookupLocal[matNo];
-          return {
-            type: 'order_confirm',
-            text: `🛒 **Ready to order:**\n\n• Part: ${p.d}\n• Material: ${matNo}\n• Quantity: ${qty}\n• Unit Price: ${fmt(getCatalogPrice(p))}\n• Total: ${fmt(getCatalogPrice(p) * parseInt(qty))}\n\nType "confirm" to place this order or "cancel" to abort.`,
-            pendingOrder: {
-              materialNo: matNo,
-              description: p.d,
-              quantity: parseInt(qty),
-              listPrice: getCatalogPrice(p),
-            },
-          };
-        }
-      }
-      return {
-        type: 'prompt',
-        text: 'To place an order, tell me the part number and quantity.\nExample: "Order 2x 130-095-005"',
-      };
-    }
-
-    // Confirm order
-    if (msg === 'confirm' && aiMessages.length > 0) {
-      const lastBotMsg = [...aiMessages].reverse().find((m) => m.role === 'bot' && m.pendingOrder);
-      if (lastBotMsg?.pendingOrder) {
-        const po = lastBotMsg.pendingOrder;
-        const aiNow = new Date();
-        const aiMonth = `${['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][aiNow.getMonth()]} ${aiNow.getFullYear()}`;
-        const newOrd = {
-          id: `ORD-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-          ...po,
-          totalCost: po.listPrice * po.quantity,
-          orderDate: toLocalYmd(aiNow),
-          arrivalDate: null,
-          qtyReceived: 0,
-          backOrder: -po.quantity,
-          engineer: '',
-          emailFull: '',
-          emailBack: '',
-          status: 'Pending Approval',
-          approvalStatus: 'pending',
-          orderBy: currentUser?.name || '',
-          month: aiMonth,
-          year: String(aiNow.getFullYear()),
-          remark: 'Created via AI Assistant',
-        };
-        const aiCreated = await api.createOrder(newOrd);
-        if (!aiCreated) {
-          notify('Save Failed', 'Order not saved to database', 'error');
-          return { type: 'error', text: 'Failed to save order. Please try again.' };
-        }
-        setOrders((prev) => [newOrd, ...prev]);
-        notify('Order Created', `${po.description} × ${po.quantity}`, 'success');
-        return {
-          type: 'success',
-          text: `✅ **Order Created Successfully!**\n\n• Order ID: ${newOrd.id}\n• Item: ${po.description}\n• Quantity: ${po.quantity}\n• Total: ${fmt(newOrd.totalCost)}\n\nYou can track this order by asking "Status ${newOrd.id}"`,
-        };
-      }
-    }
-
-    // Cancel
-    if (msg === 'cancel') {
-      return { type: 'info', text: 'Order cancelled. How else can I help you?' };
-    }
-
-    // Help
-    if (msg.includes('help') || msg === 'hi' || msg === 'hello') {
-      return {
-        type: 'help',
-        text: `👋 ${aiBotConfig.greeting}\n\n**I can help you with:**\n• 💰 Check prices - "Price for 130-095-005"\n• 📦 Track orders - "Status ORD-027"\n• 🛒 Place orders - "Order 2x 130-095-005"\n• 📊 Stock levels - "Check stock"\n\nHow can I assist you today?`,
-      };
-    }
-
-    // Default - would go to AI API in real implementation
-    return {
-      type: 'ai',
-      text: `I understand you're asking about: "${userMessage}"\n\nThis query would be processed by the AI API for a detailed response. For now, try:\n• Price checks\n• Order status\n• Placing orders\n• Stock information\n\nOr type "help" for available commands.`,
-    };
-  };
+  // The in-app assistant's own rule engine used to live here: ~137 lines of
+  // regex covering price, order status, stock and placing an order, duplicating
+  // a far richer engine that already existed on the server for the WhatsApp
+  // bot. The two drifted, and the same question got different answers depending
+  // on where it was asked. Both surfaces now call POST /api/ai/ask.
 
   const handleAiSend = () => {
     if (!aiInput.trim()) return;
@@ -3616,30 +3484,37 @@ export default function App() {
     setAiInput('');
     setAiProcessing(true);
 
-    setTimeout(async () => {
-      const response = await processAiMessage(aiInput);
-      const botMsg = {
-        id: Date.now() + 1,
-        role: 'bot',
-        text: response.text,
-        type: response.type,
-        time: new Date().toLocaleTimeString(),
-        pendingOrder: response.pendingOrder,
-      };
-      setAiMessages((prev) => [...prev, botMsg]);
+    // Answered by the shared server engine — the same one behind the WhatsApp
+    // bot — rather than a second copy of the rules living in this file. That
+    // copy knew four things; the shared engine knows about twenty, and adds a
+    // model fallback for anything the rules cannot match.
+    (async () => {
+      const question = userMsg.text;
+      const res = await api.askAssistant(question);
+      const text = res.ok ? res.text : res.error;
+      setAiMessages((prev) => [
+        ...prev,
+        {
+          id: Date.now() + 1,
+          role: 'bot',
+          text,
+          type: res.ok ? 'answer' : 'error',
+          time: new Date().toLocaleTimeString(),
+        },
+      ]);
       setAiProcessing(false);
       setAiConversationLogs((prev) => [
         ...prev,
         {
           id: `AI-${String(prev.length + 1).padStart(3, '0')}`,
           user: currentUser.name,
-          query: aiInput,
-          response: response.text.slice(0, 100),
+          query: question,
+          response: (text || '').slice(0, 100),
           time: new Date().toISOString(),
-          type: response.type,
+          type: res.ok ? 'answer' : 'error',
         },
       ]);
-    }, 500);
+    })();
   };
 
   const handleAiQuickAction = (action) => {
@@ -4668,220 +4543,70 @@ export default function App() {
           </div>
         </div>
 
-        {/* Login Card */}
-        <div className="login-card-glass">
-          <div style={{ textAlign: 'center', marginBottom: 32 }}>
-            <div className="login-header-line" />
-            <div
-              className={customLogo ? '' : 'login-logo-box'}
-              style={
-                customLogo
-                  ? {
-                      width: 64,
-                      height: 64,
-                      borderRadius: 18,
-                      background: '#fff',
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      marginBottom: 16,
-                      overflow: 'hidden',
-                      border: '2px solid #E8EDF2',
-                      boxShadow: '0 8px 24px rgba(0,0,0,0.1)',
-                    }
-                  : {}
-              }
-            >
-              {customLogo ? (
-                <img src={customLogo} alt="Logo" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
-              ) : (
-                <Package size={30} color="#fff" />
-              )}
-            </div>
-            <h1
-              style={{
-                fontSize: 24,
-                fontWeight: 700,
-                color: '#0F172A',
-                letterSpacing: -0.5,
-                fontFamily: "'Sora','DM Sans',sans-serif",
-                margin: 0,
-              }}
-            >
-              Miltenyi Singapore Hub
-            </h1>
-            <p
-              style={{
-                fontSize: 10,
-                color: '#94A3B8',
-                marginTop: 6,
-                letterSpacing: 0.5,
-                textTransform: 'uppercase',
-                fontWeight: 500,
-              }}
-            >
-              Service Singapore Management
-            </p>
-          </div>
-
-          {authView === 'login' ? (
-            <div>
-              <div style={{ marginBottom: 16 }}>
-                <label
-                  style={{
-                    display: 'block',
-                    fontSize: 11,
-                    fontWeight: 600,
-                    color: '#4A5568',
-                    marginBottom: 6,
-                    textTransform: 'uppercase',
-                    letterSpacing: 0.5,
-                  }}
-                >
-                  Username
-                </label>
-                <input
-                  className="login-input"
-                  value={loginForm.username}
-                  onChange={(e) => setLoginForm((p) => ({ ...p, username: e.target.value }))}
-                  placeholder="Enter username"
-                  onKeyDown={(e) => e.key === 'Enter' && handleLogin()}
-                />
-              </div>
-              <div style={{ marginBottom: 24 }}>
-                <label
-                  style={{
-                    display: 'block',
-                    fontSize: 11,
-                    fontWeight: 600,
-                    color: '#4A5568',
-                    marginBottom: 6,
-                    textTransform: 'uppercase',
-                    letterSpacing: 0.5,
-                  }}
-                >
-                  Password
-                </label>
-                <input
-                  className="login-input"
-                  type="password"
-                  value={loginForm.password}
-                  onChange={(e) => setLoginForm((p) => ({ ...p, password: e.target.value }))}
-                  placeholder="Enter password"
-                  onKeyDown={(e) => e.key === 'Enter' && handleLogin()}
-                />
-              </div>
-              <button
-                onClick={handleLogin}
-                disabled={isSubmitting}
-                className="login-btn-primary"
-                style={{ opacity: isSubmitting ? 0.6 : 1 }}
-              >
-                <Lock size={16} /> {isSubmitting ? 'Signing in...' : 'Sign In'}
-              </button>
-              <div style={{ textAlign: 'center', marginTop: 20, fontSize: 13, color: '#64748B' }}>
-                Don't have an account?{' '}
-                <button onClick={() => setAuthView('register')} className="login-link">
-                  Register here
-                </button>
-              </div>
+        {/* Login Card — the intro timeline animates anything marked data-intro
+            inside it, and leaves the rest alone. */}
+        <LoginIntro>
+          <div className="login-card-glass">
+            <div style={{ textAlign: 'center', marginBottom: 32 }}>
+              <div className="login-header-line" />
               <div
+                className={customLogo ? '' : 'login-logo-box'}
+                style={
+                  customLogo
+                    ? {
+                        width: 64,
+                        height: 64,
+                        borderRadius: 18,
+                        background: '#fff',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        marginBottom: 16,
+                        overflow: 'hidden',
+                        border: '2px solid #E8EDF2',
+                        boxShadow: '0 8px 24px rgba(0,0,0,0.1)',
+                      }
+                    : {}
+                }
+              >
+                {customLogo ? (
+                  <img src={customLogo} alt="Logo" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+                ) : (
+                  <Package size={30} color="#fff" />
+                )}
+              </div>
+              <h1
+                data-intro
                 style={{
-                  marginTop: 24,
-                  padding: 12,
-                  borderRadius: 10,
-                  background: 'linear-gradient(135deg,#F0FFF4,#F8FAFB)',
-                  fontSize: 11,
-                  color: '#94A3B8',
-                  border: '1px solid #E8F5E9',
+                  fontSize: 24,
+                  fontWeight: 700,
+                  color: '#0F172A',
+                  letterSpacing: -0.5,
+                  fontFamily: "'Sora','DM Sans',sans-serif",
+                  margin: 0,
                 }}
               >
-                <div
-                  style={{
-                    fontWeight: 600,
-                    marginBottom: 4,
-                    color: '#4CAF50',
-                    fontSize: 10,
-                    textTransform: 'uppercase',
-                    letterSpacing: 0.5,
-                  }}
-                >
-                  Getting Started
-                </div>
-                <div>Contact your administrator for login credentials</div>
-              </div>
-            </div>
-          ) : (
-            <div>
-              <div style={{ marginBottom: 14 }}>
-                <label
-                  style={{
-                    display: 'block',
-                    fontSize: 11,
-                    fontWeight: 600,
-                    color: '#4A5568',
-                    marginBottom: 6,
-                    textTransform: 'uppercase',
-                    letterSpacing: 0.5,
-                  }}
-                >
-                  Full Name *
-                </label>
-                <input
-                  className="login-input"
-                  value={regForm.name}
-                  onChange={(e) => setRegForm((p) => ({ ...p, name: e.target.value }))}
-                  placeholder="Your full name"
-                />
-              </div>
-              <div style={{ marginBottom: 14 }}>
-                <label
-                  style={{
-                    display: 'block',
-                    fontSize: 11,
-                    fontWeight: 600,
-                    color: '#4A5568',
-                    marginBottom: 6,
-                    textTransform: 'uppercase',
-                    letterSpacing: 0.5,
-                  }}
-                >
-                  Email *
-                </label>
-                <input
-                  className="login-input"
-                  type="email"
-                  value={regForm.email}
-                  onChange={(e) => setRegForm((p) => ({ ...p, email: e.target.value }))}
-                  placeholder="name@miltenyibiotec.com"
-                />
-              </div>
-              <div style={{ marginBottom: 14 }}>
-                <label
-                  style={{
-                    display: 'block',
-                    fontSize: 11,
-                    fontWeight: 600,
-                    color: '#4A5568',
-                    marginBottom: 6,
-                    textTransform: 'uppercase',
-                    letterSpacing: 0.5,
-                  }}
-                >
-                  Phone
-                </label>
-                <input
-                  className="login-input"
-                  value={regForm.phone}
-                  onChange={(e) => setRegForm((p) => ({ ...p, phone: e.target.value }))}
-                  placeholder="+65 9XXX XXXX"
-                />
-              </div>
-              <div
-                className="grid-2"
-                style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 14 }}
+                Miltenyi Singapore Hub
+              </h1>
+              <IntroRule />
+              <p
+                data-intro
+                style={{
+                  fontSize: 10,
+                  color: '#94A3B8',
+                  marginTop: 6,
+                  letterSpacing: 0.5,
+                  textTransform: 'uppercase',
+                  fontWeight: 500,
+                }}
               >
-                <div>
+                Service Singapore Management
+              </p>
+            </div>
+
+            {authView === 'login' ? (
+              <div>
+                <div style={{ marginBottom: 16 }}>
                   <label
                     style={{
                       display: 'block',
@@ -4893,16 +4618,17 @@ export default function App() {
                       letterSpacing: 0.5,
                     }}
                   >
-                    Username *
+                    Username
                   </label>
                   <input
                     className="login-input"
-                    value={regForm.username}
-                    onChange={(e) => setRegForm((p) => ({ ...p, username: e.target.value }))}
-                    placeholder="Choose username"
+                    value={loginForm.username}
+                    onChange={(e) => setLoginForm((p) => ({ ...p, username: e.target.value }))}
+                    placeholder="Enter username"
+                    onKeyDown={(e) => e.key === 'Enter' && handleLogin()}
                   />
                 </div>
-                <div>
+                <div style={{ marginBottom: 24 }}>
                   <label
                     style={{
                       display: 'block',
@@ -4914,45 +4640,200 @@ export default function App() {
                       letterSpacing: 0.5,
                     }}
                   >
-                    Password *
+                    Password
                   </label>
                   <input
                     className="login-input"
                     type="password"
-                    value={regForm.password}
-                    onChange={(e) => setRegForm((p) => ({ ...p, password: e.target.value }))}
-                    placeholder="Create password"
+                    value={loginForm.password}
+                    onChange={(e) => setLoginForm((p) => ({ ...p, password: e.target.value }))}
+                    placeholder="Enter password"
+                    onKeyDown={(e) => e.key === 'Enter' && handleLogin()}
                   />
                 </div>
-              </div>
-              <div
-                style={{
-                  padding: 10,
-                  borderRadius: 10,
-                  background: 'linear-gradient(135deg,#FFFBEB,#FEF3C7)',
-                  fontSize: 11,
-                  color: '#92400E',
-                  marginBottom: 20,
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 6,
-                  border: '1px solid #FDE68A',
-                }}
-              >
-                <AlertTriangle size={13} /> Your account will need admin approval before you can login.
-              </div>
-              <button onClick={handleRegister} className="login-btn-primary">
-                <UserPlus size={16} /> Request Account
-              </button>
-              <div style={{ textAlign: 'center', marginTop: 16, fontSize: 13, color: '#64748B' }}>
-                Already have an account?{' '}
-                <button onClick={() => setAuthView('login')} className="login-link">
-                  Sign in
+                <button
+                  onClick={handleLogin}
+                  disabled={isSubmitting}
+                  className="login-btn-primary"
+                  style={{ opacity: isSubmitting ? 0.6 : 1 }}
+                >
+                  <Lock size={16} /> {isSubmitting ? 'Signing in...' : 'Sign In'}
                 </button>
+                <div style={{ textAlign: 'center', marginTop: 20, fontSize: 13, color: '#64748B' }}>
+                  Don't have an account?{' '}
+                  <button onClick={() => setAuthView('register')} className="login-link">
+                    Register here
+                  </button>
+                </div>
+                <div
+                  style={{
+                    marginTop: 24,
+                    padding: 12,
+                    borderRadius: 10,
+                    background: 'linear-gradient(135deg,#F0FFF4,#F8FAFB)',
+                    fontSize: 11,
+                    color: '#94A3B8',
+                    border: '1px solid #E8F5E9',
+                  }}
+                >
+                  <div
+                    style={{
+                      fontWeight: 600,
+                      marginBottom: 4,
+                      color: '#4CAF50',
+                      fontSize: 10,
+                      textTransform: 'uppercase',
+                      letterSpacing: 0.5,
+                    }}
+                  >
+                    Getting Started
+                  </div>
+                  <div>Contact your administrator for login credentials</div>
+                </div>
               </div>
-            </div>
-          )}
-        </div>
+            ) : (
+              <div>
+                <div style={{ marginBottom: 14 }}>
+                  <label
+                    style={{
+                      display: 'block',
+                      fontSize: 11,
+                      fontWeight: 600,
+                      color: '#4A5568',
+                      marginBottom: 6,
+                      textTransform: 'uppercase',
+                      letterSpacing: 0.5,
+                    }}
+                  >
+                    Full Name *
+                  </label>
+                  <input
+                    className="login-input"
+                    value={regForm.name}
+                    onChange={(e) => setRegForm((p) => ({ ...p, name: e.target.value }))}
+                    placeholder="Your full name"
+                  />
+                </div>
+                <div style={{ marginBottom: 14 }}>
+                  <label
+                    style={{
+                      display: 'block',
+                      fontSize: 11,
+                      fontWeight: 600,
+                      color: '#4A5568',
+                      marginBottom: 6,
+                      textTransform: 'uppercase',
+                      letterSpacing: 0.5,
+                    }}
+                  >
+                    Email *
+                  </label>
+                  <input
+                    className="login-input"
+                    type="email"
+                    value={regForm.email}
+                    onChange={(e) => setRegForm((p) => ({ ...p, email: e.target.value }))}
+                    placeholder="name@miltenyibiotec.com"
+                  />
+                </div>
+                <div style={{ marginBottom: 14 }}>
+                  <label
+                    style={{
+                      display: 'block',
+                      fontSize: 11,
+                      fontWeight: 600,
+                      color: '#4A5568',
+                      marginBottom: 6,
+                      textTransform: 'uppercase',
+                      letterSpacing: 0.5,
+                    }}
+                  >
+                    Phone
+                  </label>
+                  <input
+                    className="login-input"
+                    value={regForm.phone}
+                    onChange={(e) => setRegForm((p) => ({ ...p, phone: e.target.value }))}
+                    placeholder="+65 9XXX XXXX"
+                  />
+                </div>
+                <div
+                  className="grid-2"
+                  style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 14 }}
+                >
+                  <div>
+                    <label
+                      style={{
+                        display: 'block',
+                        fontSize: 11,
+                        fontWeight: 600,
+                        color: '#4A5568',
+                        marginBottom: 6,
+                        textTransform: 'uppercase',
+                        letterSpacing: 0.5,
+                      }}
+                    >
+                      Username *
+                    </label>
+                    <input
+                      className="login-input"
+                      value={regForm.username}
+                      onChange={(e) => setRegForm((p) => ({ ...p, username: e.target.value }))}
+                      placeholder="Choose username"
+                    />
+                  </div>
+                  <div>
+                    <label
+                      style={{
+                        display: 'block',
+                        fontSize: 11,
+                        fontWeight: 600,
+                        color: '#4A5568',
+                        marginBottom: 6,
+                        textTransform: 'uppercase',
+                        letterSpacing: 0.5,
+                      }}
+                    >
+                      Password *
+                    </label>
+                    <input
+                      className="login-input"
+                      type="password"
+                      value={regForm.password}
+                      onChange={(e) => setRegForm((p) => ({ ...p, password: e.target.value }))}
+                      placeholder="Create password"
+                    />
+                  </div>
+                </div>
+                <div
+                  style={{
+                    padding: 10,
+                    borderRadius: 10,
+                    background: 'linear-gradient(135deg,#FFFBEB,#FEF3C7)',
+                    fontSize: 11,
+                    color: '#92400E',
+                    marginBottom: 20,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 6,
+                    border: '1px solid #FDE68A',
+                  }}
+                >
+                  <AlertTriangle size={13} /> Your account will need admin approval before you can login.
+                </div>
+                <button onClick={handleRegister} className="login-btn-primary">
+                  <UserPlus size={16} /> Request Account
+                </button>
+                <div style={{ textAlign: 'center', marginTop: 16, fontSize: 13, color: '#64748B' }}>
+                  Already have an account?{' '}
+                  <button onClick={() => setAuthView('login')} className="login-link">
+                    Sign in
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </LoginIntro>
         <Toast items={notifs} onDismiss={(i) => setNotifs((p) => p.filter((_, j) => j !== i))} />
       </div>
     );
