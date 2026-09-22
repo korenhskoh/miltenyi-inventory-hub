@@ -123,6 +123,7 @@ import {
 } from './components/ui.jsx';
 import Pagination, { usePagination } from './components/Pagination.jsx';
 import ChangePasswordModal from './components/ChangePasswordModal.jsx';
+import LoginIntro, { IntroRule } from './components/LoginIntro.jsx';
 import { todayLocal, toLocalYmd } from './lib/dates.js';
 import { getCatalogPrice, getEffectiveUnitPrice, getEffectiveTotal } from './lib/pricing.js';
 import { computeArrival, arrivalDelta } from './lib/arrival.js';
@@ -4542,220 +4543,70 @@ export default function App() {
           </div>
         </div>
 
-        {/* Login Card */}
-        <div className="login-card-glass">
-          <div style={{ textAlign: 'center', marginBottom: 32 }}>
-            <div className="login-header-line" />
-            <div
-              className={customLogo ? '' : 'login-logo-box'}
-              style={
-                customLogo
-                  ? {
-                      width: 64,
-                      height: 64,
-                      borderRadius: 18,
-                      background: '#fff',
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      marginBottom: 16,
-                      overflow: 'hidden',
-                      border: '2px solid #E8EDF2',
-                      boxShadow: '0 8px 24px rgba(0,0,0,0.1)',
-                    }
-                  : {}
-              }
-            >
-              {customLogo ? (
-                <img src={customLogo} alt="Logo" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
-              ) : (
-                <Package size={30} color="#fff" />
-              )}
-            </div>
-            <h1
-              style={{
-                fontSize: 24,
-                fontWeight: 700,
-                color: '#0F172A',
-                letterSpacing: -0.5,
-                fontFamily: "'Sora','DM Sans',sans-serif",
-                margin: 0,
-              }}
-            >
-              Miltenyi Singapore Hub
-            </h1>
-            <p
-              style={{
-                fontSize: 10,
-                color: '#94A3B8',
-                marginTop: 6,
-                letterSpacing: 0.5,
-                textTransform: 'uppercase',
-                fontWeight: 500,
-              }}
-            >
-              Service Singapore Management
-            </p>
-          </div>
-
-          {authView === 'login' ? (
-            <div>
-              <div style={{ marginBottom: 16 }}>
-                <label
-                  style={{
-                    display: 'block',
-                    fontSize: 11,
-                    fontWeight: 600,
-                    color: '#4A5568',
-                    marginBottom: 6,
-                    textTransform: 'uppercase',
-                    letterSpacing: 0.5,
-                  }}
-                >
-                  Username
-                </label>
-                <input
-                  className="login-input"
-                  value={loginForm.username}
-                  onChange={(e) => setLoginForm((p) => ({ ...p, username: e.target.value }))}
-                  placeholder="Enter username"
-                  onKeyDown={(e) => e.key === 'Enter' && handleLogin()}
-                />
-              </div>
-              <div style={{ marginBottom: 24 }}>
-                <label
-                  style={{
-                    display: 'block',
-                    fontSize: 11,
-                    fontWeight: 600,
-                    color: '#4A5568',
-                    marginBottom: 6,
-                    textTransform: 'uppercase',
-                    letterSpacing: 0.5,
-                  }}
-                >
-                  Password
-                </label>
-                <input
-                  className="login-input"
-                  type="password"
-                  value={loginForm.password}
-                  onChange={(e) => setLoginForm((p) => ({ ...p, password: e.target.value }))}
-                  placeholder="Enter password"
-                  onKeyDown={(e) => e.key === 'Enter' && handleLogin()}
-                />
-              </div>
-              <button
-                onClick={handleLogin}
-                disabled={isSubmitting}
-                className="login-btn-primary"
-                style={{ opacity: isSubmitting ? 0.6 : 1 }}
-              >
-                <Lock size={16} /> {isSubmitting ? 'Signing in...' : 'Sign In'}
-              </button>
-              <div style={{ textAlign: 'center', marginTop: 20, fontSize: 13, color: '#64748B' }}>
-                Don't have an account?{' '}
-                <button onClick={() => setAuthView('register')} className="login-link">
-                  Register here
-                </button>
-              </div>
+        {/* Login Card — the intro timeline animates anything marked data-intro
+            inside it, and leaves the rest alone. */}
+        <LoginIntro>
+          <div className="login-card-glass">
+            <div style={{ textAlign: 'center', marginBottom: 32 }}>
+              <div className="login-header-line" />
               <div
+                className={customLogo ? '' : 'login-logo-box'}
+                style={
+                  customLogo
+                    ? {
+                        width: 64,
+                        height: 64,
+                        borderRadius: 18,
+                        background: '#fff',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        marginBottom: 16,
+                        overflow: 'hidden',
+                        border: '2px solid #E8EDF2',
+                        boxShadow: '0 8px 24px rgba(0,0,0,0.1)',
+                      }
+                    : {}
+                }
+              >
+                {customLogo ? (
+                  <img src={customLogo} alt="Logo" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+                ) : (
+                  <Package size={30} color="#fff" />
+                )}
+              </div>
+              <h1
+                data-intro
                 style={{
-                  marginTop: 24,
-                  padding: 12,
-                  borderRadius: 10,
-                  background: 'linear-gradient(135deg,#F0FFF4,#F8FAFB)',
-                  fontSize: 11,
-                  color: '#94A3B8',
-                  border: '1px solid #E8F5E9',
+                  fontSize: 24,
+                  fontWeight: 700,
+                  color: '#0F172A',
+                  letterSpacing: -0.5,
+                  fontFamily: "'Sora','DM Sans',sans-serif",
+                  margin: 0,
                 }}
               >
-                <div
-                  style={{
-                    fontWeight: 600,
-                    marginBottom: 4,
-                    color: '#4CAF50',
-                    fontSize: 10,
-                    textTransform: 'uppercase',
-                    letterSpacing: 0.5,
-                  }}
-                >
-                  Getting Started
-                </div>
-                <div>Contact your administrator for login credentials</div>
-              </div>
-            </div>
-          ) : (
-            <div>
-              <div style={{ marginBottom: 14 }}>
-                <label
-                  style={{
-                    display: 'block',
-                    fontSize: 11,
-                    fontWeight: 600,
-                    color: '#4A5568',
-                    marginBottom: 6,
-                    textTransform: 'uppercase',
-                    letterSpacing: 0.5,
-                  }}
-                >
-                  Full Name *
-                </label>
-                <input
-                  className="login-input"
-                  value={regForm.name}
-                  onChange={(e) => setRegForm((p) => ({ ...p, name: e.target.value }))}
-                  placeholder="Your full name"
-                />
-              </div>
-              <div style={{ marginBottom: 14 }}>
-                <label
-                  style={{
-                    display: 'block',
-                    fontSize: 11,
-                    fontWeight: 600,
-                    color: '#4A5568',
-                    marginBottom: 6,
-                    textTransform: 'uppercase',
-                    letterSpacing: 0.5,
-                  }}
-                >
-                  Email *
-                </label>
-                <input
-                  className="login-input"
-                  type="email"
-                  value={regForm.email}
-                  onChange={(e) => setRegForm((p) => ({ ...p, email: e.target.value }))}
-                  placeholder="name@miltenyibiotec.com"
-                />
-              </div>
-              <div style={{ marginBottom: 14 }}>
-                <label
-                  style={{
-                    display: 'block',
-                    fontSize: 11,
-                    fontWeight: 600,
-                    color: '#4A5568',
-                    marginBottom: 6,
-                    textTransform: 'uppercase',
-                    letterSpacing: 0.5,
-                  }}
-                >
-                  Phone
-                </label>
-                <input
-                  className="login-input"
-                  value={regForm.phone}
-                  onChange={(e) => setRegForm((p) => ({ ...p, phone: e.target.value }))}
-                  placeholder="+65 9XXX XXXX"
-                />
-              </div>
-              <div
-                className="grid-2"
-                style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 14 }}
+                Miltenyi Singapore Hub
+              </h1>
+              <IntroRule />
+              <p
+                data-intro
+                style={{
+                  fontSize: 10,
+                  color: '#94A3B8',
+                  marginTop: 6,
+                  letterSpacing: 0.5,
+                  textTransform: 'uppercase',
+                  fontWeight: 500,
+                }}
               >
-                <div>
+                Service Singapore Management
+              </p>
+            </div>
+
+            {authView === 'login' ? (
+              <div>
+                <div style={{ marginBottom: 16 }}>
                   <label
                     style={{
                       display: 'block',
@@ -4767,16 +4618,17 @@ export default function App() {
                       letterSpacing: 0.5,
                     }}
                   >
-                    Username *
+                    Username
                   </label>
                   <input
                     className="login-input"
-                    value={regForm.username}
-                    onChange={(e) => setRegForm((p) => ({ ...p, username: e.target.value }))}
-                    placeholder="Choose username"
+                    value={loginForm.username}
+                    onChange={(e) => setLoginForm((p) => ({ ...p, username: e.target.value }))}
+                    placeholder="Enter username"
+                    onKeyDown={(e) => e.key === 'Enter' && handleLogin()}
                   />
                 </div>
-                <div>
+                <div style={{ marginBottom: 24 }}>
                   <label
                     style={{
                       display: 'block',
@@ -4788,45 +4640,200 @@ export default function App() {
                       letterSpacing: 0.5,
                     }}
                   >
-                    Password *
+                    Password
                   </label>
                   <input
                     className="login-input"
                     type="password"
-                    value={regForm.password}
-                    onChange={(e) => setRegForm((p) => ({ ...p, password: e.target.value }))}
-                    placeholder="Create password"
+                    value={loginForm.password}
+                    onChange={(e) => setLoginForm((p) => ({ ...p, password: e.target.value }))}
+                    placeholder="Enter password"
+                    onKeyDown={(e) => e.key === 'Enter' && handleLogin()}
                   />
                 </div>
-              </div>
-              <div
-                style={{
-                  padding: 10,
-                  borderRadius: 10,
-                  background: 'linear-gradient(135deg,#FFFBEB,#FEF3C7)',
-                  fontSize: 11,
-                  color: '#92400E',
-                  marginBottom: 20,
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 6,
-                  border: '1px solid #FDE68A',
-                }}
-              >
-                <AlertTriangle size={13} /> Your account will need admin approval before you can login.
-              </div>
-              <button onClick={handleRegister} className="login-btn-primary">
-                <UserPlus size={16} /> Request Account
-              </button>
-              <div style={{ textAlign: 'center', marginTop: 16, fontSize: 13, color: '#64748B' }}>
-                Already have an account?{' '}
-                <button onClick={() => setAuthView('login')} className="login-link">
-                  Sign in
+                <button
+                  onClick={handleLogin}
+                  disabled={isSubmitting}
+                  className="login-btn-primary"
+                  style={{ opacity: isSubmitting ? 0.6 : 1 }}
+                >
+                  <Lock size={16} /> {isSubmitting ? 'Signing in...' : 'Sign In'}
                 </button>
+                <div style={{ textAlign: 'center', marginTop: 20, fontSize: 13, color: '#64748B' }}>
+                  Don't have an account?{' '}
+                  <button onClick={() => setAuthView('register')} className="login-link">
+                    Register here
+                  </button>
+                </div>
+                <div
+                  style={{
+                    marginTop: 24,
+                    padding: 12,
+                    borderRadius: 10,
+                    background: 'linear-gradient(135deg,#F0FFF4,#F8FAFB)',
+                    fontSize: 11,
+                    color: '#94A3B8',
+                    border: '1px solid #E8F5E9',
+                  }}
+                >
+                  <div
+                    style={{
+                      fontWeight: 600,
+                      marginBottom: 4,
+                      color: '#4CAF50',
+                      fontSize: 10,
+                      textTransform: 'uppercase',
+                      letterSpacing: 0.5,
+                    }}
+                  >
+                    Getting Started
+                  </div>
+                  <div>Contact your administrator for login credentials</div>
+                </div>
               </div>
-            </div>
-          )}
-        </div>
+            ) : (
+              <div>
+                <div style={{ marginBottom: 14 }}>
+                  <label
+                    style={{
+                      display: 'block',
+                      fontSize: 11,
+                      fontWeight: 600,
+                      color: '#4A5568',
+                      marginBottom: 6,
+                      textTransform: 'uppercase',
+                      letterSpacing: 0.5,
+                    }}
+                  >
+                    Full Name *
+                  </label>
+                  <input
+                    className="login-input"
+                    value={regForm.name}
+                    onChange={(e) => setRegForm((p) => ({ ...p, name: e.target.value }))}
+                    placeholder="Your full name"
+                  />
+                </div>
+                <div style={{ marginBottom: 14 }}>
+                  <label
+                    style={{
+                      display: 'block',
+                      fontSize: 11,
+                      fontWeight: 600,
+                      color: '#4A5568',
+                      marginBottom: 6,
+                      textTransform: 'uppercase',
+                      letterSpacing: 0.5,
+                    }}
+                  >
+                    Email *
+                  </label>
+                  <input
+                    className="login-input"
+                    type="email"
+                    value={regForm.email}
+                    onChange={(e) => setRegForm((p) => ({ ...p, email: e.target.value }))}
+                    placeholder="name@miltenyibiotec.com"
+                  />
+                </div>
+                <div style={{ marginBottom: 14 }}>
+                  <label
+                    style={{
+                      display: 'block',
+                      fontSize: 11,
+                      fontWeight: 600,
+                      color: '#4A5568',
+                      marginBottom: 6,
+                      textTransform: 'uppercase',
+                      letterSpacing: 0.5,
+                    }}
+                  >
+                    Phone
+                  </label>
+                  <input
+                    className="login-input"
+                    value={regForm.phone}
+                    onChange={(e) => setRegForm((p) => ({ ...p, phone: e.target.value }))}
+                    placeholder="+65 9XXX XXXX"
+                  />
+                </div>
+                <div
+                  className="grid-2"
+                  style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 14 }}
+                >
+                  <div>
+                    <label
+                      style={{
+                        display: 'block',
+                        fontSize: 11,
+                        fontWeight: 600,
+                        color: '#4A5568',
+                        marginBottom: 6,
+                        textTransform: 'uppercase',
+                        letterSpacing: 0.5,
+                      }}
+                    >
+                      Username *
+                    </label>
+                    <input
+                      className="login-input"
+                      value={regForm.username}
+                      onChange={(e) => setRegForm((p) => ({ ...p, username: e.target.value }))}
+                      placeholder="Choose username"
+                    />
+                  </div>
+                  <div>
+                    <label
+                      style={{
+                        display: 'block',
+                        fontSize: 11,
+                        fontWeight: 600,
+                        color: '#4A5568',
+                        marginBottom: 6,
+                        textTransform: 'uppercase',
+                        letterSpacing: 0.5,
+                      }}
+                    >
+                      Password *
+                    </label>
+                    <input
+                      className="login-input"
+                      type="password"
+                      value={regForm.password}
+                      onChange={(e) => setRegForm((p) => ({ ...p, password: e.target.value }))}
+                      placeholder="Create password"
+                    />
+                  </div>
+                </div>
+                <div
+                  style={{
+                    padding: 10,
+                    borderRadius: 10,
+                    background: 'linear-gradient(135deg,#FFFBEB,#FEF3C7)',
+                    fontSize: 11,
+                    color: '#92400E',
+                    marginBottom: 20,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 6,
+                    border: '1px solid #FDE68A',
+                  }}
+                >
+                  <AlertTriangle size={13} /> Your account will need admin approval before you can login.
+                </div>
+                <button onClick={handleRegister} className="login-btn-primary">
+                  <UserPlus size={16} /> Request Account
+                </button>
+                <div style={{ textAlign: 'center', marginTop: 16, fontSize: 13, color: '#64748B' }}>
+                  Already have an account?{' '}
+                  <button onClick={() => setAuthView('login')} className="login-link">
+                    Sign in
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </LoginIntro>
         <Toast items={notifs} onDismiss={(i) => setNotifs((p) => p.filter((_, j) => j !== i))} />
       </div>
     );
