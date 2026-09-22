@@ -39,6 +39,13 @@ const WRITE_ONLY_PATHS = {
   aiBotConfig: ['apiKey', 'apiKeys'],
 };
 
+// Keys whose value is written by more than one screen, each sending only the
+// fields it owns. A plain replace meant whichever saved last wiped the other's
+// settings: the AI Bot page has a provider/model form AND a separate
+// template/greeting form, both writing aiBotConfig, so saving the greeting
+// silently reset the provider, model, base URL and generation settings.
+const MERGE_KEYS = new Set(['aiBotConfig']);
+
 function stripSecrets(key, value, isAdmin) {
   if (!value || typeof value !== 'object') return value;
   let copy = value;
@@ -174,6 +181,16 @@ router.put('/:key', async (req, res) => {
         if (Object.keys(merged).length) value.apiKeys = merged;
         // hasKey is a read-side hint; never store it.
         delete value.hasKey;
+      }
+    }
+
+    // Shallow-merge onto what is stored, so a partial save keeps the fields it
+    // did not send. Only for keys that several screens co-own.
+    if (MERGE_KEYS.has(key) && value && typeof value === 'object' && !Array.isArray(value)) {
+      const current = await query('SELECT value FROM app_config WHERE key = $1 AND user_id = $2', [key, userId]);
+      const stored = current.rows[0]?.value;
+      if (stored && typeof stored === 'object' && !Array.isArray(stored)) {
+        value = { ...stored, ...value };
       }
     }
 
