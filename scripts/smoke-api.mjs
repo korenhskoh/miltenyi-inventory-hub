@@ -565,5 +565,30 @@ ok(r.status === 401, 'the assistant needs a login', String(r.status));
 r = await call('POST', '/api/ai/chat', { messages: [] }, admin);
 ok(r.status === 400, 'the assistant rejects an empty conversation', String(r.status));
 
+// ── The shared bot engine behind both surfaces ──
+// The in-app assistant used to carry its own regex copy of four intents while
+// the WhatsApp bot had ~20 on the server. Both now go through /api/ai/ask.
+r = await call('POST', '/api/ai/ask', { message: 'help' }, admin);
+ok(r.status === 200 && /help|command/i.test(r.json.text || ''), 'the assistant answers from the shared engine', String(r.json.text).slice(0, 80));
+
+r = await call('POST', '/api/ai/ask', { message: 'list orders' }, admin);
+ok(r.status === 200 && (r.json.text || '').length > 0, 'it can list orders — an intent the old in-app engine never had', String(r.json.text).slice(0, 60));
+
+r = await call('POST', '/api/ai/ask', { message: 'approvals' }, admin);
+ok(r.status === 200, 'and approvals, likewise new to the in-app assistant', String(r.status));
+
+// With no provider configured the fallback must stay silent and the original
+// rule-based reply must come through unchanged.
+await call('PUT', '/api/config/aiBotConfig', { value: { provider: 'openai', enabled: false } }, admin);
+r = await call('POST', '/api/ai/ask', { message: 'what is the weather in singapore' }, admin);
+ok(r.status === 200 && /didn't understand|help/i.test(r.json.text || ''), 'with no model configured it falls back to the rule-based reply', String(r.json.text).slice(0, 60));
+
+r = await call('POST', '/api/ai/ask', { message: '' }, admin);
+ok(r.status === 400, 'an empty question is rejected', String(r.status));
+r = await call('POST', '/api/ai/ask', { message: 'x'.repeat(5000) }, admin);
+ok(r.status === 400, 'an oversized question is rejected', String(r.status));
+r = await call('POST', '/api/ai/ask', { message: 'help' }, null);
+ok(r.status === 401, 'the assistant needs a login', String(r.status));
+
 console.log(`\n${fails === 0 ? 'ALL PASSED' : fails + ' FAILED'}`);
 process.exit(fails ? 1 : 0);

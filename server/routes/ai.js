@@ -6,6 +6,7 @@ import { getGlobalConfig } from './config.js';
 import logger from '../logger.js';
 import { chat, testConnection, providerCatalog, redactConfig, AiError } from '../ai/index.js';
 import { buildSystemPrompt, buildContext, findMaterialNo } from '../ai/assistant.js';
+import { handleBotMessage } from '../waBot.js';
 
 const router = Router();
 
@@ -54,6 +55,36 @@ router.post(
       logger.warn({ code: err?.code, provider: err?.provider }, 'AI connection test failed');
       res.status(status).json({ ok: false, error, code });
     }
+  }),
+);
+
+// POST /ask — the shared brain.
+//
+// The in-app assistant used to carry its OWN regex engine in App.jsx: about
+// 137 lines handling price, order status, stock and placing an order, while
+// the WhatsApp bot had a separate server-side engine with roughly 20 intents.
+// The same question got a different answer depending on where it was asked,
+// and every new capability had to be written twice. Both surfaces now go
+// through one engine — rules first, model for anything they cannot match.
+router.post(
+  '/ask',
+  requirePermission('dashboard'),
+  asyncHandler(async (req, res) => {
+    const message = typeof req.body?.message === 'string' ? req.body.message.trim() : '';
+    if (!message) return res.status(400).json({ error: 'message is required' });
+    if (message.length > 2000) return res.status(400).json({ error: 'Message is too long' });
+
+    // The engine keys its conversation state by sender. In WhatsApp that is a
+    // JID; here it is the account, so each person keeps their own thread and
+    // a stateful flow (like confirming an order) belongs to them alone.
+    const sessionKey = `app:${req.user.id}`;
+    const reply = await handleBotMessage(message, sessionKey, {
+      id: req.user.id,
+      username: req.user.username,
+      name: req.user.name || req.user.username,
+      role: req.user.role,
+    });
+    res.json({ text: reply });
   }),
 );
 

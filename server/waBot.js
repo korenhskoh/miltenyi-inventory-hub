@@ -2,6 +2,7 @@
 import logger from './logger.js';
 import { matchIntent } from './waBotPatterns.js';
 import { commandHandlers, stateHandlers, confirmExecutors } from './waBotCommands.js';
+import { answerWithModel, HISTORY_LIMIT } from './ai/fallback.js';
 
 const SESSION_TIMEOUT = 10 * 60 * 1000; // 10 minutes
 const CLEANUP_INTERVAL = 5 * 60 * 1000; // 5 minutes
@@ -18,6 +19,9 @@ function getSession(jid) {
       page: 0,
       lastResults: null,
       formatFn: null,
+      // Recent turns, so a model fallback can answer a follow-up like
+      // "and the one before that?" rather than treating every message as new.
+      history: [],
     });
   }
   const s = botSessions.get(jid);
@@ -124,6 +128,21 @@ export async function handleBotMessage(text, jid, user = null) {
 
     const handler = commandHandlers[intent];
     if (handler) return await handler(params, session, jid);
+
+    // Nothing matched. Before falling back to "I didn't understand", let the
+    // model try — it gets live figures and answers in words. It cannot act:
+    // every command that changes anything is a rule above this line, with its
+    // own permission check. If no provider is configured, or the call fails,
+    // answerWithModel returns null and the original reply is used unchanged.
+    const aiAnswer = await answerWithModel(trimmed, { history: session.history });
+    if (aiAnswer) {
+      session.history = [
+        ...session.history,
+        { role: 'user', content: trimmed },
+        { role: 'assistant', content: aiAnswer },
+      ].slice(-HISTORY_LIMIT);
+      return aiAnswer;
+    }
 
     return commandHandlers.unknown();
   } catch (error) {

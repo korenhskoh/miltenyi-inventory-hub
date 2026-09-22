@@ -109,6 +109,56 @@ async function getMe() {
   }
 }
 
+/**
+ * Ask the shared bot engine a question.
+ *
+ * The same engine answers WhatsApp, so the in-app assistant no longer needs its
+ * own copy of the rules — and it inherits every intent the bot already has.
+ */
+async function askAssistant(message) {
+  try {
+    const res = await fetch(`${BASE}/api/ai/ask`, {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({ message }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      return { ok: false, error: typeof data.error === 'string' ? data.error : 'The assistant could not answer.' };
+    }
+    return { ok: true, text: data.text || '' };
+  } catch {
+    return { ok: false, error: 'Could not reach the server.' };
+  }
+}
+
+/** Provider catalog plus the current AI settings (never includes a key). */
+async function getAiProviders() {
+  try {
+    const res = await fetch(`${BASE}/api/ai/providers`, { headers: authHeadersGet() });
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
+/** Prove a provider key works. An unsaved key can be passed for a dry run. */
+async function testAiProvider({ provider, apiKey } = {}) {
+  try {
+    const res = await fetch(`${BASE}/api/ai/test`, {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({ provider, apiKey }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, error: typeof data.error === 'string' ? data.error : 'Test failed' };
+    return data;
+  } catch {
+    return { ok: false, error: 'Could not reach the server.' };
+  }
+}
+
 /** Change the signed-in user's own password. */
 async function changePassword(currentPassword, newPassword) {
   try {
@@ -1229,6 +1279,9 @@ const api = {
   getMe,
   checkServer,
   changePassword,
+  askAssistant,
+  getAiProviders,
+  testAiProvider,
   getPublicLogo,
   onAuthError,
   resetAuthError,
