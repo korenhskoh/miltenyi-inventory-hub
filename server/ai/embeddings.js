@@ -13,7 +13,7 @@
  */
 import logger from '../logger.js';
 import { REGISTRY, resolveConfig } from './index.js';
-import { recordUsage } from './usage.js';
+import { recordUsage, checkBudget } from './usage.js';
 import { costOf } from './pricing.js';
 
 /** Providers that can embed, in preference order. */
@@ -62,12 +62,25 @@ export function pickEmbeddingProvider(rawConfig = {}) {
  * Vectors come back in the order the texts were given, and every call is
  * written to the usage log like any other spend.
  */
-export async function embedTexts(texts, rawConfig = {}, { userId = null } = {}) {
+export async function embedTexts(texts, rawConfig = {}, { userId = null, skipBudget = false } = {}) {
   const input = (Array.isArray(texts) ? texts : [texts]).map((t) => String(t || '').trim()).filter(Boolean);
   if (input.length === 0) return null;
 
   const target = pickEmbeddingProvider(rawConfig);
   if (!target) return null;
+
+  // Embedding is spending, and it used to escape the cap entirely: with the
+  // daily budget exhausted the assistant refused to answer while a 400-chunk
+  // document upload embedded and billed without a gate. Returning null here is
+  // the same answer as "no embedding provider", so retrieval simply falls back
+  // to keyword search rather than failing.
+  if (!skipBudget) {
+    const gate = await checkBudget({ userId, config: rawConfig });
+    if (!gate.ok) {
+      logger.warn({ reason: gate.reason }, 'Embedding skipped — the AI budget is used up');
+      return null;
+    }
+  }
 
   const adapter = REGISTRY[target.id];
   const vectors = [];

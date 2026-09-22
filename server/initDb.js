@@ -1,4 +1,4 @@
-import { query } from './db.js';
+import pool, { query } from './db.js';
 import logger from './logger.js';
 import fs from 'fs';
 import path from 'path';
@@ -10,15 +10,52 @@ import { CONFIG_GLOBAL_KEYS } from './routes/config.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+/**
+ * A fixed key for the advisory lock that serialises schema application.
+ * Any constant works; this one is just a recognisable number.
+ */
+const SCHEMA_LOCK_ID = 725101;
+
+/**
+ * Apply schema.sql exactly once at a time, and never at the cost of the
+ * instance already serving traffic.
+ *
+ * The file is not only CREATE TABLE IF NOT EXISTS — it carries a long tail of
+ * ALTER TABLE statements that run on every boot, and each one takes an ACCESS
+ * EXCLUSIVE lock. On a rolling deploy the new container's ALTER queues behind
+ * the old container's in-flight queries and, because that lock level queues
+ * ahead of everything, it blocks the old container's NEW reads while it waits.
+ * With a 15-second ceiling and process.exit on failure, that turned into a
+ * crash loop that also stalled the instance still serving users.
+ *
+ * Two changes fix it: an advisory lock, so two instances starting together take
+ * turns instead of deadlocking, and a lock_timeout, so a blocked statement
+ * gives up in seconds rather than holding the queue.
+ */
+async function applySchema(schemaSql) {
+  const client = await pool.connect();
+  try {
+    // Wait up to 30s to be the one applying the schema; the second instance
+    // simply finds everything already in place when its turn comes.
+    await client.query("SET lock_timeout = '5s'");
+    await client.query("SET statement_timeout = '60s'");
+    await client.query('SELECT pg_advisory_lock($1)', [SCHEMA_LOCK_ID]);
+    try {
+      await client.query(schemaSql);
+    } finally {
+      await client.query('SELECT pg_advisory_unlock($1)', [SCHEMA_LOCK_ID]);
+    }
+  } finally {
+    client.release();
+  }
+}
+
 export async function initDatabase() {
   try {
     // --- 1. Execute schema.sql to create tables ---
     const schemaPath = path.join(__dirname, 'schema.sql');
     const schemaSql = fs.readFileSync(schemaPath, 'utf-8');
-    await Promise.race([
-      query(schemaSql),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('Schema execution timed out after 15s')), 15000)),
-    ]);
+    await applySchema(schemaSql);
 
     // --- 2. Seed default users (only if users table is empty) ---
     const usersResult = await query('SELECT COUNT(*) AS count FROM users');

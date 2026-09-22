@@ -11,15 +11,15 @@ import QRCode from 'qrcode';
 import pinoHttp from 'pino-http';
 import logger from './logger.js';
 import { initDatabase } from './initDb.js';
-import { query as dbQuery } from './db.js';
+import pool, { query as dbQuery } from './db.js';
 import nodemailer from 'nodemailer';
 import { verifyToken, requireAdmin } from './middleware/auth.js';
-import { requirePermission } from './middleware/permissions.js';
+import { requirePermission, isActiveAdmin } from './middleware/permissions.js';
 import { buildSenderMap, jidDigits } from './waSenders.js';
 import { extractText, isDirectChat } from './waMessage.js';
 import { setWaContext as setNotifyWaContext } from './notify.js';
 import { errorHandler } from './middleware/errorHandler.js';
-import { startScheduler, reloadScheduler, runScheduledReport, resetTransporter } from './scheduler.js';
+import { startScheduler, reloadScheduler, runScheduledReport, resetTransporter, stopScheduler } from './scheduler.js';
 
 // API Routes
 import ordersRouter from './routes/orders.js';
@@ -759,10 +759,83 @@ app.use('/api/users', verifyToken, requireAdmin, usersRouter);
 app.use('/api/config', verifyToken, configRouter);
 app.use('/api/migrate', verifyToken, requireAdmin, migrateRouter);
 
-// Send HTML email via SMTP
-app.post('/api/send-email', verifyToken, async (req, res) => {
+/**
+ * Every address this system may legitimately write to: the people who hold
+ * accounts, plus the sender and approver configured in Settings and whoever the
+ * scheduled report goes to. Rebuilt per request — it is two small queries and a
+ * config read, and staleness here would reject real mail.
+ */
+async function knownEmailRecipients() {
+  const known = new Set();
+  // A failure here must not quietly become "nobody is a valid recipient",
+  // which would refuse all outbound mail while looking like a policy decision.
+  let degraded = false;
+  const add = (v) =>
+    String(v || '')
+      .split(/[,;]/)
+      .map((a) => a.trim().toLowerCase())
+      .filter(Boolean)
+      .forEach((a) => known.add(a));
+
+  try {
+    const users = await dbQuery("SELECT email FROM users WHERE email IS NOT NULL AND email <> ''");
+    users.rows.forEach((r) => add(r.email));
+  } catch (e) {
+    degraded = true;
+    logger.error({ err: e }, 'Could not load user emails for the recipient check');
+  }
+  try {
+    const cfg = (await getGlobalConfig('emailConfig')) || {};
+    add(cfg.approverEmail);
+    add(cfg.senderEmail);
+    add(cfg.smtpUser);
+    const sched = (await getGlobalConfig('scheduledNotifs')) || {};
+    add(Array.isArray(sched.recipients) ? sched.recipients.join(',') : sched.recipients);
+  } catch (e) {
+    degraded = true;
+    logger.error({ err: e }, 'Could not load configured emails for the recipient check');
+  }
+  return { known, degraded };
+}
+
+// Send HTML email via SMTP.
+//
+// Gated on the notifications permission. It was previously open to any logged-in
+// account, and it sends through the organisation's own SMTP server with the
+// configured sender — so it was an authenticated relay for sending anything, to
+// anyone, under the company's identity and SPF alignment.
+app.post('/api/send-email', verifyToken, requirePermission('notifications'), async (req, res) => {
   try {
     const { to, subject, html, attachments } = req.body;
+
+    // Constrain the recipients.
+    //
+    // The permission above is on by default for everyone, so on its own it
+    // would not stop much. What actually matters is that this endpoint sends
+    // through the organisation's own SMTP server, with the configured sender —
+    // so an unconstrained `to` makes it a relay for sending anything to anyone
+    // under the company's identity and SPF alignment. Every legitimate caller
+    // addresses people the system already knows about, so that is the rule.
+    // Active admins are exempt, since they are the ones who configure it.
+    if (!(await isActiveAdmin(req.user))) {
+      const { known, degraded } = await knownEmailRecipients();
+      if (degraded) {
+        return res.status(503).json({ error: 'Could not check the recipient list. Please try again.' });
+      }
+      const requested = String(Array.isArray(to) ? to.join(',') : to || '')
+        .split(/[,;]/)
+        .map((a) => a.trim().toLowerCase())
+        .filter(Boolean);
+      const unknown = requested.filter((a) => !known.has(a));
+      if (requested.length === 0) {
+        return res.status(400).json({ error: 'A recipient is required.' });
+      }
+      if (unknown.length) {
+        return res.status(403).json({
+          error: `Can only send to people already in the system. Not recognised: ${unknown.join(', ')}`,
+        });
+      }
+    }
     // SMTP settings come from the stored (admin-managed) emailConfig. The
     // client-supplied block is only honoured for admins, so a regular user
     // can't turn this endpoint into an open mail relay with their own server.
@@ -881,7 +954,10 @@ app.post('/api/scheduled-report/run', verifyToken, requireAdmin, async (req, res
 });
 
 // Reload scheduler config (call after Settings save)
-app.post('/api/scheduled-report/reload', verifyToken, async (req, res) => {
+// Admin-only: reloading re-arms the scheduler and can itself fire a catch-up
+// report to every active user, so it is not something an ordinary account
+// should be able to trigger. Its sibling /run was already admin-only.
+app.post('/api/scheduled-report/reload', verifyToken, requireAdmin, async (req, res) => {
   try {
     await reloadScheduler(getWaContext);
     res.json({ success: true, message: 'Scheduler reloaded' });
@@ -940,7 +1016,7 @@ async function start() {
     logger.info('No DATABASE_URL set — running without database (localStorage only)');
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
+  const server = app.listen(PORT, '0.0.0.0', () => {
     logger.info({ port: PORT }, 'Miltenyi Inventory Hub Server started');
 
     // Auto-connect WhatsApp on server start
@@ -949,6 +1025,66 @@ async function start() {
 
     // Start scheduled report cron job
     startScheduler(getWaContext).catch((err) => logger.error({ err }, 'Scheduler init failed'));
+  });
+
+  installShutdownHandlers(server);
+}
+
+/**
+ * Shut down in order, and leave evidence when something crashes.
+ *
+ * Railway sends SIGTERM on every deploy and every scale event. With no handler,
+ * Node exits immediately: in-flight requests are dropped mid-response, open
+ * transactions die with their connection, and the WhatsApp socket is severed
+ * rather than logged off — so a user submitting an order during a deploy gets a
+ * reset connection with no idea whether it landed.
+ *
+ * There was also nothing listening for unhandled rejections, so a rejected
+ * promise outside a route handler took the process down with no log line at all.
+ */
+function installShutdownHandlers(server) {
+  let shuttingDown = false;
+
+  const shutdown = async (signal) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    logger.info({ signal }, 'Shutting down');
+
+    // Stop taking new work first, then let what is in flight finish.
+    const closed = new Promise((resolve) => server.close(resolve));
+    const deadline = new Promise((resolve) => setTimeout(resolve, 10000));
+    await Promise.race([closed, deadline]);
+
+    try {
+      stopScheduler();
+    } catch (e) {
+      logger.warn({ err: e }, 'Scheduler did not stop cleanly');
+    }
+    try {
+      destroySocket();
+    } catch (e) {
+      logger.warn({ err: e }, 'WhatsApp socket did not close cleanly');
+    }
+    try {
+      await pool.end();
+    } catch (e) {
+      logger.warn({ err: e }, 'Database pool did not close cleanly');
+    }
+
+    logger.info('Shutdown complete');
+    process.exit(0);
+  };
+
+  process.on('SIGTERM', () => void shutdown('SIGTERM'));
+  process.on('SIGINT', () => void shutdown('SIGINT'));
+
+  process.on('unhandledRejection', (reason) => {
+    logger.error({ err: reason }, 'Unhandled promise rejection');
+  });
+  process.on('uncaughtException', (err) => {
+    // Genuinely unknown state — log it, then let the platform restart us.
+    logger.fatal({ err }, 'Uncaught exception — exiting');
+    process.exit(1);
   });
 }
 

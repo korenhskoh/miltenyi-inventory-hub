@@ -56,7 +56,9 @@ ok(r.status === 200, 'admin saves emailConfig');
 r = await call('GET', '/api/config', null, admin);
 ok(r.json.emailConfig?.smtpPass === 'SECRET', 'admin sees smtpPass');
 r = await call('GET', '/api/config', null, tech);
-ok(r.json.emailConfig?.smtpPass === '' && r.json.emailConfig?.smtpHost === 'smtp.x.com', 'non-admin gets emailConfig without secret', JSON.stringify(r.json.emailConfig));
+// Mail settings are infrastructure detail, not app content: a user without the
+// settings permission no longer sees them at all, secret or otherwise.
+ok(r.json.emailConfig === undefined, 'a non-admin does not get emailConfig at all', JSON.stringify(Object.keys(r.json)));
 r = await call('PUT', '/api/config/emailConfig', { value: { smtpHost: 'smtp.x.com', smtpPass: '' } }, admin);
 r = await call('GET', '/api/config/emailConfig', null, admin);
 ok(r.json.smtpPass === 'SECRET', 'blank secret on save keeps stored secret', JSON.stringify(r.json));
@@ -661,6 +663,73 @@ r = await call('DELETE', '/api/kb/' + kbId, null, admin);
 ok(r.status === 200, 'a document can be deleted', String(r.status));
 r = await call('GET', '/api/kb/search?q=' + encodeURIComponent('what temperature for 130-095-244'), null, admin);
 ok(r.json.hits.length === 0, 'and its passages go with it', String(r.json.hits.length));
+
+// ── Regressions from the 22 September review ───────────────────────────────
+// Each of these reproduces a defect that was live in production, so they exist
+// to stop it coming back rather than to describe the feature.
+
+// The New Order form always sends qtyReceived: 0. Treating that as a delivery
+// close-out meant no non-approver could raise an order at all.
+r = await call('POST', '/api/orders', { id: 'ORD-REG-1', materialNo: 'M1', description: 'Regression', quantity: 2, orderDate: dayOffset(0), qtyReceived: 0, status: 'Pending Approval', orderBy: 'Tech One' }, tech);
+ok(r.status === 201, 'an ordinary user can raise an order the way the form does', String(r.status));
+r = await call('POST', '/api/orders', { id: 'ORD-REG-2', materialNo: 'M1', description: 'Regression', quantity: 2, orderDate: dayOffset(0), qtyReceived: 2, status: 'Received' }, tech);
+ok(r.status === 403, 'but still cannot create one already received', String(r.status));
+
+// Bulk status updates skipped the ownership check the single-order route enforces.
+await call('POST', '/api/orders', { id: 'ORD-7003', materialNo: 'M1', description: 'Someone else', quantity: 1, orderDate: dayOffset(0), orderBy: 'Not You' }, admin);
+r = await call('PUT', '/api/orders/bulk-status', { ids: ['ORD-7003'], status: 'Cancelled' }, tech);
+ok(r.status === 403, 'bulk-status refuses orders belonging to someone else', String(r.status));
+r = await call('PUT', '/api/orders/bulk-status', { ids: ['ORD-REG-1'], status: 'Pending' }, tech);
+ok(r.status === 200, 'and still works on your own', String(r.status));
+
+// An order with no owner recorded was editable by anyone.
+await call('POST', '/api/orders', { id: 'ORD-REG-4', materialNo: 'M1', description: 'Unowned', quantity: 1, orderDate: dayOffset(0) }, admin);
+r = await call('PUT', '/api/orders/ORD-REG-4', { quantity: 99 }, tech);
+ok(r.status === 403, 'an unowned order is not editable by just anyone', String(r.status));
+
+// The assistant runs the same engine as the bot, which checked permissions only
+// for Approved/Rejected — so any user could cancel or un-approve any order.
+r = await call('POST', '/api/ai/ask', { message: 'update ORD-7003 to Cancelled' }, tech);
+ok(/permission/i.test(r.json?.text || ''), 'the assistant refuses to change another person\'s order', String(r.json?.text).slice(0, 50));
+r = await call('GET', '/api/orders/ORD-7003', null, admin);
+ok(r.json?.status !== 'Cancelled', 'and the order is untouched', String(r.json?.status));
+
+// Sending mail was open to any account, through the company's own SMTP server.
+r = await call('POST', '/api/send-email', { to: ['stranger@example.com'], subject: 's', html: 'h' }, tech);
+ok(r.status === 403, 'mail cannot be sent to an address the system does not know', String(r.status));
+
+// Reloading the scheduler can fire a report to everyone.
+r = await call('POST', '/api/scheduled-report/reload', {}, tech);
+ok(r.status === 403, 'the scheduler reload is admin-only', String(r.status));
+
+// Operational config was readable by every account.
+r = await call('GET', '/api/config/emailConfig', null, tech);
+ok(r.status === 403, 'mail settings need the settings permission', String(r.status));
+r = await call('GET', '/api/config', null, tech);
+ok(!('emailConfig' in (r.json || {})), 'and do not leak through the bulk config read');
+r = await call('PUT', '/api/config/priceConfig', {}, admin);
+ok(r.status === 400, 'a config write with no value is refused rather than storing null', String(r.status));
+
+// Charging out a cleared quantity removed one unit and reported success.
+await call('POST', '/api/local-inventory', { materialNo: 'REG-Z', description: 'Zed', quantity: 10 }, admin);
+r = await call('POST', '/api/local-inventory/charge-out', { items: [{ materialNo: 'REG-Z', quantity: 0 }], chargedTo: 'nobody' }, admin);
+ok(r.json?.errors?.length === 1 && r.json?.processed === 0, 'a zero-quantity charge-out is refused, not rounded up to 1', JSON.stringify(r.json?.errors || []).slice(0, 60));
+r = await call('GET', '/api/local-inventory?all=true', null, admin);
+ok((r.json.data || r.json).find((i) => i.materialNo === 'REG-Z')?.quantity === 10, 'and the stock is untouched');
+
+// Suspending an account did nothing until its token expired, up to 24h later.
+r = await call('POST', '/api/users', { username: 'revoketest', password: 'Str0ngPw!2026', name: 'Revoke Test', role: 'user', status: 'active', email: 'revoke@example.com' }, admin);
+const revokeId = r.json?.id;
+r = await call('POST', '/api/auth/login', { username: 'revoketest', password: 'Str0ngPw!2026' });
+const revokeToken = r.json?.token;
+r = await call('GET', '/api/orders', null, revokeToken);
+ok(r.status === 200, 'a new account can read orders', String(r.status));
+await call('PUT', `/api/users/${revokeId}`, { status: 'suspended' }, admin);
+r = await call('GET', '/api/orders', null, revokeToken);
+ok(r.status === 403, 'suspending it takes effect on the very next request', String(r.status));
+await call('DELETE', `/api/users/${revokeId}`, null, admin);
+r = await call('GET', '/api/orders', null, revokeToken);
+ok(r.status === 401, 'and deleting it refuses the token outright', String(r.status));
 
 console.log(`\n${fails === 0 ? 'ALL PASSED' : fails + ' FAILED'}`);
 process.exit(fails ? 1 : 0);

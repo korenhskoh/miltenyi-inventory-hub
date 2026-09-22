@@ -46,34 +46,34 @@ function mockReqResNext(headers = {}) {
 // 1. Backend: verifyToken rejects unauthenticated requests
 // ═══════════════════════════════════════════════════════════════════
 describe('RBAC - Authentication enforcement', () => {
-  it('rejects request without token (401)', () => {
+  it('rejects request without token (401)', async () => {
     const { req, res, next } = mockReqResNext();
-    verifyToken(req, res, next);
+    await verifyToken(req, res, next);
     expect(res._status).toBe(401);
     expect(next).not.toHaveBeenCalled();
   });
 
-  it('rejects request with tampered token (403)', () => {
+  it('rejects request with tampered token (403)', async () => {
     const { req, res, next } = mockReqResNext({
       authorization: 'Bearer eyJhbGciOiJIUzI1NiJ9.eyJpZCI6IlUwMDEifQ.TAMPERED',
     });
-    verifyToken(req, res, next);
+    await verifyToken(req, res, next);
     expect(res._status).toBe(403);
     expect(next).not.toHaveBeenCalled();
   });
 
-  it('accepts valid admin token', () => {
+  it('accepts valid admin token', async () => {
     const token = generateToken({ id: 'U001', username: 'admin', role: 'admin' });
     const { req, res, next } = mockReqResNext({ authorization: `Bearer ${token}` });
-    verifyToken(req, res, next);
+    await verifyToken(req, res, next);
     expect(next).toHaveBeenCalled();
     expect(req.user.role).toBe('admin');
   });
 
-  it('accepts valid user token', () => {
+  it('accepts valid user token', async () => {
     const token = generateToken({ id: 'U002', username: 'alice', role: 'user' });
     const { req, res, next } = mockReqResNext({ authorization: `Bearer ${token}` });
-    verifyToken(req, res, next);
+    await verifyToken(req, res, next);
     expect(next).toHaveBeenCalled();
     expect(req.user.role).toBe('user');
   });
@@ -125,7 +125,7 @@ describe('RBAC - Full auth chain (verifyToken → requireAdmin)', () => {
     const { req, res, next } = mockReqResNext({ authorization: `Bearer ${token}` });
 
     // Step 1: verifyToken
-    verifyToken(req, res, next);
+    await verifyToken(req, res, next);
     expect(next).toHaveBeenCalledTimes(1);
 
     // Step 2: requireAdmin
@@ -154,7 +154,7 @@ describe('RBAC - Full auth chain (verifyToken → requireAdmin)', () => {
     const { req, res, next } = mockReqResNext({ authorization: `Bearer ${token}` });
 
     // Step 1: verifyToken — passes
-    verifyToken(req, res, next);
+    await verifyToken(req, res, next);
     expect(next).toHaveBeenCalledTimes(1);
     expect(req.user.role).toBe('user');
 
@@ -176,9 +176,9 @@ describe('RBAC - Full auth chain (verifyToken → requireAdmin)', () => {
     expect(next2).not.toHaveBeenCalled();
   });
 
-  it('no token fails at verifyToken — never reaches requireAdmin', () => {
+  it('no token fails at verifyToken — never reaches requireAdmin', async () => {
     const { req, res, next } = mockReqResNext();
-    verifyToken(req, res, next);
+    await verifyToken(req, res, next);
     expect(res._status).toBe(401);
     expect(next).not.toHaveBeenCalled();
     // requireAdmin never called

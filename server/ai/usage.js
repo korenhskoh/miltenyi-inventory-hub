@@ -49,26 +49,29 @@ export function resolveLimits(raw = {}) {
   };
 }
 
-/** Postgres expression for "today" and "this month" in the business timezone. */
-const DAY_START = `date_trunc('day', NOW() AT TIME ZONE $TZ) AT TIME ZONE $TZ`;
-const MONTH_START = `date_trunc('month', NOW() AT TIME ZONE $TZ) AT TIME ZONE $TZ`;
-
-/** Spend so far, in one round trip rather than four. */
+/**
+ * Spend so far, in one round trip rather than four.
+ *
+ * The time predicates sit in both a WHERE and the FILTER clauses on purpose.
+ * With the filters alone there was nothing to drive an index scan, so this
+ * full-scanned ai_usage — a table that grows a row per model call forever —
+ * before EVERY call. Left alone it would eventually exceed the statement
+ * timeout, and because checkBudget deliberately fails open, the caps would stop
+ * being enforced exactly when the log was largest. The WHERE bounds the scan to
+ * the current month (or the last hour, whichever reaches further back).
+ */
 export async function spendSnapshot(userId = null, timeZone = APP_TIMEZONE) {
+  const day = `date_trunc('day', NOW() AT TIME ZONE $1) AT TIME ZONE $1`;
+  const month = `date_trunc('month', NOW() AT TIME ZONE $1) AT TIME ZONE $1`;
   const sql = `
     SELECT
-      COALESCE(SUM(cost_usd) FILTER (WHERE created_at >= ${DAY_START.replaceAll('$TZ', '$1')}), 0)::float
-        AS day_cost,
-      COALESCE(SUM(cost_usd) FILTER (WHERE created_at >= ${MONTH_START.replaceAll('$TZ', '$1')}), 0)::float
-        AS month_cost,
-      COALESCE(SUM(cost_usd) FILTER (
-        WHERE created_at >= ${DAY_START.replaceAll('$TZ', '$1')} AND user_id = $2), 0)::float
-        AS user_day_cost,
-      COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '1 hour' AND user_id = $2)::int
-        AS user_hour_calls,
-      COUNT(*) FILTER (WHERE created_at >= ${DAY_START.replaceAll('$TZ', '$1')})::int
-        AS day_calls
-    FROM ai_usage`;
+      COALESCE(SUM(cost_usd) FILTER (WHERE created_at >= ${day}), 0)::float AS day_cost,
+      COALESCE(SUM(cost_usd) FILTER (WHERE created_at >= ${month}), 0)::float AS month_cost,
+      COALESCE(SUM(cost_usd) FILTER (WHERE created_at >= ${day} AND user_id = $2), 0)::float AS user_day_cost,
+      COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '1 hour' AND user_id = $2)::int AS user_hour_calls,
+      COUNT(*) FILTER (WHERE created_at >= ${day})::int AS day_calls
+    FROM ai_usage
+    WHERE created_at >= LEAST(${month}, NOW() - INTERVAL '1 hour')`;
   const r = await query(sql, [timeZone, userId]);
   return r.rows[0];
 }

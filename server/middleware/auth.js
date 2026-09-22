@@ -1,7 +1,7 @@
 import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
 import logger from '../logger.js';
-import { isActiveAdmin } from './permissions.js';
+import { isActiveAdmin, currentAccount } from './permissions.js';
 
 if (!process.env.JWT_SECRET) {
   if (process.env.NODE_ENV === 'production') {
@@ -24,9 +24,23 @@ export function generateToken(user) {
 }
 
 /**
- * Middleware: verify JWT token from Authorization header
+ * Middleware: verify the JWT, then confirm the account still exists and is active.
+ *
+ * A valid signature is not enough. Tokens live for 24 hours, so checking only
+ * the signature meant that suspending or deleting an account did nothing for a
+ * day: the person's browser kept reading and writing orders, and the only thing
+ * that noticed was /auth/me, which nothing but the SPA consults. Deactivation is
+ * the control you reach for when someone leaves or an account is compromised,
+ * so it has to bite on the next request, not tomorrow.
+ *
+ * The lookup is the same 30-second-cached one the permission checks already use,
+ * so this costs a database round trip at most twice a minute per user.
+ *
+ * `role` is refreshed from the row rather than trusted from the claim, which is
+ * what stops a demoted admin keeping admin-shaped answers until their token
+ * expires.
  */
-export function verifyToken(req, res, next) {
+export async function verifyToken(req, res, next) {
   const authHeader = req.headers.authorization;
 
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
@@ -35,10 +49,9 @@ export function verifyToken(req, res, next) {
 
   const token = authHeader.split(' ')[1];
 
+  let decoded;
   try {
-    const decoded = jwt.verify(token, JWT_SECRET);
-    req.user = decoded;
-    next();
+    decoded = jwt.verify(token, JWT_SECRET);
   } catch (err) {
     // Expired token → 401 so the client clears its session and shows the login
     // screen. Tampered/invalid tokens stay 403.
@@ -47,6 +60,28 @@ export function verifyToken(req, res, next) {
     }
     return res.status(403).json({ error: 'Invalid or expired token.' });
   }
+
+  let account;
+  try {
+    account = await currentAccount(decoded.id);
+  } catch (e) {
+    // The account may be perfectly fine — we simply cannot tell. Answering 401
+    // would log everyone out over a database blip, so this is reported as a
+    // temporary fault instead.
+    logger.error({ err: e }, 'Could not verify the account behind a token');
+    return res.status(503).json({ error: 'Account verification is unavailable. Please try again.' });
+  }
+
+  if (!account) {
+    return res.status(401).json({ error: 'This account no longer exists. Please log in again.' });
+  }
+  if (account.status !== 'active') {
+    return res.status(403).json({ error: 'This account is not active. Contact an administrator.' });
+  }
+
+  // The claim is a snapshot from login; the row is the truth.
+  req.user = { ...decoded, role: account.role };
+  next();
 }
 
 /**

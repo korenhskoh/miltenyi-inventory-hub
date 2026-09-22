@@ -931,7 +931,7 @@ const DeliveryPage = ({
                   marginTop: 14,
                 }}
               >
-                <Pagination {...bulkView} {...bulkPager} unit="groups" />
+                <Pagination {...bulkPager} {...bulkView} unit="groups" />
               </div>
             )}
           </div>
@@ -1166,7 +1166,7 @@ const DeliveryPage = ({
               </tbody>
             </table>
             {/* Single Orders pagination */}
-            <Pagination {...singleView} {...singlePager} unit="orders" />
+            <Pagination {...singlePager} {...singleView} unit="orders" />
             <div
               style={{
                 display: 'flex',
@@ -1608,7 +1608,7 @@ const DeliveryPage = ({
               </table>
             </div>
             {/* All Orders pagination */}
-            <Pagination {...allView} {...allPager} unit="orders" />
+            <Pagination {...allPager} {...allView} unit="orders" />
           </div>
         );
       })()}

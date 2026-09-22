@@ -6,6 +6,7 @@ const usersTable = {
   U001: { role: 'admin', status: 'active', permissions: {} },
   U002: { role: 'user', status: 'active', permissions: {} },
   U004: { role: 'admin', status: 'inactive', permissions: {} },
+  U005: { role: 'user', status: 'suspended', permissions: {} },
 };
 vi.mock('../db.js', () => ({
   query: vi.fn(async (_sql, params) => ({ rows: usersTable[params?.[0]] ? [usersTable[params[0]]] : [] })),
@@ -42,33 +43,33 @@ describe('JWT auth middleware', () => {
   }
 
   // --- generateToken ---
-  it('generateToken returns a string token', () => {
+  it('generateToken returns a string token', async () => {
     const token = generateToken({ id: 'U001', username: 'admin', role: 'admin' });
     expect(typeof token).toBe('string');
     expect(token.split('.')).toHaveLength(3); // JWT has 3 parts
   });
 
   // --- verifyToken ---
-  it('rejects request with no Authorization header', () => {
+  it('rejects request with no Authorization header', async () => {
     const { req, res, next } = mockReqResNext();
-    verifyToken(req, res, next);
+    await verifyToken(req, res, next);
     expect(res._status).toBe(401);
     expect(res._json.error).toMatch(/token/i);
     expect(next).not.toHaveBeenCalled();
   });
 
-  it('rejects request with invalid token', () => {
+  it('rejects request with invalid token', async () => {
     const { req, res, next } = mockReqResNext({ authorization: 'Bearer invalid.token.here' });
-    verifyToken(req, res, next);
+    await verifyToken(req, res, next);
     expect(res._status).toBe(403);
     expect(res._json.error).toMatch(/invalid|expired/i);
     expect(next).not.toHaveBeenCalled();
   });
 
-  it('accepts request with valid token and sets req.user', () => {
+  it('accepts request with valid token and sets req.user', async () => {
     const token = generateToken({ id: 'U001', username: 'admin', role: 'admin' });
     const { req, res, next } = mockReqResNext({ authorization: `Bearer ${token}` });
-    verifyToken(req, res, next);
+    await verifyToken(req, res, next);
     expect(next).toHaveBeenCalled();
     expect(req.user).toBeDefined();
     expect(req.user.id).toBe('U001');
@@ -80,7 +81,7 @@ describe('JWT auth middleware', () => {
     const jwt = (await import('jsonwebtoken')).default;
     const expiredToken = jwt.sign({ id: 'U001' }, JWT_SECRET, { expiresIn: '-1s' });
     const { req, res, next } = mockReqResNext({ authorization: `Bearer ${expiredToken}` });
-    verifyToken(req, res, next);
+    await verifyToken(req, res, next);
     // Expired (as opposed to tampered) tokens return 401 so the SPA logs the user out
     expect(res._status).toBe(401);
     expect(res._json.error).toMatch(/expired/i);
@@ -118,5 +119,41 @@ describe('JWT auth middleware', () => {
     await requireAdmin(req, res, next);
     expect(res._status).toBe(403);
     expect(next).not.toHaveBeenCalled();
+  });
+
+  // ── Revocation ──────────────────────────────────────────────────────────
+  //
+  // Verifying only the signature meant a token stayed good for its full 24
+  // hours: suspending or deleting an account did nothing, and the person's
+  // browser kept reading and writing until it expired.
+
+  it('refuses a token whose account has been suspended', async () => {
+    const { req, res, next } = mockReqResNext({
+      authorization: `Bearer ${generateToken({ id: 'U005', username: 's', role: 'user' })}`,
+    });
+    await verifyToken(req, res, next);
+    expect(next).not.toHaveBeenCalled();
+    expect(res._status).toBe(403);
+  });
+
+  it('refuses a token whose account no longer exists', async () => {
+    const { req, res, next } = mockReqResNext({
+      authorization: `Bearer ${generateToken({ id: 'U999', username: 'ghost', role: 'user' })}`,
+    });
+    await verifyToken(req, res, next);
+    expect(next).not.toHaveBeenCalled();
+    expect(res._status).toBe(401);
+  });
+
+  it('takes the role from the database, not from the token claim', async () => {
+    // A demoted admin keeps a token that still says admin. Trusting it handed
+    // them admin-shaped answers — including the stored SMTP password — for the
+    // rest of the day.
+    const { req, res, next } = mockReqResNext({
+      authorization: `Bearer ${generateToken({ id: 'U002', username: 'u', role: 'admin' })}`,
+    });
+    await verifyToken(req, res, next);
+    expect(next).toHaveBeenCalled();
+    expect(req.user.role).toBe('user');
   });
 });

@@ -49,7 +49,7 @@ const lower = (v) => String(v ?? '').toLowerCase();
 // Does this write record an approval decision? Only users with the 'approvals'
 // permission (or admins) may do that. Both fields are compared case
 // INSENSITIVELY: a capitalised-only check let `status: 'approved'` through.
-function isApprovalDecision(body) {
+export function isApprovalDecision(body) {
   return APPROVAL_STATUSES.has(lower(body.approval_status)) || APPROVAL_STATUSES.has(lower(body.status));
 }
 
@@ -57,14 +57,42 @@ function isApprovalDecision(body) {
 // isApprovalDecision because a new order is legitimately born 'pending' — it is
 // only un-approving something that needs the permission. Without this, anyone
 // could send an approved order back to Pending Approval.
-function isApprovalReset(body) {
+export function isApprovalReset(body) {
   return lower(body.approval_status) === 'pending' || lower(body.status) === 'pending approval';
 }
 
 // Does this write close an order out as delivered? Allowed for anyone doing
 // part arrival, but only once the order has actually been approved.
-function isCloseOut(body) {
-  return body.qty_received !== undefined || lower(body.status) === 'received';
+//
+// The test is a RECEIVED QUANTITY GREATER THAN ZERO, not the mere presence of
+// the field. The New Order form sends `qtyReceived: 0` on every create — it is
+// how the column is initialised — and pickAllowed keeps a literal 0, so the old
+// check treated every new order as a delivery close-out and refused it unless
+// the person held the approvals permission. Admins were unaffected, because the
+// permission check short-circuits on their role, so the app looked healthy to
+// whoever set it up while nobody else could raise an order at all.
+/**
+ * Fields that belong to part-arrival work rather than to editing an order.
+ *
+ * Ownership governs ordinary edits — quantity, price, material. Recording a
+ * delivery is a different job, done by whoever is on goods-in, routinely on
+ * orders somebody else raised. That is what the `delivery` permission is for,
+ * so an arrival-only write is judged on that instead of on who owns the order.
+ */
+const ARRIVAL_FIELDS = new Set(['qty_received', 'back_order', 'arrival_date', 'arrival_checked_by', 'status']);
+
+function isArrivalOnlyWrite(body) {
+  const keys = Object.keys(body);
+  if (keys.length === 0) return false;
+  if (!keys.every((k) => ARRIVAL_FIELDS.has(k))) return false;
+  // `status` is in the set only so a close-out can carry it; any other status
+  // change is an ordinary edit and stays subject to ownership.
+  if ('status' in body && lower(body.status) !== 'received') return false;
+  return true;
+}
+
+export function isCloseOut(body) {
+  return Number(body.qty_received) > 0 || lower(body.status) === 'received';
 }
 
 // GET /stats - server-side aggregates for the dashboard (never subject to paging)
@@ -237,6 +265,37 @@ router.put('/bulk-status', async (req, res) => {
     const params = approvalStatus ? [status, approvalStatus] : [status];
     const placeholders = ids.map((_, i) => `$${i + params.length + 1}`).join(', ');
     const setClause = approvalStatus ? 'status = $1, approval_status = $2' : 'status = $1';
+    // Ownership, exactly as the single-order endpoint enforces it. Without this
+    // the bulk route was a way around a check sitting two functions away: any
+    // logged-in person could rewrite the status of every order in the system.
+    const bulkArrivalOnly =
+      isArrivalOnlyWrite({ status, ...(approvalStatus ? { approval_status: approvalStatus } : {}) }) &&
+      (await userHasPermission(req.user, 'delivery'));
+    if (!bulkArrivalOnly && !(await userHasPermission(req.user, 'editAllOrders'))) {
+      // order_by holds a DISPLAY NAME, so ownership has to be resolved against
+      // the users table rather than compared to the token. An order with no
+      // owner recorded counts as somebody else's, not as yours.
+      const notMine = await query(
+        `SELECT o.id
+           FROM orders o
+          WHERE o.id = ANY($1::text[])
+            AND NOT EXISTS (
+              SELECT 1 FROM users u
+               WHERE u.id = $2
+                 AND o.order_by IS NOT NULL
+                 AND TRIM(o.order_by) <> ''
+                 AND (LOWER(TRIM(o.order_by)) = LOWER(TRIM(u.name))
+                   OR LOWER(TRIM(o.order_by)) = LOWER(TRIM(u.username)))
+            )`,
+        [ids, req.user?.id || null],
+      );
+      if (notMine.rows.length) {
+        return res.status(403).json({
+          error: `You can only change your own orders — ${notMine.rows.length} of ${ids.length} belong to someone else.`,
+        });
+      }
+    }
+
     const sql = `UPDATE orders SET ${setClause} WHERE id IN (${placeholders})${
       approvedOnly ? " AND approval_status = 'approved'" : ''
     } RETURNING *`;
@@ -383,7 +442,12 @@ router.post(
           itemsList: `\u2022 ${(o.description || '').slice(0, 35)}: ${o.qtyReceived}/${o.quantity}`,
         },
         {
-          templateKey: shortBy > 0 ? 'deliveryArrival' : 'partArrivalDone',
+          // No templateKey override: it used to point at 'deliveryArrival',
+          // whose text reads itemCount and totalValue — fields this caller has
+          // never supplied — so every short-delivery message went out saying
+          // "Items Delivered: undefined". Defaulting to the rule's own key also
+          // means a template customised in Settings is the one that gets used.
+          templateKey: shortBy > 0 ? 'backOrderUpdate' : 'partArrivalDone',
           subject: `Part arrival: ${o.description || o.id}`,
         },
       );
@@ -408,7 +472,8 @@ router.put('/:id', async (req, res) => {
     // but the server enforced nothing: any authenticated user could rewrite any
     // order's quantity and price, including one already approved by someone
     // else. Mirror the client rule here.
-    if (!(await userHasPermission(req.user, 'editAllOrders'))) {
+    const arrivalOnly = isArrivalOnlyWrite(snakeBody) && (await userHasPermission(req.user, 'delivery'));
+    if (!arrivalOnly && !(await userHasPermission(req.user, 'editAllOrders'))) {
       // orders.order_by holds the user's DISPLAY NAME, while the token carries
       // only id/username — so the owner check has to resolve the name from the
       // users table rather than comparing against the token.
@@ -424,8 +489,11 @@ router.put('/:id', async (req, res) => {
           String(v ?? '')
             .trim()
             .toLowerCase();
+        // A blank order_by used to skip the check entirely, so an order created
+        // without one — which the WhatsApp bot and history imports both
+        // produce — was editable by anyone. Unowned is not the same as yours.
         const mine = orderBy && (norm(orderBy) === norm(myName) || norm(orderBy) === norm(myUsername));
-        if (orderBy && !mine) {
+        if (!mine) {
           return res.status(403).json({ error: 'You can only edit your own orders' });
         }
       }
