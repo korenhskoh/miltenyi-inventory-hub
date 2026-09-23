@@ -125,6 +125,9 @@ import Pagination, { usePagination } from './components/Pagination.jsx';
 import ChangePasswordModal from './components/ChangePasswordModal.jsx';
 import LoginIntro, { IntroRule } from './components/LoginIntro.jsx';
 import { todayLocal, toLocalYmd } from './lib/dates.js';
+import { parseOrderSheet, monthFromSheetName, describeMapping } from './lib/orderImport.js';
+import WishlistPage from './pages/WishlistPage.jsx';
+import { detectHeaderRow } from './lib/sheet.js';
 import { getCatalogPrice, getEffectiveUnitPrice, getEffectiveTotal } from './lib/pricing.js';
 import { computeArrival, arrivalDelta } from './lib/arrival.js';
 import { ORDER_STATUS, approvalTransition } from './lib/approvals.js';
@@ -237,6 +240,7 @@ export default function App() {
   });
   const [historyImportData, setHistoryImportData] = useState([]);
   const [historyImportPreview, setHistoryImportPreview] = useState(false);
+  const [importBusy, setImportBusy] = useState(false);
   const [catalogSearch, setCatalogSearch] = useState('');
   const [machineSearch, setMachineSearch] = useState('');
   const [notifSearch, setNotifSearch] = useState('');
@@ -3429,6 +3433,7 @@ export default function App() {
   const allNavItems = [
     { id: 'dashboard', label: 'Dashboard', icon: Home, perm: 'dashboard', module: 'inventory' },
     { id: 'catalog', label: 'Parts Catalog', icon: Database, perm: 'catalog', module: 'inventory' },
+    { id: 'wishlist', label: 'Wishlist', icon: Heart, perm: 'catalog', module: 'inventory' },
     { id: 'localinventory', label: 'Local Inventory', icon: Warehouse, perm: 'dashboard', module: 'inventory' },
     {
       id: 'orders-group',
@@ -3527,154 +3532,25 @@ export default function App() {
   };
 
   // ── Header mapping for CSV/Excel import ──
-  const HEADER_MAP = {
-    id: 'id',
-    'order id': 'id',
-    orderid: 'id',
-    order_id: 'id',
-    material: 'materialNo',
-    'material no': 'materialNo',
-    materialno: 'materialNo',
-    material_no: 'materialNo',
-    'part number': 'materialNo',
-    'part no': 'materialNo',
-    partno: 'materialNo',
-    'mat no': 'materialNo',
-    description: 'description',
-    desc: 'description',
-    item: 'description',
-    'item description': 'description',
-    product: 'description',
-    'product name': 'description',
-    name: 'description',
-    quantity: 'quantity',
-    qty: 'quantity',
-    ordered: 'quantity',
-    'order qty': 'quantity',
-    'ordered qty': 'quantity',
-    price: 'listPrice',
-    'list price': 'listPrice',
-    listprice: 'listPrice',
-    'unit price': 'listPrice',
-    'transfer price': 'listPrice',
-    tp: 'listPrice',
-    cost: 'listPrice',
-    total: 'totalCost',
-    'total cost': 'totalCost',
-    totalcost: 'totalCost',
-    amount: 'totalCost',
-    'total amount': 'totalCost',
-    'ext price': 'totalCost',
-    'extended price': 'totalCost',
-    'order date': 'orderDate',
-    orderdate: 'orderDate',
-    date: 'orderDate',
-    created: 'orderDate',
-    'created date': 'orderDate',
-    order_date: 'orderDate',
-    'order by': 'orderBy',
-    orderby: 'orderBy',
-    'ordered by': 'orderBy',
-    user: 'orderBy',
-    'created by': 'orderBy',
-    requestor: 'orderBy',
-    requester: 'orderBy',
-    remark: 'remark',
-    remarks: 'remark',
-    note: 'remark',
-    notes: 'remark',
-    comment: 'remark',
-    comments: 'remark',
-    arrival: 'arrivalDate',
-    'arrival date': 'arrivalDate',
-    arrivaldate: 'arrivalDate',
-    'received date': 'arrivalDate',
-    'delivery date': 'arrivalDate',
-    received: 'qtyReceived',
-    'qty received': 'qtyReceived',
-    qtyreceived: 'qtyReceived',
-    'received qty': 'qtyReceived',
-    'back order': 'backOrder',
-    backorder: 'backOrder',
-    pending: 'backOrder',
-    back_order: 'backOrder',
-    engineer: 'engineer',
-    assigned: 'engineer',
-    'assigned to': 'engineer',
-    technician: 'engineer',
-    status: 'status',
-    month: 'month',
-    batch: 'month',
-    'month batch': 'month',
-    period: 'month',
-    year: 'year',
-    category: 'category',
-    cat: 'category',
-    type: 'category',
-  };
-
-  // Parse rows from a 2D array (headers + data) into order objects
-  const parseRowsToOrders = (headers, rows, sheetMonth, bulkGroupId = null) => {
-    const colMap = {};
-    headers.forEach((h, i) => {
-      const key = String(h || '')
-        .trim()
-        .toLowerCase()
-        .replace(/['"]/g, '');
-      if (HEADER_MAP[key]) colMap[HEADER_MAP[key]] = i;
+  // Column mapping, header detection and row parsing all live in
+  // ./lib/orderImport.js so they can be unit tested against the real workbook
+  // shapes without a browser. What stays here is only the wiring.
+  const parseSheetToOrders = (aoa, sheetName, bulkGroupId = null, existingIds) => {
+    const sheetMonth = monthFromSheetName(sheetName);
+    return parseOrderSheet(aoa, {
+      sheetMonth,
+      bulkGroupId,
+      defaultOrderBy: currentUser?.name || '',
+      makeId: () => {
+        // Ids must be unique across the whole import, not just within a sheet.
+        let id;
+        do {
+          id = `ORD-${Date.now()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
+        } while (existingIds.has(id));
+        existingIds.add(id);
+        return id;
+      },
     });
-
-    const existingIds = new Set(orders.map((o) => o.id));
-    const parsed = [];
-    for (const row of rows) {
-      const getValue = (field) => {
-        const idx = colMap[field];
-        if (idx === undefined) return '';
-        const val = row[idx];
-        if (val instanceof Date) return toLocalYmd(val);
-        return val != null
-          ? String(val)
-              .trim()
-              .replace(/^["']|["']$/g, '')
-          : '';
-      };
-
-      let orderId = getValue('id');
-      if (!orderId || existingIds.has(orderId)) {
-        orderId = `ORD-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-      }
-      existingIds.add(orderId);
-
-      const qty = parseInt(getValue('quantity')) || 0;
-      const received = parseInt(getValue('qtyReceived')) || 0;
-
-      const order = {
-        id: orderId,
-        materialNo: getValue('materialNo'),
-        description: getValue('description') || 'Imported Item',
-        quantity: qty,
-        listPrice: parseFloat(getValue('listPrice')) || 0,
-        totalCost: parseFloat(getValue('totalCost')) || (parseFloat(getValue('listPrice')) || 0) * qty,
-        orderDate: getValue('orderDate') || todayLocal(),
-        orderBy: getValue('orderBy') || currentUser?.name || '',
-        remark: getValue('remark') || 'Imported from file',
-        arrivalDate: getValue('arrivalDate') || '',
-        qtyReceived: received,
-        backOrder: received - qty,
-        engineer: getValue('engineer') || '',
-        emailFull: '',
-        emailBack: '',
-        status: getValue('status') || (received >= qty && qty > 0 ? 'Received' : 'Pending Approval'),
-        month: getValue('month') || sheetMonth || 'Import ' + todayLocal().slice(0, 7),
-        year: getValue('year') || new Date().getFullYear().toString(),
-        ...(bulkGroupId ? { bulkGroupId } : {}),
-      };
-
-      if (order.description !== 'Imported Item' || order.materialNo) {
-        parsed.push(order);
-      }
-    }
-    return parsed;
   };
 
   // ── History Import CSV/Excel Parser ──
@@ -3690,35 +3566,36 @@ export default function App() {
         const wb = XLSX.read(evt.target.result, { type: 'array', cellDates: true });
         const allOrders = [];
         const newBulkGroups = [];
+        const skippedSheets = [];
+        const existingIds = new Set(orders.map((o) => o.id));
 
         wb.SheetNames.forEach((sheetName) => {
-          const ws = wb.Sheets[sheetName];
-          const jsonData = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
-          if (jsonData.length < 2) return;
+          const aoa = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { header: 1, defval: '' });
+          const bgId = `BG-${Date.now()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
+          const result = parseSheetToOrders(aoa, sheetName, bgId, existingIds);
 
-          const headers = jsonData[0];
-          const rows = jsonData.slice(1).filter((r) => r.some((cell) => cell !== ''));
-          if (!rows.length) return;
-
-          // Use sheet name as month batch if it looks like a month
-          const sheetMonth = sheetName.trim();
-          const bgId = `BG-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-          const sheetOrders = parseRowsToOrders(headers, rows, sheetMonth, bgId);
-
-          if (sheetOrders.length > 0) {
-            allOrders.push(...sheetOrders);
-            // Auto-create a bulk group from each sheet (orders are linked via bulkGroupId)
-            const totalCost = sheetOrders.reduce((s, o) => s + o.totalCost, 0);
-            newBulkGroups.push({
-              id: bgId,
-              month: sheetMonth,
-              createdBy: currentUser.name,
-              items: sheetOrders.length,
-              totalCost,
-              status: 'Pending Approval',
-              date: todayLocal(),
-            });
+          if (result.skipped) {
+            skippedSheets.push(`${sheetName} (${result.skipped})`);
+            return;
           }
+          if (result.orders.length === 0) {
+            skippedSheets.push(`${sheetName} (no data rows)`);
+            return;
+          }
+
+          allOrders.push(...result.orders);
+          const totalCost = result.orders.reduce((sum, o) => sum + o.totalCost, 0);
+          newBulkGroups.push({
+            id: bgId,
+            month: monthFromSheetName(sheetName) || sheetName.trim(),
+            createdBy: currentUser.name,
+            items: result.orders.length,
+            totalCost,
+            // A historical batch that has already been received is not awaiting
+            // anyone's approval.
+            status: result.orders.every((o) => o.status === 'Received') ? 'Completed' : 'Pending Approval',
+            date: todayLocal(),
+          });
         });
 
         if (allOrders.length > 0) {
@@ -3726,13 +3603,31 @@ export default function App() {
           setHistoryImportPreview(true);
           // Temporarily store bulk groups for confirm handler
           window.__pendingBulkGroups = newBulkGroups;
+          const read = wb.SheetNames.length - skippedSheets.length;
           notify(
             'Excel Parsed',
-            allOrders.length + ' orders from ' + wb.SheetNames.length + ' sheet(s) ready to import',
+            `${allOrders.length} orders from ${read} of ${wb.SheetNames.length} sheets` +
+              (skippedSheets.length ? `. Skipped: ${skippedSheets.join(', ')}` : ''),
             'success',
           );
         } else {
-          notify('Import Error', 'No valid orders found in Excel file', 'error');
+          // Say WHY rather than just "no valid orders": nearly every real
+          // failure here is a header the importer could not place, and the
+          // person needs to know which sheet and which row it looked at.
+          const first = wb.SheetNames[0];
+          const aoa = first ? XLSX.utils.sheet_to_json(wb.Sheets[first], { header: 1, defval: '' }) : [];
+          const headerRow = aoa.length ? detectHeaderRow(aoa, 15) : 0;
+          const seen = (aoa[headerRow] || [])
+            .map((h) => String(h || '').trim())
+            .filter(Boolean)
+            .slice(0, 6)
+            .join(', ');
+          notify(
+            'Import Error',
+            `No orders found. On "${first}" the headers were read from row ${headerRow + 1}: ${seen || '(none)'}. ` +
+              'A sheet needs a material or description column plus at least one of order date, order by, quantity received or arrival date.',
+            'error',
+          );
         }
       };
       reader.readAsArrayBuffer(file);
@@ -3763,17 +3658,25 @@ export default function App() {
           return values;
         };
 
-        const headers = parseCSVLine(lines[0]);
-        const rows = lines.slice(1).map(parseCSVLine);
-        const importedOrders = parseRowsToOrders(headers, rows, null);
+        // The same parser as the Excel path, so a CSV exported from one of
+        // these workbooks — title block and all — is read identically.
+        const aoa = lines.map(parseCSVLine);
+        const existingIds = new Set(orders.map((o) => o.id));
+        const result = parseSheetToOrders(aoa, file.name.replace(/\.[^.]+$/, ''), null, existingIds);
 
-        if (importedOrders.length > 0) {
-          setHistoryImportData(importedOrders);
+        if (result.orders.length > 0) {
+          setHistoryImportData(result.orders);
           setHistoryImportPreview(true);
           window.__pendingBulkGroups = null;
-          notify('File Parsed', importedOrders.length + ' orders ready to import', 'success');
+          notify('File Parsed', `${result.orders.length} orders ready to import`, 'success');
         } else {
-          notify('Import Error', 'No valid orders found in file', 'error');
+          const seen = (aoa[result.headerRowIndex] || []).filter(Boolean).slice(0, 6).join(', ');
+          notify(
+            'Import Error',
+            `No orders found. Headers were read from row ${result.headerRowIndex + 1}: ${seen || '(none)'}. ` +
+              'The file needs a material or description column plus at least one of order date, order by, quantity received or arrival date.',
+            'error',
+          );
         }
       };
       reader.readAsText(file);
@@ -3781,24 +3684,51 @@ export default function App() {
     e.target.value = '';
   };
 
-  const confirmHistoryImport = () => {
-    setOrders((prev) => [...prev, ...historyImportData]);
-    historyImportData.forEach((o) => dbSync(api.createOrder(o), 'History order not saved'));
-    // Also add any bulk groups from Excel sheets
-    if (window.__pendingBulkGroups && window.__pendingBulkGroups.length > 0) {
-      setBulkGroups((prev) => [...window.__pendingBulkGroups, ...prev]);
-      window.__pendingBulkGroups.forEach((g) => dbSync(api.createBulkGroup(g), 'History bulk group not saved'));
-      notify(
-        'History Imported',
-        historyImportData.length + ' orders + ' + window.__pendingBulkGroups.length + ' bulk batches added',
-        'success',
-      );
-      window.__pendingBulkGroups = null;
-    } else {
-      notify('History Imported', historyImportData.length + ' orders added to system', 'success');
+  const confirmHistoryImport = async () => {
+    const rows = historyImportData;
+    const groups = window.__pendingBulkGroups || [];
+
+    setImportBusy(true);
+    // The groups have to exist before the orders that reference them, or the
+    // link is written against a group id that is not there yet.
+    let groupsSaved = 0;
+    for (const g of groups) {
+      if (await api.createBulkGroup(g)) groupsSaved++;
     }
+
+    // Saved in small batches rather than all at once: an import is hundreds of
+    // rows, and firing them together buries the connection pool. The results
+    // are awaited so the count reported is the count that actually landed —
+    // this used to fire and forget, then claim success either way.
+    const saved = [];
+    const failed = [];
+    const BATCH = 10;
+    for (let i = 0; i < rows.length; i += BATCH) {
+      const slice = rows.slice(i, i + BATCH);
+      const results = await Promise.all(slice.map((o) => api.createOrder(o).catch(() => null)));
+      results.forEach((res, idx) => (res ? saved.push(slice[idx]) : failed.push(slice[idx])));
+    }
+    setImportBusy(false);
+
+    if (saved.length) setOrders((prev) => [...prev, ...saved]);
+    if (groupsSaved) setBulkGroups((prev) => [...groups, ...prev]);
+    window.__pendingBulkGroups = null;
     setHistoryImportData([]);
     setHistoryImportPreview(false);
+
+    if (failed.length === 0) {
+      notify(
+        'History Imported',
+        `${saved.length} orders${groupsSaved ? ` and ${groupsSaved} batches` : ''} added.`,
+        'success',
+      );
+    } else {
+      notify(
+        'Partly Imported',
+        `${saved.length} of ${rows.length} orders saved. ${failed.length} were rejected — the first was ${failed[0].materialNo || failed[0].description}.`,
+        'error',
+      );
+    }
   };
 
   // ════════════════════════════ ORDER DETAIL WINDOW (NEW TAB) ═════════════════════════
@@ -5326,6 +5256,21 @@ export default function App() {
                     {partsCatalog.length}
                   </span>
                 )}
+                {item.id === 'wishlist' && sidebarOpen && wishlist.length > 0 && (
+                  <span
+                    style={{
+                      marginLeft: 'auto',
+                      fontSize: 10,
+                      background: '#FFE4E6',
+                      color: '#E11D48',
+                      padding: '2px 6px',
+                      borderRadius: 8,
+                      fontWeight: 700,
+                    }}
+                  >
+                    {wishlist.length}
+                  </span>
+                )}
                 {item.id === 'whatsapp' && sidebarOpen && (
                   <span
                     style={{
@@ -5947,7 +5892,11 @@ export default function App() {
                                     api.createWishlistItem(item).then((saved) => {
                                       if (saved) {
                                         setWishlist((prev) => [saved, ...prev]);
-                                        notify('Wishlist', `${p.materialNo} added to wishlist`, 'success');
+                                        notify(
+                                          'Wishlist',
+                                          `${p.materialNo} saved. Open Wishlist in the sidebar to order it.`,
+                                          'success',
+                                        );
                                       }
                                     });
                                   }
@@ -5990,6 +5939,41 @@ export default function App() {
           {/* LOCAL INVENTORY */}
           {page === 'localinventory' && (
             <LocalInventoryPage isAdmin={isAdmin} currentUser={currentUser} notify={notify} />
+          )}
+
+          {/* WISHLIST */}
+          {page === 'wishlist' && (
+            <WishlistPage
+              wishlist={wishlist}
+              pager={wishlistPg}
+              priceOf={(w) =>
+                getEffectiveUnitPrice({ materialNo: w.materialNo, listPrice: w.listPrice }, catalogLookup)
+              }
+              onRemove={(w) => {
+                api.deleteWishlistItem(w.id).then((ok) => {
+                  if (!ok) return notify('Not Removed', 'That item could not be removed.', 'error');
+                  setWishlist((prev) => prev.filter((x) => x.id !== w.id));
+                  notify('Wishlist', `${w.materialNo || w.description} removed.`, 'info');
+                });
+              }}
+              onOrderSingle={(w) => {
+                // Hand the part to the New Order form rather than creating
+                // anything here: quantity, batch and approval are that form's job.
+                setNewOrder((prev) => ({
+                  ...prev,
+                  materialNo: w.materialNo || '',
+                  description: w.description || '',
+                  listPrice: getEffectiveUnitPrice({ materialNo: w.materialNo, listPrice: w.listPrice }, catalogLookup),
+                  quantity: 1,
+                }));
+                setPage('orders');
+                notify('From Wishlist', `${w.materialNo || w.description} loaded into a new order.`, 'success');
+              }}
+              onOrderAll={() => {
+                setPage('bulkorders');
+                setShowWishlistPicker('bulk');
+              }}
+            />
           )}
 
           {/* ALL ORDERS */}
@@ -10406,21 +10390,22 @@ export default function App() {
                     </button>
                     <button
                       onClick={confirmHistoryImport}
+                      disabled={importBusy}
                       style={{
                         padding: '10px 24px',
                         borderRadius: 8,
                         border: 'none',
-                        background: 'linear-gradient(135deg,#059669,#10B981)',
+                        background: importBusy ? '#94A3B8' : 'linear-gradient(135deg,#059669,#10B981)',
                         color: '#fff',
                         fontWeight: 600,
                         fontSize: 13,
-                        cursor: 'pointer',
+                        cursor: importBusy ? 'wait' : 'pointer',
                         display: 'flex',
                         alignItems: 'center',
                         gap: 6,
                       }}
                     >
-                      <Check size={16} /> Import {historyImportData.length} Orders
+                      <Check size={16} /> {importBusy ? 'Importing…' : `Import ${historyImportData.length} Orders`}
                     </button>
                   </div>
                 </div>
