@@ -1,4 +1,5 @@
 import React, { useMemo } from 'react';
+import { curveMonotoneX } from '@visx/curve';
 import { LineChart } from '../charts/line-chart';
 import { Line } from '../charts/line';
 import { Grid } from '../charts/grid';
@@ -51,6 +52,16 @@ export function toSeries(rows) {
 
 export default function ForecastChart({ rows, height = 300 }) {
   const data = useMemo(() => toSeries(rows), [rows]);
+  // Where the history stops and the prediction starts. The legend under the
+  // chart has always claimed the forecast was drawn dashed; until now it was
+  // drawn as one continuous solid line, so there was no way to see which part
+  // of it had actually happened.
+  const dashFrom = useMemo(() => {
+    const i = data.findIndex((d) => d.forecast);
+    // Dash from the last real point, so the dashed run starts at the join
+    // rather than one month after it.
+    return i <= 0 ? undefined : i - 1;
+  }, [data]);
   if (data.length === 0) return null;
 
   return (
@@ -63,7 +74,22 @@ export default function ForecastChart({ rows, height = 300 }) {
       >
         <Grid />
         <XAxis />
-        <Line dataKey="qty" stroke="var(--chart-line-primary)" strokeWidth={2.5} />
+        {/*
+         * Monotone, not the default natural spline. A natural spline
+         * overshoots between points, and demand for a spare part swings
+         * between nothing and a lump — so the curve dived well below zero
+         * between two intermittent months and was clipped off the bottom of
+         * the chart. A monotone curve stays within the values it joins, which
+         * is also the only honest shape here: there is no month in which
+         * minus-four units were consumed.
+         */}
+        <Line
+          dataKey="qty"
+          stroke="var(--chart-line-primary)"
+          strokeWidth={2.5}
+          curve={curveMonotoneX}
+          dashFromIndex={dashFrom}
+        />
         <ChartTooltip />
       </LineChart>
     </div>

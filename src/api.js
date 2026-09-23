@@ -159,6 +159,24 @@ async function testAiProvider({ provider, apiKey } = {}) {
   }
 }
 
+/**
+ * Real consumption history — what engineers charged out, by material and month —
+ * plus current stock and each part's own observed lead time.
+ *
+ * This is what the forecast should be built from. Order history is a lumpy
+ * proxy: thirty units bought once and used over a year look like one enormous
+ * month and eleven empty ones.
+ */
+async function getConsumption(months = 36) {
+  try {
+    const res = await fetch(`${BASE}/api/local-inventory/consumption?months=${months}`, { headers: authHeadersGet() });
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
 /** The provider's own model catalog, so the picker cannot go stale. */
 async function getAiModels(provider) {
   try {
@@ -1391,6 +1409,7 @@ const api = {
   checkServer,
   changePassword,
   askAssistant,
+  getConsumption,
   getAiProviders,
   getAiModels,
   testAiProvider,
