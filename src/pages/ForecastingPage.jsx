@@ -1,8 +1,10 @@
-import { TrendingUp, Settings, ClipboardList, Search, Plus, Check, Trash2 } from 'lucide-react';
+import React, { useState, useEffect, useMemo } from 'react';
+import { TrendingUp, Settings, ClipboardList, Search, Plus, Check, Trash2, AlertTriangle, Info } from 'lucide-react';
 import ForecastChart from '../components/ForecastChart.jsx';
 import { fmt, fmtDate } from '../utils.js';
 import { Pill, ExportDropdown } from '../components/ui.jsx';
 import Pagination, { usePagination } from '../components/Pagination.jsx';
+import { buildSeries, forecast, annualPlan, monthKey, monthDisplay, HORIZONS } from '../lib/forecast.js';
 
 const ForecastingPage = ({
   orders,
@@ -23,108 +25,152 @@ const ForecastingPage = ({
   dbSync,
   api,
 }) => {
-  // Build material history: { materialNo -> { months: [{name, qty}], totalQty, description } }
-  const materialHistory = {};
-  const monthOrder = {
-    jan: 0,
-    feb: 1,
-    mar: 2,
-    apr: 3,
-    may: 4,
-    jun: 5,
-    jul: 6,
-    aug: 7,
-    sep: 8,
-    oct: 9,
-    nov: 10,
-    dec: 11,
-  };
-  orders.forEach((o) => {
-    if (!o.materialNo) return;
-    if (!materialHistory[o.materialNo])
-      materialHistory[o.materialNo] = {
-        materialNo: o.materialNo,
-        description: o.description,
-        monthMap: {},
-        totalQty: 0,
-        totalCost: 0,
-        orderCount: 0,
-      };
-    const h = materialHistory[o.materialNo];
-    h.totalQty += Number(o.quantity) || 0;
-    h.totalCost += Number(o.totalCost) || 0;
-    h.orderCount++;
-    if (o.month) {
-      const norm = o.month.replace(/^\d+_/, '').replace(/_/g, ' ');
-      const parts = norm.split(' ');
-      const shortLabel = parts.length >= 2 ? `${parts[0].slice(0, 3)} '${parts[1].slice(2)}` : norm;
-      if (!h.monthMap[shortLabel]) h.monthMap[shortLabel] = { name: shortLabel, qty: 0, _sortKey: norm };
-      h.monthMap[shortLabel].qty += Number(o.quantity) || 0;
-    }
-  });
-  const allMaterials = Object.values(materialHistory).sort((a, b) => b.orderCount - a.orderCount);
-  const selectedMat = forecastMaterial || allMaterials[0]?.materialNo || '';
-  const matData = materialHistory[selectedMat];
-  const matMonthly = matData
-    ? Object.values(matData.monthMap).sort((a, b) => {
-        const [am, ay] = a._sortKey.toLowerCase().split(' ');
-        const [bm, by] = b._sortKey.toLowerCase().split(' ');
-        return (
-          (parseInt(ay) || 0) - (parseInt(by) || 0) ||
-          (monthOrder[am?.slice(0, 3)] || 0) - (monthOrder[bm?.slice(0, 3)] || 0)
-        );
-      })
-    : [];
+  // ── Demand history ────────────────────────────────────────────────────────
+  //
+  // Charge-out first, order history second.
+  //
+  // Ordering is a lumpy proxy for demand: thirty pump heads bought once and
+  // drawn down over a year look like one enormous month followed by eleven
+  // empty ones, and the old forecast — which read orders only, and dropped the
+  // empty months entirely — turned that into a prediction of nineteen a month.
+  // inventory_transactions records what engineers actually consumed, with a
+  // real timestamp, so it is the better series wherever it exists. Parts with
+  // no charge-out history yet fall back to orders, and the page says which.
+  const [consumption, setConsumption] = useState(null);
+  const [consumptionState, setConsumptionState] = useState('loading');
+  const [horizon, setHorizon] = useState(12);
+  const [summarySearch, setSummarySearch] = useState('');
+  const [needsOrderOnly, setNeedsOrderOnly] = useState(false);
 
-  // Weighted moving average forecast
-  const forecastMonths = [];
-  if (matMonthly.length >= 2) {
-    const vals = matMonthly.map((m) => m.qty);
-    // Demand uplift of +2% per active machine, capped at 1.5x so a large fleet
-    // cannot inflate the forecast to an unrealistic multiple of history.
-    const machineGrowth =
-      machines.length > 0 ? Math.min(1.5, 1 + machines.filter((m) => m.status === 'Active').length * 0.02) : 1;
-    const monthLabels = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-    const now = new Date();
-    for (let i = 0; i < 6; i++) {
-      const n = vals.length + i;
-      const recent = [...vals, ...forecastMonths.map((f) => f.qty)];
-      const w1 = recent[recent.length - 1] || 0;
-      const w2 = recent[recent.length - 2] || w1;
-      const w3 = recent[recent.length - 3] || w2;
-      const predicted = Math.round((0.5 * w1 + 0.3 * w2 + 0.2 * w3) * machineGrowth);
-      const future = new Date(now.getFullYear(), now.getMonth() + i + 1, 1);
-      const label = `${monthLabels[future.getMonth()]} '${String(future.getFullYear()).slice(-2)}`;
-      forecastMonths.push({ name: label, qty: predicted, forecast: true });
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      const res = await api.getConsumption(36);
+      if (!alive) return;
+      setConsumption(res);
+      setConsumptionState(res ? 'ready' : 'unavailable');
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [api]);
+
+  const stockByMaterial = useMemo(() => {
+    const map = new Map();
+    for (const row of consumption?.stock || []) map.set(row.material_no, row);
+    return map;
+  }, [consumption]);
+
+  const leadTimeByMaterial = useMemo(() => {
+    const map = new Map();
+    for (const row of consumption?.leadTimes || []) map.set(row.material_no, row);
+    return map;
+  }, [consumption]);
+
+  /**
+   * One entry per material: its monthly demand series, where that series came
+   * from, and the description to show.
+   */
+  const materials = useMemo(() => {
+    const byMaterial = new Map();
+
+    const ensure = (materialNo) => {
+      if (!byMaterial.has(materialNo)) {
+        byMaterial.set(materialNo, {
+          materialNo,
+          description: '',
+          chargeOut: [],
+          ordered: [],
+          orderCount: 0,
+          totalQty: 0,
+          totalCost: 0,
+        });
+      }
+      return byMaterial.get(materialNo);
+    };
+
+    for (const row of consumption?.series || []) {
+      const m = ensure(row.material_no);
+      m.chargeOut.push({ month: row.month, qty: Number(row.qty) || 0 });
     }
-  }
+    for (const row of consumption?.stock || []) {
+      const m = ensure(row.material_no);
+      if (!m.description && row.description) m.description = row.description;
+    }
+
+    for (const o of orders || []) {
+      if (!o.materialNo) continue;
+      // A rejected order was never demand. The old forecast counted it forever.
+      if (o.status === 'Rejected' || o.status === 'Cancelled') continue;
+      const m = ensure(o.materialNo);
+      if (!m.description && o.description) m.description = o.description;
+      m.orderCount++;
+      m.totalQty += Number(o.quantity) || 0;
+      m.totalCost += Number(o.totalCost) || 0;
+      const month = monthKey(o.orderDate) || monthKey(o.arrivalDate);
+      if (month) m.ordered.push({ month, qty: Number(o.quantity) || 0 });
+    }
+
+    return [...byMaterial.values()]
+      .map((m) => {
+        const fromChargeOut = m.chargeOut.length > 0;
+        const series = buildSeries(fromChargeOut ? m.chargeOut : m.ordered);
+        return { ...m, series, source: fromChargeOut ? 'consumption' : 'orders', hasSeries: series.length > 0 };
+      })
+      .filter((m) => m.hasSeries)
+      .sort((a, b) => a.materialNo.localeCompare(b.materialNo));
+  }, [consumption, orders]);
+
+  const materialsByNo = useMemo(() => new Map(materials.map((m) => [m.materialNo, m])), [materials]);
+  const selectedMat = forecastMaterial || materials[0]?.materialNo || '';
+  const matData = materialsByNo.get(selectedMat) || null;
+  const matMonthly = useMemo(
+    () => (matData ? matData.series.map((p) => ({ name: monthDisplay(p.month), qty: p.qty, _sortKey: p.month })) : []),
+    [matData],
+  );
+
+  // No fleet multiplier. The old one applied +2% per active machine INSIDE the
+  // forecast loop with each prediction fed back as history, so it compounded:
+  // steady demand of four a month came out as twenty-two by month six on a
+  // twenty-five instrument fleet, while the page told you that adding machines
+  // improved accuracy. A fleet term is only meaningful once consumption can be
+  // attributed to an instrument, which needs a machine id on the charge-out.
+  const selectedForecast = useMemo(() => (matData ? forecast(matData.series, horizon) : null), [matData, horizon]);
+
+  const forecastMonths = selectedForecast?.points || [];
   const chartData = [...matMonthly.map((m) => ({ ...m, forecast: false })), ...forecastMonths];
 
-  // Summary forecast for all materials
-  const forecastSummary = allMaterials.slice(0, 20).map((mat) => {
-    const vals = Object.values(mat.monthMap)
-      .sort((a, b) => {
-        const [am, ay] = a._sortKey.toLowerCase().split(' ');
-        const [bm, by] = b._sortKey.toLowerCase().split(' ');
-        return (
-          (parseInt(ay) || 0) - (parseInt(by) || 0) ||
-          (monthOrder[am?.slice(0, 3)] || 0) - (monthOrder[bm?.slice(0, 3)] || 0)
-        );
-      })
-      .map((m) => m.qty);
-    const avg = vals.length > 0 ? Math.round(vals.reduce((s, v) => s + v, 0) / vals.length) : 0;
-    const lastVal = vals[vals.length - 1] || 0;
-    const prevVal = vals[vals.length - 2] || lastVal;
-    const trend = lastVal > prevVal ? 'up' : lastVal < prevVal ? 'down' : 'stable';
-    const w1 = vals[vals.length - 1] || 0,
-      w2 = vals[vals.length - 2] || w1,
-      w3 = vals[vals.length - 3] || w2;
-    const predicted = Math.round(0.5 * w1 + 0.3 * w2 + 0.2 * w3);
-    const variance =
-      vals.length >= 3 ? Math.sqrt(vals.slice(-3).reduce((s, v) => s + Math.pow(v - avg, 2), 0) / 3) : 999;
-    const confidence = variance < avg * 0.3 ? 'High' : variance < avg * 0.7 ? 'Medium' : 'Low';
-    return { ...mat, avgMonthly: avg, trend, predicted, confidence, monthCount: vals.length };
-  });
+  /**
+   * The annual planning table: every part that has a demand series, with what
+   * the next twelve months need, what the last twelve actually took, what is on
+   * the shelf and how long that lasts.
+   */
+  const plans = useMemo(
+    () =>
+      materials.map((m) => {
+        const stockRow = stockByMaterial.get(m.materialNo);
+        const leadRow = leadTimeByMaterial.get(m.materialNo);
+        const plan = annualPlan(m.series, {
+          stock: Number(stockRow?.quantity) || 0,
+          leadTimeDays: leadRow ? Number(leadRow.avg_days) : null,
+          horizon,
+        });
+        return { ...m, ...plan };
+      }),
+    [materials, stockByMaterial, leadTimeByMaterial, horizon],
+  );
+
+  // Every part, in material order — no top-20 cut. The old summary silently
+  // showed only the twenty biggest spenders while calling itself "All
+  // Materials", so a cheap part about to run out was invisible.
+  const planRows = useMemo(() => {
+    const q = (summarySearch || '').trim().toLowerCase();
+    return plans.filter((p) => {
+      if (needsOrderOnly && !p.needsOrder) return false;
+      if (!q) return true;
+      return p.materialNo.toLowerCase().includes(q) || (p.description || '').toLowerCase().includes(q);
+    });
+  }, [plans, summarySearch, needsOrderOnly]);
 
   // Machine registry: filter first, then page the filtered list.
   const filteredMachines = machines.filter(
@@ -137,9 +183,32 @@ const ForecastingPage = ({
     initialSize: 100,
     resetKey: machineSearch,
   });
-  const summaryPager = usePagination(forecastSummary, {
+  // Built once so the header and the empty-state colspan cannot drift apart —
+  // and so the horizon column and the fixed twelve-month column do not collide
+  // at a twelve-month horizon, where they are the same number.
+  const columns = useMemo(
+    () =>
+      [
+        { key: 'materialNo', label: 'Material No', align: 'left' },
+        { key: 'description', label: 'Description', align: 'left' },
+        { key: 'source', label: 'Based on', align: 'center' },
+        { key: 'perMonth', label: 'Per month', align: 'right' },
+        { key: 'horizonTotal', label: `Next ${horizon} mo`, align: 'right' },
+        horizon === 12 ? null : { key: 'next12', label: 'Next 12 mo', align: 'right' },
+        { key: 'prior12', label: 'Last 12 mo', align: 'right' },
+        { key: 'change', label: 'Change', align: 'right' },
+        { key: 'stock', label: 'Stock', align: 'right' },
+        { key: 'monthsCover', label: 'Cover', align: 'right' },
+        { key: 'reorderPoint', label: 'Reorder pt', align: 'right' },
+        { key: 'needsOrder', label: 'Order?', align: 'center' },
+      ].filter(Boolean),
+    [horizon],
+  );
+
+  const summaryPager = usePagination(planRows, {
     storageKey: 'forecast-summary',
     initialSize: 50,
+    resetKey: `${summarySearch}|${needsOrderOnly}|${horizon}`,
   });
 
   // Modality stats
@@ -154,11 +223,44 @@ const ForecastingPage = ({
         <div style={{ padding: 10, background: 'linear-gradient(135deg,#D97706,#F59E0B)', borderRadius: 12 }}>
           <TrendingUp size={22} color="#fff" />
         </div>
-        <div>
+        <div style={{ flex: 1 }}>
           <h2 style={{ fontSize: 18, fontWeight: 700, margin: 0 }}>Material Forecasting</h2>
           <p style={{ fontSize: 12, color: '#94A3B8', margin: 0 }}>
-            Predict future material needs based on historical data and machine fleet
+            Demand forecasting from charge-out history, with order history as a fallback
           </p>
+        </div>
+        {/*
+         * One horizon for the whole page. It was briefly on the chart card
+         * alone, which meant the planning table silently used whatever had
+         * last been picked on another tab.
+         */}
+        <div
+          style={{ display: 'flex', gap: 2, background: '#F1F5F9', borderRadius: 8, padding: 2 }}
+          role="group"
+          aria-label="Forecast horizon"
+        >
+          {HORIZONS.map((h) => (
+            <button
+              key={h}
+              onClick={() => setHorizon(h)}
+              aria-pressed={horizon === h}
+              style={{
+                padding: '6px 14px',
+                border: 'none',
+                borderRadius: 6,
+                fontSize: 12,
+                fontWeight: 600,
+                fontFamily: 'inherit',
+                cursor: 'pointer',
+                background: horizon === h ? '#fff' : 'transparent',
+                color: horizon === h ? '#92400E' : '#64748B',
+                boxShadow: horizon === h ? '0 1px 2px rgba(0,0,0,.08)' : 'none',
+              }}
+              title={h >= 12 ? `${h / 12} year${h === 12 ? '' : 's'} ahead` : `${h} months ahead`}
+            >
+              {h >= 12 ? `${h / 12}y` : `${h}m`}
+            </button>
+          ))}
         </div>
       </div>
 
@@ -194,6 +296,27 @@ const ForecastingPage = ({
         ))}
       </div>
 
+      {consumptionState === 'unavailable' && (
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'flex-start',
+            gap: 8,
+            padding: '10px 14px',
+            marginBottom: 16,
+            background: '#FEF2F2',
+            border: '1px solid #FECACA',
+            borderRadius: 10,
+            fontSize: 12.5,
+            color: '#991B1B',
+          }}
+        >
+          <AlertTriangle size={15} style={{ flexShrink: 0, marginTop: 1 }} />
+          Charge-out history could not be loaded, so everything below is forecast from order history alone. Ordering is
+          a lumpy proxy for use — read these figures as indicative.
+        </div>
+      )}
+
       {/* Forecast Dashboard */}
       {forecastTab === 'forecast' && (
         <div>
@@ -202,10 +325,10 @@ const ForecastingPage = ({
             style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 14, marginBottom: 20 }}
           >
             {[
-              { l: 'Unique Materials', v: allMaterials.length, c: '#D97706' },
-              { l: 'Active Machines', v: machines.filter((m) => m.status === 'Active').length, c: '#0B7A3E' },
-              { l: 'Modalities', v: Object.keys(modalityCounts).length, c: '#2563EB' },
-              { l: 'Data Months', v: matMonthly.length, c: '#7C3AED' },
+              { l: 'Parts with History', v: materials.length, c: '#D97706' },
+              { l: 'From Charge-out', v: materials.filter((m) => m.source === 'consumption').length, c: '#0B7A3E' },
+              { l: 'Need Ordering', v: plans.filter((p) => p.needsOrder).length, c: '#DC2626' },
+              { l: 'Months of Data', v: matMonthly.length, c: '#7C3AED' },
             ].map((s, i) => (
               <div key={i} className="card" style={{ padding: '18px 22px', borderLeft: `3px solid ${s.c}` }}>
                 <div
@@ -243,7 +366,7 @@ const ForecastingPage = ({
                   minWidth: 250,
                 }}
               >
-                {allMaterials.map((m) => (
+                {materials.map((m) => (
                   <option key={m.materialNo} value={m.materialNo}>
                     {m.materialNo} — {(m.description || '').slice(0, 40)}
                   </option>
@@ -260,13 +383,23 @@ const ForecastingPage = ({
                   fontSize: 12,
                 }}
               >
-                <strong>{matData.description}</strong> — Total ordered: {matData.totalQty} units across{' '}
-                {matData.orderCount} orders (<span className="pv">{fmt(matData.totalCost)}</span> total)
-                {forecastMonths.length > 0 && (
+                <div style={{ marginBottom: 6 }}>
+                  <strong>{matData.description || matData.materialNo}</strong>
                   <span style={{ marginLeft: 8, color: '#92400E' }}>
-                    {' '}
-                    | Next month forecast: <strong>{forecastMonths[0]?.qty} units</strong>
+                    {matData.source === 'consumption'
+                      ? `forecast from ${matData.series.length} months of charge-out history`
+                      : `no charge-out history yet — forecast from order history (${matData.orderCount} orders, ${fmt(
+                          matData.totalCost,
+                        )})`}
                   </span>
+                </div>
+                {selectedForecast && (
+                  <div style={{ color: '#78350F' }}>
+                    Next {horizon} months: <strong>{Math.round(selectedForecast.total)} units</strong> (
+                    {selectedForecast.perMonth.toFixed(1)}/month) · next month{' '}
+                    <strong>{forecastMonths[0]?.qty ?? 0}</strong> (range {forecastMonths[0]?.lo ?? 0}–
+                    {forecastMonths[0]?.hi ?? 0}) · method: {selectedForecast.method}
+                  </div>
                 )}
               </div>
             )}
@@ -357,7 +490,7 @@ const ForecastingPage = ({
         <div>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
             <p style={{ fontSize: 13, color: '#64748B', margin: 0 }}>
-              Manage your local machine fleet. Machine count affects forecast predictions.
+              Manage your local machine fleet. This is a registry — it does not alter the forecast.
             </p>
             <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
               <div style={{ position: 'relative' }}>
@@ -571,9 +704,7 @@ const ForecastingPage = ({
                 {filteredMachines.length === 0 ? (
                   <tr>
                     <td colSpan={6} style={{ padding: 24, textAlign: 'center', color: '#94A3B8', fontSize: 13 }}>
-                      {machines.length === 0
-                        ? 'No machines added yet. Add machines to improve forecast accuracy.'
-                        : 'No machines match your search.'}
+                      {machines.length === 0 ? 'No machines added yet.' : 'No machines match your search.'}
                     </td>
                   </tr>
                 ) : (
@@ -639,55 +770,97 @@ const ForecastingPage = ({
         </div>
       )}
 
-      {/* All Materials Forecast Summary */}
+      {/* Annual planning table — every part, no ranking */}
       {forecastTab === 'summary' && (
         <div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-            <p style={{ fontSize: 13, color: '#64748B', margin: 0 }}>
-              Predicted material needs for next month based on historical trends
+          <div
+            style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              gap: 12,
+              marginBottom: 16,
+              flexWrap: 'wrap',
+            }}
+          >
+            <p style={{ fontSize: 13, color: '#64748B', margin: 0, maxWidth: 520 }}>
+              Every part with a demand history, over the next {horizon} months. &quot;Needs order&quot; compares stock
+              on hand with the demand expected during that part&apos;s own average lead time.
             </p>
-            <ExportDropdown
-              data={forecastSummary}
-              columns={[
-                { key: 'materialNo', label: 'Material No' },
-                { key: 'description', label: 'Description' },
-                { key: 'orderCount', label: 'Orders' },
-                { key: 'totalQty', label: 'Total Qty' },
-                { key: 'avgMonthly', label: 'Avg Monthly' },
-                { key: 'predicted', label: 'Predicted Next' },
-                { key: 'trend', label: 'Trend' },
-                { key: 'confidence', label: 'Confidence' },
-              ]}
-              filename="forecast-summary"
-              title="Material Forecast Summary"
-            />
+            <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+              <div style={{ position: 'relative' }}>
+                <Search size={15} style={{ position: 'absolute', left: 10, top: 10, color: '#94A3B8' }} />
+                <input
+                  className="header-search"
+                  type="text"
+                  placeholder="Search parts..."
+                  value={summarySearch}
+                  onChange={(e) => setSummarySearch(e.target.value)}
+                  style={{ paddingLeft: 32, width: 200, height: 36 }}
+                />
+              </div>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12.5, color: '#475569' }}>
+                <input type="checkbox" checked={needsOrderOnly} onChange={(e) => setNeedsOrderOnly(e.target.checked)} />
+                Needs order only
+              </label>
+              <ExportDropdown
+                data={planRows.map((p) => ({
+                  ...p,
+                  perMonthOut: p.perMonth.toFixed(2),
+                  horizonTotalOut: Math.round(p.horizonTotal),
+                  next12Out: Math.round(p.next12),
+                  monthsCoverOut: p.monthsCover === null ? '' : p.monthsCover.toFixed(1),
+                  reorderOut: p.reorderPoint === null ? '' : p.reorderPoint,
+                  needsOrderOut: p.needsOrder ? 'Yes' : 'No',
+                  sourceOut: p.source === 'consumption' ? 'Charge-out' : 'Orders',
+                }))}
+                columns={[
+                  { key: 'materialNo', label: 'Material No' },
+                  { key: 'description', label: 'Description' },
+                  { key: 'sourceOut', label: 'Based on' },
+                  { key: 'observedMonths', label: 'Months observed' },
+                  { key: 'demandMonths', label: 'Months with demand' },
+                  { key: 'perMonthOut', label: 'Per month' },
+                  { key: 'horizonTotalOut', label: `Next ${horizon} months` },
+                  { key: 'next12Out', label: 'Next 12 months' },
+                  { key: 'prior12', label: 'Last 12 months (actual)' },
+                  { key: 'stock', label: 'Stock on hand' },
+                  { key: 'monthsCoverOut', label: 'Months of cover' },
+                  { key: 'leadTimeDays', label: 'Lead time (days)' },
+                  { key: 'reorderOut', label: 'Reorder point' },
+                  { key: 'needsOrderOut', label: 'Needs order' },
+                  { key: 'method', label: 'Method' },
+                ]}
+                filename="annual-plan"
+                title={`Annual Plan — next ${horizon} months`}
+              />
+            </div>
           </div>
+
           <div className="card" style={{ overflow: 'hidden' }}>
-            <div style={{ maxHeight: 600, overflowY: 'auto' }}>
+            <div style={{ maxHeight: 600, overflowY: 'auto', overflowX: 'auto' }}>
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5 }}>
                 <thead>
                   <tr style={{ background: '#F8FAFB', position: 'sticky', top: 0, zIndex: 1 }}>
-                    {[
-                      'Material No',
-                      'Description',
-                      'Total Orders',
-                      'Total Qty',
-                      'Avg Monthly',
-                      'Trend',
-                      'Predicted Next Month',
-                      'Confidence',
-                    ].map((h) => (
-                      <th key={h} className="th">
-                        {h}
+                    {columns.map((c) => (
+                      <th key={c.key} className="th" style={{ textAlign: c.align, whiteSpace: 'nowrap' }}>
+                        {c.label}
                       </th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
-                  {forecastSummary.length === 0 ? (
+                  {planRows.length === 0 ? (
                     <tr>
-                      <td colSpan={8} style={{ padding: 24, textAlign: 'center', color: '#94A3B8', fontSize: 13 }}>
-                        No order history available for forecasting
+                      <td
+                        colSpan={columns.length}
+                        style={{ padding: 24, textAlign: 'center', color: '#94A3B8', fontSize: 13 }}
+                      >
+                        {consumptionState === 'loading'
+                          ? 'Loading consumption history…'
+                          : plans.length === 0
+                            ? 'No demand history yet. Charge parts out, or import order history, and this fills in.'
+                            : 'No parts match the current filter.'}
                       </td>
                     </tr>
                   ) : (
@@ -704,48 +877,78 @@ const ForecastingPage = ({
                           setForecastMaterial(m.materialNo);
                           setForecastTab('forecast');
                         }}
+                        title={m.method}
                       >
                         <td className="td mono" style={{ fontSize: 11, fontWeight: 600, color: '#0B7A3E' }}>
                           {m.materialNo}
                         </td>
                         <td
                           className="td"
-                          style={{ maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                          style={{ maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
                         >
-                          {m.description}
-                        </td>
-                        <td className="td" style={{ textAlign: 'center', fontWeight: 600 }}>
-                          {m.orderCount}
+                          {m.description || '—'}
                         </td>
                         <td className="td" style={{ textAlign: 'center' }}>
-                          {m.totalQty}
+                          <Pill
+                            bg={m.source === 'consumption' ? '#D1FAE5' : '#EEF2FF'}
+                            color={m.source === 'consumption' ? '#059669' : '#4F46E5'}
+                          >
+                            {m.source === 'consumption' ? 'Charge-out' : 'Orders'}
+                          </Pill>
                         </td>
-                        <td className="td" style={{ textAlign: 'center' }}>
-                          {m.avgMonthly}
+                        <td className="td mono" style={{ textAlign: 'right' }}>
+                          {m.perMonth.toFixed(1)}
                         </td>
-                        <td className="td" style={{ textAlign: 'center' }}>
-                          {m.trend === 'up' ? (
-                            <span style={{ color: '#DC2626' }}>↑ Up</span>
-                          ) : m.trend === 'down' ? (
-                            <span style={{ color: '#059669' }}>↓ Down</span>
+                        <td className="td mono" style={{ textAlign: 'right', fontWeight: 700, color: '#D97706' }}>
+                          {Math.round(m.horizonTotal)}
+                        </td>
+                        {horizon !== 12 && (
+                          <td className="td mono" style={{ textAlign: 'right' }}>
+                            {Math.round(m.next12)}
+                          </td>
+                        )}
+                        <td className="td mono" style={{ textAlign: 'right', color: '#64748B' }}>
+                          {m.prior12}
+                        </td>
+                        <td className="td mono" style={{ textAlign: 'right' }}>
+                          {m.change === null ? (
+                            <span style={{ color: '#CBD5E1' }}>—</span>
                           ) : (
-                            <span style={{ color: '#64748B' }}>→ Stable</span>
+                            <span
+                              style={{ color: m.change > 0.05 ? '#DC2626' : m.change < -0.05 ? '#059669' : '#64748B' }}
+                            >
+                              {m.change > 0 ? '+' : ''}
+                              {Math.round(m.change * 100)}%
+                            </span>
+                          )}
+                        </td>
+                        <td className="td mono" style={{ textAlign: 'right' }}>
+                          {m.stock}
+                        </td>
+                        <td className="td mono" style={{ textAlign: 'right' }}>
+                          {m.monthsCover === null ? (
+                            <span style={{ color: '#CBD5E1' }}>—</span>
+                          ) : (
+                            `${m.monthsCover.toFixed(1)} mo`
+                          )}
+                        </td>
+                        <td className="td mono" style={{ textAlign: 'right' }}>
+                          {m.reorderPoint === null ? (
+                            <span style={{ color: '#CBD5E1' }} title="No arrival dates recorded for this part yet">
+                              —
+                            </span>
+                          ) : (
+                            m.reorderPoint
                           )}
                         </td>
                         <td className="td" style={{ textAlign: 'center' }}>
-                          <span className="mono" style={{ fontWeight: 700, fontSize: 14, color: '#D97706' }}>
-                            {m.predicted}
-                          </span>
-                        </td>
-                        <td className="td">
-                          <Pill
-                            bg={m.confidence === 'High' ? '#D1FAE5' : m.confidence === 'Medium' ? '#FEF3C7' : '#FEE2E2'}
-                            color={
-                              m.confidence === 'High' ? '#059669' : m.confidence === 'Medium' ? '#D97706' : '#DC2626'
-                            }
-                          >
-                            {m.confidence}
-                          </Pill>
+                          {m.needsOrder ? (
+                            <Pill bg="#FEE2E2" color="#DC2626">
+                              Order
+                            </Pill>
+                          ) : (
+                            <span style={{ color: '#CBD5E1' }}>ok</span>
+                          )}
                         </td>
                       </tr>
                     ))
@@ -757,6 +960,13 @@ const ForecastingPage = ({
               <Pagination {...summaryPager} unit="materials" />
             </div>
           </div>
+
+          <p style={{ fontSize: 11.5, color: '#94A3B8', marginTop: 12, lineHeight: 1.6 }}>
+            <Info size={13} style={{ verticalAlign: '-2px', marginRight: 6 }} />
+            Parts marked <strong>Charge-out</strong> are forecast from what engineers actually consumed. Parts marked{' '}
+            <strong>Orders</strong> have no charge-out history yet, so buying is standing in for use — treat those
+            figures as the weaker of the two. Hover a row to see which method was fitted.
+          </p>
         </div>
       )}
     </div>

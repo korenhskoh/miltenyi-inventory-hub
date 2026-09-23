@@ -6,6 +6,7 @@ import { paginate, envelope, limitClause } from '../pagination.js';
 import { asyncHandler } from '../middleware/errorHandler.js';
 import { requireAdmin } from '../middleware/auth.js';
 import { requirePermission } from '../middleware/permissions.js';
+import { APP_TIMEZONE } from '../appDates.js';
 
 const router = Router();
 
@@ -31,6 +32,72 @@ router.get(
       totalQuantity: row.total_quantity || 0,
       lowStock: row.low_stock || 0,
       categories: row.categories || 0,
+    });
+  }),
+);
+
+/**
+ * GET /consumption — the demand history a forecast should actually use.
+ *
+ * The forecasting page was built on ORDER history, which is a lumpy proxy for
+ * demand: thirty pump heads bought once and drawn down over a year look like a
+ * single enormous month followed by eleven empty ones. What the team wants to
+ * predict is consumption, and that is recorded here — `charge_out` rows carry a
+ * real timestamp, so the month axis needs no guessing, and the type column
+ * keeps corrections and arrivals out of the series.
+ *
+ * Returns one row per material per month, plus the stock on hand now and the
+ * part's own observed lead time, because a forecast without those two is a
+ * chart rather than a reorder decision.
+ */
+router.get(
+  '/consumption',
+  asyncHandler(async (req, res) => {
+    const months = Math.min(Math.max(parseInt(req.query.months, 10) || 36, 1), 120);
+
+    const [series, stock, lead] = await Promise.all([
+      query(
+        `SELECT material_no,
+                to_char(date_trunc('month', created_at AT TIME ZONE $2), 'YYYY-MM') AS month,
+                SUM(-quantity_change)::int AS qty
+           FROM inventory_transactions
+          WHERE type = 'charge_out'
+            AND created_at >= date_trunc('month', NOW()) - ($1 || ' months')::interval
+          GROUP BY 1, 2
+         HAVING SUM(-quantity_change) > 0
+          ORDER BY 1, 2`,
+        [String(months), APP_TIMEZONE],
+      ),
+      query(
+        `SELECT material_no,
+                SUM(quantity)::int AS quantity,
+                MIN(description) FILTER (WHERE description IS NOT NULL AND description <> '') AS description
+           FROM local_inventory
+          GROUP BY material_no`,
+      ),
+      // Lead time from the orders themselves: how long this part actually took
+      // to arrive, per part rather than averaged across all of them.
+      query(
+        `SELECT material_no,
+                ROUND(AVG(arrival_date - order_date))::int AS avg_days,
+                MAX(arrival_date - order_date)::int AS max_days,
+                COUNT(*)::int AS samples
+           FROM orders
+          WHERE material_no IS NOT NULL
+            AND order_date IS NOT NULL
+            AND arrival_date IS NOT NULL
+            AND arrival_date >= order_date
+            AND arrival_date - order_date <= 365
+          GROUP BY material_no`,
+      ),
+    ]);
+
+    res.json({
+      months,
+      timezone: APP_TIMEZONE,
+      series: series.rows,
+      stock: stock.rows,
+      leadTimes: lead.rows,
     });
   }),
 );
