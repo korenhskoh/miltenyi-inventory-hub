@@ -3,8 +3,17 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const cfg = {};
 const users = [];
 vi.mock('./db.js', () => ({
-  query: vi.fn(async (sql) => {
-    if (/FROM users/.test(sql)) return { rows: users };
+  query: vi.fn(async (sql, params) => {
+    if (/FROM users/.test(sql)) {
+      // The targeted lookup filters on name; the team query does not.
+      if (/LOWER\(TRIM\(name\)\)/.test(sql)) {
+        const wanted = String(params?.[0] || '')
+          .trim()
+          .toLowerCase();
+        return { rows: users.filter((u) => u.name.toLowerCase() === wanted) };
+      }
+      return { rows: users };
+    }
     return { rows: [] }; // notif_log insert
   }),
 }));
@@ -108,5 +117,75 @@ describe('isRuleEnabled', () => {
   it('is false when config is missing entirely', async () => {
     delete cfg.waNotifyRules;
     expect(await isRuleEnabled('partArrivalDone')).toBe(false);
+  });
+});
+
+describe('notifyEvent addressed to one person', () => {
+  beforeEach(() => {
+    sent.length = 0;
+    users.length = 0;
+    users.push({ name: 'Fu Siong', phone: '91110000' }, { name: 'Wee Boon', phone: '91110001' });
+    cfg.waNotifyRules = { partArrivalDone: true };
+    cfg.waMessageTemplates = { partArrivalDone: { message: 'Arrived: {description}' } };
+    setWaContext(() => ctx);
+  });
+
+  it('messages only the person named, not the whole team', () => {
+    // "Notify requester" was sending to every active user with a phone — one
+    // message per delivered line to everybody, which is how a useful
+    // notification becomes one people mute.
+    return notifyEvent('partArrivalDone', { description: 'Pump' }, { to: 'Fu Siong' }).then((r) => {
+      expect(r.sent).toBe(1);
+      expect(sent).toHaveLength(1);
+      expect(sent[0].jid).toBe('91110000@s.whatsapp.net');
+    });
+  });
+
+  it('matches the name regardless of case and padding', async () => {
+    const r = await notifyEvent('partArrivalDone', { description: 'Pump' }, { to: '  fu siong ' });
+    expect(r.sent).toBe(1);
+  });
+
+  it('falls back to the team when that person cannot be reached', async () => {
+    const r = await notifyEvent('partArrivalDone', { description: 'Pump' }, { to: 'Nobody Here' });
+    expect(r.sent).toBe(2); // better the team hears it than nobody does
+  });
+
+  it('still messages everyone when no one is named', async () => {
+    const r = await notifyEvent('partArrivalDone', { description: 'Pump' });
+    expect(r.sent).toBe(2);
+  });
+});
+
+describe('custom templates reach the sender under the name Settings saves', () => {
+  beforeEach(() => {
+    sent.length = 0;
+    users.length = 0;
+    users.push({ name: 'A', phone: '91110000' });
+    cfg.waNotifyRules = { partArrivalDone: true, backOrderUpdate: true };
+    setWaContext(() => ctx);
+  });
+
+  it('finds the template Settings stores as partArrival', async () => {
+    // Settings edits "Part Arrival Verified" under `partArrival`; the sender
+    // looks up `partArrivalDone`. The edit saved and was silently ignored.
+    cfg.waMessageTemplates = { partArrival: { message: 'CUSTOM {description}' } };
+    await notifyEvent('partArrivalDone', { description: 'Pump' });
+    expect(sent[0].text).toBe('CUSTOM Pump');
+  });
+
+  it('finds the template Settings stores as backOrder', async () => {
+    cfg.waMessageTemplates = { backOrder: { message: 'SHORT {description}' } };
+    await notifyEvent('backOrderUpdate', { description: 'Tubing' });
+    expect(sent[0].text).toBe('SHORT Tubing');
+  });
+
+  it('prefers an exact key over the alias', async () => {
+    cfg.waMessageTemplates = {
+      partArrival: { message: 'alias' },
+      partArrivalDone: { message: 'exact' },
+    };
+    await notifyEvent('partArrivalDone', { description: 'x' });
+    expect(sent[0].text).toBe('exact');
   });
 });

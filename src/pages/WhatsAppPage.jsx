@@ -54,8 +54,15 @@ export default function WhatsAppPage({
   const persistConfig = React.useCallback(
     async (key, value, label) => {
       try {
-        const ok = await api.setConfigKey(key, value);
-        if (ok === false) throw new Error('rejected');
+        // setConfigKey returns NULL on any failure, never false — so testing
+        // `=== false` meant a refused save looked like a successful one. Writing
+        // these rules needs the `settings` permission while the panel itself is
+        // visible to anyone with `whatsapp`, so a whatsapp-only user could flip
+        // a toggle, watch it move, get a 403, see no warning, and find it
+        // reverted after a reload. Every toggle on this page was affected,
+        // which made the whole panel untrustworthy.
+        const saved = await api.setConfigKey(key, value);
+        if (!saved) throw new Error('rejected');
         return true;
       } catch (e) {
         notify?.('Not Saved', `${label} could not be saved. Please try again.`, 'error');

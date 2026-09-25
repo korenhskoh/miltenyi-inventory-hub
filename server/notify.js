@@ -48,6 +48,30 @@ async function waRecipients() {
   return r.rows;
 }
 
+/**
+ * The one person a rule names, when it names one.
+ *
+ * "Notify requester" was sending to every active user with a phone. On a busy
+ * goods-in day that is one message per delivered line to the whole team, which
+ * is how a useful notification becomes one everybody mutes — and it is not what
+ * the rule says it does.
+ *
+ * Matched on display name, which is what orders.order_by stores. If the person
+ * has no phone on file, or no account, the rule falls back to the team so the
+ * message is not simply lost, and says which happened.
+ */
+async function waRecipientByName(name) {
+  const wanted = String(name || '').trim();
+  if (!wanted) return { rows: [], reason: 'no-name' };
+  const r = await query(
+    `SELECT name, phone FROM users
+      WHERE status = 'active' AND phone IS NOT NULL AND phone <> ''
+        AND LOWER(TRIM(name)) = LOWER($1)`,
+    [wanted],
+  );
+  return { rows: r.rows, reason: r.rows.length ? 'matched' : 'no-phone' };
+}
+
 async function logNotification(type, to, subject, status) {
   try {
     await query(
@@ -68,7 +92,7 @@ async function logNotification(type, to, subject, status) {
  * @param {string} [opts.templateKey]  key in waMessageTemplates / messageTemplates
  * @param {string} [opts.subject]      what to record in notif_log
  */
-export async function notifyEvent(ruleKey, data, { templateKey = ruleKey, subject } = {}) {
+export async function notifyEvent(ruleKey, data, { templateKey = ruleKey, subject, to = null } = {}) {
   try {
     if (!(await isRuleEnabled(ruleKey))) return { sent: 0, skipped: 'rule-off' };
 
@@ -77,8 +101,14 @@ export async function notifyEvent(ruleKey, data, { templateKey = ruleKey, subjec
 
     // The editable template from Settings wins; the built-in is the fallback so
     // a rule still sends something when nobody has customised it.
+    // The Settings screen edits templates under its own names, which are not
+    // the names the senders look up: "Part Arrival Verified" is stored as
+    // `partArrival` but sent as `partArrivalDone`, and back orders as
+    // `backOrder` vs `backOrderUpdate`. So an admin's edits saved fine and were
+    // silently ignored, and the hard-coded default went out instead.
+    const TEMPLATE_ALIASES = { partArrivalDone: 'partArrival', backOrderUpdate: 'backOrder' };
     const custom = (await getGlobalConfig('waMessageTemplates')) || {};
-    const customBody = custom[templateKey]?.message;
+    const customBody = (custom[templateKey] || custom[TEMPLATE_ALIASES[templateKey]])?.message;
     const message = customBody
       ? fillTemplate(customBody, data)
       : typeof messageTemplates[templateKey] === 'function'
@@ -86,7 +116,24 @@ export async function notifyEvent(ruleKey, data, { templateKey = ruleKey, subjec
         : '';
     if (!message.trim()) return { sent: 0, skipped: 'no-template' };
 
-    const recipients = await waRecipients();
+    // `to` names one person; without it, or when that person cannot be reached,
+    // the message goes to the team as before.
+    let recipients;
+    let audience;
+    if (to) {
+      const targeted = await waRecipientByName(to);
+      if (targeted.rows.length) {
+        recipients = targeted.rows;
+        audience = to;
+      } else {
+        recipients = await waRecipients();
+        audience = `${recipients.length} user(s) — ${to} has no phone on file`;
+        logger.warn({ ruleKey, to }, 'Named recipient unreachable, notified the team instead');
+      }
+    } else {
+      recipients = await waRecipients();
+      audience = `${recipients.length} user(s)`;
+    }
     if (recipients.length === 0) return { sent: 0, skipped: 'no-recipients' };
 
     let sent = 0;
@@ -101,7 +148,7 @@ export async function notifyEvent(ruleKey, data, { templateKey = ruleKey, subjec
 
     await logNotification(
       'whatsapp',
-      `${recipients.length} user(s)`,
+      audience,
       subject || `Auto-notification: ${ruleKey}`,
       sent === recipients.length ? 'Delivered' : sent > 0 ? 'Partial' : 'Failed',
     );
