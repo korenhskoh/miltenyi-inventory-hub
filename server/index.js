@@ -931,7 +931,16 @@ app.get('/api/health', async (req, res) => {
 
 // ── Scheduled Reports API ──
 // Provides WhatsApp context (sock + formatPhoneNumber) to scheduler
-const getWaContext = () => ({ sock, formatPhoneNumber, sendText: sendWaText });
+// `sendText` only when there is actually a socket. It used to be handed over
+// unconditionally, so the "not connected" guard in notify.js could never fire:
+// with WhatsApp disconnected, every arrival still walked the whole recipient
+// list, threw per recipient, and wrote a silent 'Failed' row nobody saw. Now it
+// is skipped once, and says why.
+const getWaContext = () => ({
+  sock,
+  formatPhoneNumber,
+  sendText: sock ? sendWaText : null,
+});
 // Event-driven notifications need the same WhatsApp context the scheduler uses.
 setNotifyWaContext(getWaContext);
 

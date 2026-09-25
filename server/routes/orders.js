@@ -526,6 +526,10 @@ router.post(
           // means a template customised in Settings is the one that gets used.
           templateKey: shortBy > 0 ? 'backOrderUpdate' : 'partArrivalDone',
           subject: `Part arrival: ${o.description || o.id}`,
+          // "Notify requester" means the person who raised the order, not the
+          // whole company. A short delivery still goes to the team, because a
+          // back order is everyone's problem — which is what that rule says.
+          to: shortBy > 0 ? null : o.orderBy || null,
         },
       );
     }
