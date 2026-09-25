@@ -5,6 +5,7 @@ import { fmtDate, exportToFile } from '../utils.js';
 import { todayLocal } from '../lib/dates.js';
 import { Pill, BatchBar, BatchBtn, SelBox } from '../components/ui.jsx';
 import Pagination, { usePagination } from '../components/Pagination.jsx';
+import { allSelected } from '../lib/selection.js';
 
 /** Split one CSV line into cells, respecting double-quoted fields (with "" escapes). */
 const splitCsvLine = (line) => {
@@ -233,7 +234,9 @@ const StockCheckPage = ({
                             materialNo: matIdx >= 0 ? cols[matIdx] : cols[0] || '',
                             description: descIdx >= 0 ? cols[descIdx] : cols[1] || '',
                             systemQty: parseInt(qtyIdx >= 0 ? cols[qtyIdx] : cols[2]) || 0,
-                            physicalQty: 0,
+                            // null, not 0 — an uncounted row has no count yet,
+                            // and the input distinguishes the two.
+                            physicalQty: null,
                             checked: false,
                           };
                         })
@@ -419,12 +422,26 @@ const StockCheckPage = ({
                         <input
                           type="number"
                           min="0"
-                          value={item.physicalQty || ''}
-                          placeholder="0"
+                          // A counted zero is a real answer. `item.physicalQty || ''`
+                          // rendered it as an empty box with a grey 0
+                          // placeholder — indistinguishable from a shelf nobody
+                          // had reached yet, so counters re-counted or skipped
+                          // it while the saved report recorded a genuine 0.
+                          // Clearing the box now un-checks the row instead of
+                          // silently recording zero, and a typed negative is
+                          // floored at 0 (min="0" does not stop typing).
+                          value={item.physicalQty ?? ''}
+                          placeholder="—"
                           onChange={(e) => {
-                            const val = parseInt(e.target.value) || 0;
+                            const raw = e.target.value;
                             setStockInventoryList((prev) =>
-                              prev.map((x, i) => (i === idx ? { ...x, physicalQty: val, checked: true } : x)),
+                              prev.map((x, i) => {
+                                if (i !== idx) return x;
+                                if (raw === '') return { ...x, physicalQty: null, checked: false };
+                                const parsed = parseInt(raw, 10);
+                                if (!Number.isFinite(parsed)) return x;
+                                return { ...x, physicalQty: Math.max(0, parsed), checked: true };
+                              }),
                             );
                           }}
                           style={{
@@ -562,13 +579,24 @@ const StockCheckPage = ({
             <tr style={{ background: '#F8FAFB' }}>
               {hasPermission('deleteStockChecks') && (
                 <th className="th" style={{ width: 36 }}>
+                  {/*
+                    Spans the rows the search actually narrowed to, not every
+                    stock check in the database. It used to map over
+                    `stockChecks`, so filtering to three rows and ticking the
+                    box above them selected all of them — and the Delete batch
+                    button then wiped every historical count, each of which is
+                    an hour of counting nobody can redo.
+                  */}
                   <SelBox
-                    checked={selStockChecks.size === stockChecks.length && stockChecks.length > 0}
+                    checked={allSelected(
+                      selStockChecks,
+                      filteredChecks.map((r) => r.id),
+                    )}
                     onChange={() =>
                       toggleAll(
                         selStockChecks,
                         setSelStockChecks,
-                        stockChecks.map((r) => r.id),
+                        filteredChecks.map((r) => r.id),
                       )
                     }
                   />

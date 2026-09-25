@@ -1,7 +1,9 @@
 // WhatsApp Bot — Command Handlers
-import { query } from './db.js';
+import { query, withTransaction } from './db.js';
 import logger from './logger.js';
 import { userHasPermission } from './middleware/permissions.js';
+import { BACK_ORDER_SQL } from './backOrders.js';
+import { todayInTz, zonedParts } from './appDates.js';
 
 // ── Permissions ──
 // The bot speaks for whichever account owns the sender's phone number. Numbers
@@ -92,10 +94,18 @@ function paginate(items, session, formatFn) {
   return `${header}\n\n${body}${footer}`;
 }
 
+/**
+ * The current month label, on the business calendar.
+ *
+ * This read the process clock, which is UTC on the deploy target. An order
+ * placed at 00:30 on the 1st of a month was filed to the PREVIOUS month — it
+ * landed in the wrong budget, and the monthly report for the month it was
+ * actually placed in never showed it.
+ */
 function currentMonth() {
-  const now = new Date();
+  const { year, month } = zonedParts(new Date());
   const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-  return `${months[now.getMonth()]} ${now.getFullYear()}`;
+  return `${months[month - 1]} ${year}`;
 }
 
 // ── Command Handlers ──
@@ -197,6 +207,8 @@ async function executeOrderConfirm(session) {
   if (!(await botCan(session, 'orders'))) return DENIED('create orders');
   const d = session.data;
   const now = new Date();
+  const today = todayInTz();
+  const { year: businessYear } = zonedParts(now);
   const month = currentMonth();
   // Timestamp-based id — COUNT(*)-based ids collide as soon as any order is deleted.
   const orderId = `ORD-${Date.now()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
@@ -211,12 +223,12 @@ async function executeOrderConfirm(session) {
       d.qty,
       d.price,
       d.total,
-      now.toISOString().slice(0, 10),
+      today,
       session.user.name || session.user.username, // attribute to the real person, not "the bot"
       'Pending Approval',
       'pending',
       month,
-      String(now.getFullYear()),
+      String(businessYear),
       `Created via WhatsApp Bot by ${session.user.username}`,
     ],
   );
@@ -457,8 +469,8 @@ async function handleReject(params, session) {
 }
 
 // Resolve every order id covered by an approval (single, bulk or batch)
-async function approvalOrderIds(approvalId, fallbackOrderId) {
-  const r = await query('SELECT order_id, order_ids FROM pending_approvals WHERE id = $1', [approvalId]);
+async function approvalOrderIds(approvalId, fallbackOrderId, client = { query }) {
+  const r = await client.query('SELECT order_id, order_ids FROM pending_approvals WHERE id = $1', [approvalId]);
   const row = r.rows[0] || {};
   let ids = row.order_ids;
   if (typeof ids === 'string') {
@@ -477,38 +489,64 @@ async function approvalOrderIds(approvalId, fallbackOrderId) {
     .filter(Boolean);
 }
 
-async function executeApproveConfirm(session) {
-  if (!(await botCan(session, 'approvals'))) return DENIED('approve requests');
+/**
+ * Settle an approval from the bot's confirm step.
+ *
+ * Two things were wrong here. The approval's state was read when the user typed
+ * `approve PA-7` and never re-read when they typed `confirm`, so someone else
+ * rejecting it from the web app in between was silently overwritten — the WHERE
+ * clause had no `status = 'pending'` guard. And the two UPDATEs ran outside any
+ * transaction, so if the second failed the approval read as settled while its
+ * orders stayed pending, leaving it out of the pending queue with no button
+ * anywhere to retry it.
+ */
+async function settleApproval(session, decision) {
   const { approvalId, orderId } = session.data;
-  const now = new Date().toISOString().slice(0, 10);
-  await query("UPDATE pending_approvals SET status = 'approved', action_date = $1 WHERE id = $2", [now, approvalId]);
-  const ids = await approvalOrderIds(approvalId, orderId);
-  if (ids.length) {
-    await query("UPDATE orders SET approval_status = 'approved', status = 'Approved' WHERE id = ANY($1::text[])", [
-      ids,
+  const now = todayInTz();
+  const orderStatus = decision === 'approved' ? 'Approved' : 'Rejected';
+
+  const outcome = await withTransaction(async (client) => {
+    const cur = await client.query('SELECT status FROM pending_approvals WHERE id = $1 FOR UPDATE', [approvalId]);
+    if (cur.rows.length === 0) return { ok: false, reason: 'missing' };
+    if (String(cur.rows[0].status || '').toLowerCase() !== 'pending') {
+      return { ok: false, reason: 'settled', current: cur.rows[0].status };
+    }
+    await client.query('UPDATE pending_approvals SET status = $1, action_date = $2 WHERE id = $3', [
+      decision,
+      now,
+      approvalId,
     ]);
-  }
-  await logBotAudit('approve', 'approval', approvalId, { orderId });
+    const ids = await approvalOrderIds(approvalId, orderId, client);
+    if (ids.length) {
+      await client.query('UPDATE orders SET approval_status = $1, status = $2 WHERE id = ANY($3::text[])', [
+        decision,
+        orderStatus,
+        ids,
+      ]);
+    }
+    return { ok: true, count: ids.length };
+  });
+
   session.state = 'idle';
   session.data = {};
-  return `✅ Approval *${approvalId}* approved.${orderId ? ` Order ${orderId} updated.` : ''}`;
+
+  if (!outcome.ok) {
+    if (outcome.reason === 'missing') return `⚠️ Approval *${approvalId}* no longer exists.`;
+    return `⚠️ Approval *${approvalId}* was already ${outcome.current} by someone else — nothing changed.`;
+  }
+  await logBotAudit(decision === 'approved' ? 'approve' : 'reject', 'approval', approvalId, { orderId });
+  const icon = decision === 'approved' ? '✅' : '❌';
+  return `${icon} Approval *${approvalId}* ${decision}.${orderId ? ` Order ${orderId} updated.` : ''}`;
+}
+
+async function executeApproveConfirm(session) {
+  if (!(await botCan(session, 'approvals'))) return DENIED('approve requests');
+  return settleApproval(session, 'approved');
 }
 
 async function executeRejectConfirm(session) {
   if (!(await botCan(session, 'approvals'))) return DENIED('reject requests');
-  const { approvalId, orderId } = session.data;
-  const now = new Date().toISOString().slice(0, 10);
-  await query("UPDATE pending_approvals SET status = 'rejected', action_date = $1 WHERE id = $2", [now, approvalId]);
-  const ids = await approvalOrderIds(approvalId, orderId);
-  if (ids.length) {
-    await query("UPDATE orders SET approval_status = 'rejected', status = 'Rejected' WHERE id = ANY($1::text[])", [
-      ids,
-    ]);
-  }
-  await logBotAudit('reject', 'approval', approvalId, { orderId });
-  session.state = 'idle';
-  session.data = {};
-  return `❌ Approval *${approvalId}* rejected.${orderId ? ` Order ${orderId} updated.` : ''}`;
+  return settleApproval(session, 'rejected');
 }
 
 // ── Stock ──
@@ -577,7 +615,9 @@ async function handleReportMonthly(params) {
   const pending = await query("SELECT COUNT(*) as c FROM orders WHERE month ILIKE $1 AND status ILIKE '%pending%'", [
     `%${month}%`,
   ]);
-  const backorder = await query('SELECT COUNT(*) as c FROM orders WHERE month ILIKE $1 AND back_order > 0', [
+  // Was `back_order > 0`. That field is (received - ordered), so it is negative
+  // on a short delivery and this count was structurally zero every month.
+  const backorder = await query(`SELECT COUNT(*) as c FROM orders WHERE month ILIKE $1 AND ${BACK_ORDER_SQL}`, [
     `%${month}%`,
   ]);
 

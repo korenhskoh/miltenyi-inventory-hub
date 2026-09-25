@@ -139,8 +139,9 @@ import {
 import WishlistPage from './pages/WishlistPage.jsx';
 import { detectHeaderRow } from './lib/sheet.js';
 import { getCatalogPrice, getEffectiveUnitPrice, getEffectiveTotal } from './lib/pricing.js';
-import { computeArrival, arrivalDelta } from './lib/arrival.js';
+import { computeArrival, arrivalDelta, arrivalCondition } from './lib/arrival.js';
 import { ORDER_STATUS, approvalTransition } from './lib/approvals.js';
+import { allSelected, nextSelection } from './lib/selection.js';
 import SettingsPage from './pages/SettingsPage.jsx';
 import WhatsAppPage from './pages/WhatsAppPage.jsx';
 import DeliveryPage from './pages/DeliveryPage.jsx';
@@ -205,8 +206,15 @@ export default function App() {
     }
   });
   const [page, setPage] = useState(() => {
-    const mod = localStorage.getItem('mih_activeModule');
-    return mod === 'service' ? 'service' : 'dashboard';
+    // Guarded like the read above it. localStorage THROWS on access (rather
+    // than returning null) when site data is blocked, and this runs during the
+    // very first render — an unguarded read took the whole app down to the
+    // error boundary, with no way past it, before the login screen appeared.
+    try {
+      return localStorage.getItem('mih_activeModule') === 'service' ? 'service' : 'dashboard';
+    } catch {
+      return 'dashboard';
+    }
   });
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [showChangePw, setShowChangePw] = useState(false);
@@ -339,9 +347,15 @@ export default function App() {
   const [auditFilter, setAuditFilter] = useState({ action: 'All', user: 'All', entityType: 'All' });
   const [machines, setMachines] = useState([]);
 
+  // Toasts carry their own id so a timer removes the toast it belongs to.
+  // The auto-dismiss used to drop whatever was oldest (`prev.slice(1)`) while
+  // the close button removed by index, so dismissing one toast made the next
+  // one vanish about a second after it appeared.
+  const notifSeq = useRef(0);
   const notify = useCallback((title, message, type = 'info') => {
-    setNotifs((prev) => [...prev, { title, message, type }]);
-    setTimeout(() => setNotifs((prev) => prev.slice(1)), 4000);
+    const id = ++notifSeq.current;
+    setNotifs((prev) => [...prev, { id, title, message, type }]);
+    setTimeout(() => setNotifs((prev) => prev.filter((n) => n.id !== id)), 4000);
   }, []);
 
   // DB sync wrapper: shows toast on API failure (non-blocking)
@@ -1168,10 +1182,21 @@ export default function App() {
           : catalogSort.key === 'tp'
             ? 'transferPrice'
             : 'description';
+    // A comparator must return 0 for equal pairs. This one returned -1 for both
+    // (a,b) and (b,a) whenever the values matched — or whenever either was
+    // undefined, which is most rows when the price columns are left unmapped
+    // during import. Sort order then depended on the array's starting order, so
+    // toggling asc/desc/asc reshuffled the table with no data having changed.
+    const rank = (v) => (v === null || v === undefined || v === '' ? null : v);
     items.sort((a, b) => {
-      const va = a[key],
-        vb = b[key];
-      return catalogSort.dir === 'asc' ? (va > vb ? 1 : -1) : va < vb ? 1 : -1;
+      const va = rank(a[key]);
+      const vb = rank(b[key]);
+      // Blanks sort last in both directions rather than drifting.
+      if (va === null && vb === null) return 0;
+      if (va === null) return 1;
+      if (vb === null) return -1;
+      const cmp = typeof va === 'number' && typeof vb === 'number' ? va - vb : String(va).localeCompare(String(vb));
+      return catalogSort.dir === 'asc' ? cmp : -cmp;
     });
     return items;
   }, [partsCatalog, catalogSearch, catFilter, catalogSort]);
@@ -1203,9 +1228,12 @@ export default function App() {
       // this tile counted orders that had never even been approved: 30 awaiting
       // approval and 5 rejected showed "35 back orders" while the Part Arrival
       // tile and the report both showed 0.
-      b = orders.filter(
-        (o) => o.arrivalDate && (Number(o.qtyReceived) || 0) < (Number(o.quantity) || 0) && o.status !== 'Rejected',
-      ).length;
+      // Requiring arrivalDate still made this disagree with the Part Arrival
+      // page, whose arrivalCondition() deliberately ignores the date: these
+      // workbooks routinely fill the received count and leave the date column
+      // blank, so every imported short delivery was counted on one screen and
+      // not the other. Use the one predicate.
+      b = orders.filter((o) => arrivalCondition(o) === 'Back Order' && o.status !== 'Rejected').length;
     const pa = orders.filter((o) => o.status === 'Pending Approval').length,
       ap = orders.filter((o) => o.status === 'Approved').length;
     const rej = orders.filter((o) => o.status === 'Rejected').length;
@@ -2202,7 +2230,9 @@ export default function App() {
       n.has(id) ? n.delete(id) : n.add(id);
       return n;
     });
-  const toggleAll = (set, setter, ids) => setter((prev) => (prev.size === ids.length ? new Set() : new Set(ids)));
+  // See src/lib/selection.js: scoped to the rows on screen, decided on
+  // membership rather than on a count that a stale selection could match.
+  const toggleAll = (set, setter, ids) => setter((prev) => nextSelection(prev, ids));
   // Label shown beside a pagination control so a selection that reaches rows the
   // current page does not show stays visible ("12 selected across all pages").
   const selectionNote = (sel, pageItems) => {
@@ -3158,35 +3188,48 @@ export default function App() {
 
         notify('Scan QR Code', 'Open WhatsApp → Linked Devices → Link a Device', 'info');
 
-        // Fast poll: 800ms for first 20s, then 2s after
+        // Fast poll: 800ms for the first 20s, then 2s.
+        //
+        // This was a setInterval whose delay read `pollCount < 25 ? 800 : 2000`.
+        // That expression is evaluated once, when pollCount is still 0, so the
+        // back-off never happened and the QR window hammered the status
+        // endpoint at 800ms for its full two minutes. A self-rescheduling
+        // timeout picks the next delay each time round, which is what the
+        // comment always claimed.
         let pollCount = 0;
         let stopped = false;
-        const pollInterval = setInterval(
-          async () => {
-            if (stopped || waConnectedRef.current) {
-              clearInterval(pollInterval);
-              return;
-            }
-            pollCount++;
-            const status = await pollWaStatus();
-            if (status === 'connected' || status === 'error') {
-              stopped = true;
-              clearInterval(pollInterval);
-              setWaConnecting(false);
-              if (status === 'error') {
-                setWaQrVisible(false);
-                notify('Connection Failed', 'WhatsApp connection error. Try again.', 'warning');
+        let pollTimer = null;
+        const stopPolling = () => {
+          stopped = true;
+          if (pollTimer) clearTimeout(pollTimer);
+          pollTimer = null;
+        };
+        const scheduleNextPoll = () => {
+          pollTimer = setTimeout(
+            async () => {
+              if (stopped || waConnectedRef.current) return stopPolling();
+              pollCount++;
+              const status = await pollWaStatus();
+              if (status === 'connected' || status === 'error') {
+                stopPolling();
+                setWaConnecting(false);
+                if (status === 'error') {
+                  setWaQrVisible(false);
+                  notify('Connection Failed', 'WhatsApp connection error. Try again.', 'warning');
+                }
+                return;
               }
-            }
-          },
-          pollCount < 25 ? 800 : 2000,
-        );
+              if (!stopped) scheduleNextPoll();
+            },
+            pollCount < 25 ? 800 : 2000,
+          );
+        };
+        scheduleNextPoll();
 
         // Stop polling after 2 minutes — read the ref (not the stale closure) to see if the scan succeeded
         setTimeout(() => {
-          clearInterval(pollInterval);
           if (stopped) return;
-          stopped = true;
+          stopPolling();
           if (!waConnectedRef.current) {
             setWaConnecting(false);
             setWaQrVisible(false);
@@ -3366,6 +3409,26 @@ export default function App() {
       notify('No Valid Items', 'Each item needs Material No. and Description', 'warning');
       return;
     }
+    // The single-order form validates quantity; this one did not, and then fell
+    // back to `parseInt(qty) || 1`. A row left blank or set to 0 showed a Total
+    // of "—" and was left out of the grand total, yet submitted as a real order
+    // for 1 unit at full price. A typed negative went through whole, dragging
+    // the cost tiles below zero — `min="1"` does not stop typing.
+    const badQty = validItems.filter((i) => {
+      const q = parseInt(i.quantity, 10);
+      return !Number.isFinite(q) || q < 1;
+    });
+    if (badQty.length) {
+      notify(
+        'Check Quantities',
+        `${badQty.length} item(s) need a quantity of at least 1: ${badQty
+          .map((i) => i.materialNo)
+          .slice(0, 3)
+          .join(', ')}${badQty.length > 3 ? '…' : ''}`,
+        'warning',
+      );
+      return;
+    }
     if (!bulkOrderBy) {
       notify('Missing Field', 'Order By is required', 'warning');
       return;
@@ -3376,15 +3439,15 @@ export default function App() {
       id: `ORD-${Date.now()}-${idx}-${Math.random().toString(36).slice(2, 6)}`,
       materialNo: item.materialNo,
       description: item.description,
-      quantity: parseInt(item.quantity) || 1,
+      quantity: parseInt(item.quantity, 10),
       listPrice: parseFloat(item.listPrice) || 0,
-      totalCost: (parseFloat(item.listPrice) || 0) * (parseInt(item.quantity) || 1),
+      totalCost: (parseFloat(item.listPrice) || 0) * parseInt(item.quantity, 10),
       orderDate: todayLocal(),
       orderBy: bulkOrderBy,
       remark: `Bulk: ${bulkMonth} — ${bulkRemark}`,
       arrivalDate: null,
       qtyReceived: 0,
-      backOrder: -(parseInt(item.quantity) || 1),
+      backOrder: -parseInt(item.quantity, 10),
       engineer: '',
       emailFull: '',
       emailBack: '',
@@ -4958,7 +5021,7 @@ export default function App() {
             )}
           </div>
         </LoginIntro>
-        <Toast items={notifs} onDismiss={(i) => setNotifs((p) => p.filter((_, j) => j !== i))} />
+        <Toast items={notifs} onDismiss={(id) => setNotifs((p) => p.filter((n, j) => (n.id ?? j) !== id))} />
       </div>
     );
   }
@@ -4977,7 +5040,7 @@ export default function App() {
           onChanged={() => setCurrentUser((u) => (u ? { ...u, mustChangePassword: false } : u))}
           notify={notify}
         />
-        <Toast items={notifs} onDismiss={(i) => setNotifs((p) => p.filter((_, j) => j !== i))} />
+        <Toast items={notifs} onDismiss={(id) => setNotifs((p) => p.filter((n, j) => (n.id ?? j) !== id))} />
       </>
     );
   }
@@ -5240,7 +5303,7 @@ export default function App() {
             <LogOut size={12} /> Sign out
           </button>
         </div>
-        <Toast items={notifs} onDismiss={(i) => setNotifs((p) => p.filter((_, j) => j !== i))} />
+        <Toast items={notifs} onDismiss={(id) => setNotifs((p) => p.filter((n, j) => (n.id ?? j) !== id))} />
       </div>
     );
   }
@@ -5289,7 +5352,7 @@ export default function App() {
         .sc::after{content:'';position:absolute;top:-20px;right:-20px;width:80px;height:80px;border-radius:50%;background:rgba(255,255,255,.1)}
       `}</style>
 
-      <Toast items={notifs} onDismiss={(i) => setNotifs((p) => p.filter((_, j) => j !== i))} />
+      <Toast items={notifs} onDismiss={(id) => setNotifs((p) => p.filter((n, j) => (n.id ?? j) !== id))} />
 
       {/* MOBILE SIDEBAR OVERLAY */}
       <div className={`sidebar-overlay${sidebarOpen ? '' : ' hidden'}`} onClick={() => setSidebarOpen(false)} />
@@ -6613,7 +6676,10 @@ export default function App() {
                         {hasPermission('deleteOrders') && (
                           <th className="th" style={{ width: 36 }}>
                             <SelBox
-                              checked={sortedOrders.length > 0 && sortedOrders.every((o) => selOrders.has(o.id))}
+                              checked={allSelected(
+                                selOrders,
+                                sortedOrders.map((o) => o.id),
+                              )}
                               onChange={() =>
                                 toggleAll(
                                   selOrders,

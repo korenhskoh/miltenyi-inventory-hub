@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { query } from '../db.js';
+import { query, withTransaction } from '../db.js';
 import { snakeToCamel, camelToSnake } from '../utils.js';
 import { paginate, envelope } from '../pagination.js';
 import { asyncHandler } from '../middleware/errorHandler.js';
@@ -42,42 +42,75 @@ router.post('/', requireAdmin, async (req, res) => {
       return res.status(400).json({ error: 'parts array is required' });
     }
 
-    // Build a single batched query using a transaction
-    const values = [];
-    const valueClauses = [];
-    let paramIndex = 1;
-
+    // Postgres rejects a single INSERT ... ON CONFLICT DO UPDATE whose VALUES
+    // list touches the same conflict key twice ("cannot affect row a second
+    // time"), and the whole statement aborts. These price lists routinely
+    // repeat a material number — a second line for another pack size, or a
+    // copy-paste — and one such line used to lose the entire upload. Collapse
+    // duplicates first, last line winning, the way a repeated row would behave
+    // if the file were imported line by line.
+    const byMaterial = new Map();
+    let skipped = 0;
     for (const part of parts) {
       const snakePart = camelToSnake(part);
-      valueClauses.push(
-        `($${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++})`,
-      );
-      values.push(
-        snakePart.material_no,
-        snakePart.description || null,
-        snakePart.category || null,
-        snakePart.sg_price || null,
-        snakePart.dist_price || null,
-        snakePart.transfer_price || null,
-        snakePart.rsp_eur || null,
-      );
+      const materialNo = String(snakePart.material_no ?? '').trim();
+      if (!materialNo) {
+        skipped++;
+        continue;
+      }
+      byMaterial.set(materialNo, { ...snakePart, material_no: materialNo });
+    }
+    const duplicates = parts.length - skipped - byMaterial.size;
+
+    if (byMaterial.size === 0) {
+      return res.status(400).json({ error: 'No rows carried a material number' });
     }
 
-    const sql = `
-      INSERT INTO parts_catalog (material_no, description, category, sg_price, dist_price, transfer_price, rsp_eur)
-      VALUES ${valueClauses.join(', ')}
-      ON CONFLICT (material_no) DO UPDATE SET
-        description = EXCLUDED.description,
-        category = EXCLUDED.category,
-        sg_price = EXCLUDED.sg_price,
-        dist_price = EXCLUDED.dist_price,
-        transfer_price = EXCLUDED.transfer_price,
-        rsp_eur = EXCLUDED.rsp_eur
-    `;
+    // A price of 0 is a real price; `|| null` used to discard it.
+    const price = (v) => (v === undefined || v === null || v === '' ? null : v);
 
-    await query(sql, values);
+    // Postgres caps a statement at 65535 bound parameters; at 7 per row a large
+    // price list would have blown that as one statement. Chunk it, and run the
+    // chunks in one transaction so a failure part-way cannot leave the catalog
+    // half updated.
+    const rows = [...byMaterial.values()];
+    const CHUNK = 5000;
+    await withTransaction(async (client) => {
+      for (let start = 0; start < rows.length; start += CHUNK) {
+        const chunk = rows.slice(start, start + CHUNK);
+        const values = [];
+        const valueClauses = [];
+        let paramIndex = 1;
+        for (const snakePart of chunk) {
+          valueClauses.push(
+            `($${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++})`,
+          );
+          values.push(
+            snakePart.material_no,
+            snakePart.description || null,
+            snakePart.category || null,
+            price(snakePart.sg_price),
+            price(snakePart.dist_price),
+            price(snakePart.transfer_price),
+            price(snakePart.rsp_eur),
+          );
+        }
+        await client.query(
+          `INSERT INTO parts_catalog (material_no, description, category, sg_price, dist_price, transfer_price, rsp_eur)
+           VALUES ${valueClauses.join(', ')}
+           ON CONFLICT (material_no) DO UPDATE SET
+             description = EXCLUDED.description,
+             category = EXCLUDED.category,
+             sg_price = EXCLUDED.sg_price,
+             dist_price = EXCLUDED.dist_price,
+             transfer_price = EXCLUDED.transfer_price,
+             rsp_eur = EXCLUDED.rsp_eur`,
+          values,
+        );
+      }
+    });
 
-    res.json({ success: true, count: parts.length });
+    res.json({ success: true, count: byMaterial.size, duplicatesMerged: duplicates, skippedNoMaterialNo: skipped });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
