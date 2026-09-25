@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { isCloseOut, isApprovalDecision, isApprovalReset } from './orders.js';
+import { isCloseOut, isApprovalDecision, isApprovalReset, isApprovalOnlyWrite } from './orders.js';
 
 /**
  * These three predicates decide which writes need which permission, so a
@@ -53,5 +53,35 @@ describe('isApprovalReset', () => {
 
   it('does not fire on a new order, which is legitimately born pending', () => {
     expect(isApprovalReset({ status: 'Pending' })).toBe(false);
+  });
+});
+
+describe('isApprovalOnlyWrite', () => {
+  it('recognises a plain approval decision', () => {
+    // An approver holds `approvals` and, by definition, decides on orders
+    // somebody else raised. Enforcing ownership over the top of that refused
+    // them with "You can only edit your own orders" — and because the client
+    // consumes the approval request first, the order was left Pending Approval
+    // with no button anywhere to try again.
+    expect(isApprovalOnlyWrite({ status: 'Approved', approval_status: 'approved' })).toBe(true);
+    expect(isApprovalOnlyWrite({ status: 'Rejected', approval_status: 'rejected' })).toBe(true);
+    expect(isApprovalOnlyWrite({ approval_status: 'approved' })).toBe(true);
+  });
+
+  it('recognises pulling an order back to pending', () => {
+    expect(isApprovalOnlyWrite({ status: 'Pending Approval', approval_status: 'pending' })).toBe(true);
+  });
+
+  it('is not an excuse to edit the order itself', () => {
+    // Slipping a quantity or a price in alongside the decision must fall back
+    // to the ordinary ownership rule.
+    expect(isApprovalOnlyWrite({ status: 'Approved', approval_status: 'approved', quantity: 999 })).toBe(false);
+    expect(isApprovalOnlyWrite({ status: 'Approved', list_price: 1 })).toBe(false);
+  });
+
+  it('is not triggered by an ordinary write', () => {
+    expect(isApprovalOnlyWrite({ status: 'Received' })).toBe(false);
+    expect(isApprovalOnlyWrite({ qty_received: 5 })).toBe(false);
+    expect(isApprovalOnlyWrite({})).toBe(false);
   });
 });

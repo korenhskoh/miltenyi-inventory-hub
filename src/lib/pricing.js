@@ -20,9 +20,21 @@ export function getEffectiveUnitPrice(order, catalogLookup) {
   return getCatalogPrice(catalogLookup?.[order.materialNo]);
 }
 
-/** Line total for an order: effective unit price × quantity, else the stored totalCost. */
+/**
+ * Line total for an order: effective unit price × quantity, else the stored totalCost.
+ *
+ * The quantity has to be real for the multiplication to mean anything. An
+ * imported row from a sheet with no quantity column arrives as quantity 0 while
+ * still carrying the total cost the sheet recorded, and computing `price × 0`
+ * silently wrote that value down to nothing: the row showed a dash, contributed
+ * zero to every total on the page, and exported at its true value — so the
+ * export and the screen disagreed by the whole amount. Where there is no
+ * quantity to multiply, the stored total is the only figure there is.
+ */
 export function getEffectiveTotal(order, catalogLookup) {
   if (!order) return 0;
+  const qty = num(order.quantity);
   const price = getEffectiveUnitPrice(order, catalogLookup);
-  return price > 0 ? price * num(order.quantity) : num(order.totalCost);
+  if (price > 0 && qty > 0) return price * qty;
+  return num(order.totalCost);
 }

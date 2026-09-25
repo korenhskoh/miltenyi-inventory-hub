@@ -6,6 +6,7 @@ import {
   firstOfMonth,
   rowToOrder,
   parseOrderSheet,
+  normalizeStatus,
 } from './orderImport.js';
 
 /**
@@ -244,5 +245,52 @@ describe('whole-sheet parsing', () => {
 
   it('handles an empty sheet', () => {
     expect(parseOrderSheet([], {})).toMatchObject({ orders: [], skipped: 'empty' });
+  });
+});
+
+describe('status normalisation', () => {
+  const cols = detectOrderColumns([...HEADERS, 'Status']);
+  const ctx = { sheetMonth: 'Feb 2026', makeId: () => 'ORD-1' };
+  const withStatus = (statusCell) => [
+    '130-127-575',
+    'Kit',
+    2,
+    100,
+    200,
+    46288,
+    'Fu Siong',
+    '',
+    '',
+    '',
+    0,
+    -2,
+    '',
+    statusCell,
+  ];
+
+  it("maps the words people actually write onto the app's statuses", () => {
+    // A sheet's own Status column used to be copied through verbatim, so
+    // "Processed" became the order's status — matching none of the status
+    // tabs, counted in none of the tallies, and impossible to approve.
+    expect(rowToOrder(withStatus('Delivered'), cols, ctx).status).toBe('Received');
+    expect(rowToOrder(withStatus('completed'), cols, ctx).status).toBe('Received');
+    expect(rowToOrder(withStatus('  RECEIVED '), cols, ctx).status).toBe('Received');
+    expect(rowToOrder(withStatus('Cancelled'), cols, ctx).status).toBe('Rejected');
+    expect(rowToOrder(withStatus('Pending Approval'), cols, ctx).status).toBe('Pending Approval');
+  });
+
+  it('ignores a status it cannot map and trusts the quantities instead', () => {
+    const o = rowToOrder(withStatus('LIFE21'), cols, ctx);
+    expect(o.status).toBe('Pending Approval'); // 0 of 2 received
+    const received = [...withStatus('Processed')];
+    received[10] = 2; // quantity received
+    expect(rowToOrder(received, cols, ctx).status).toBe('Received');
+  });
+
+  it('keeps approvalStatus in step with the mapped status', () => {
+    expect(rowToOrder(withStatus('delivered'), cols, ctx).approvalStatus).toBe('approved');
+    expect(rowToOrder(withStatus('approved'), cols, ctx).approvalStatus).toBe('approved');
+    expect(rowToOrder(withStatus('rejected'), cols, ctx).approvalStatus).toBe('rejected');
+    expect(rowToOrder(withStatus(''), cols, ctx).approvalStatus).toBe('pending');
   });
 });

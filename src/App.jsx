@@ -124,7 +124,7 @@ import {
 import Pagination, { usePagination } from './components/Pagination.jsx';
 import ChangePasswordModal from './components/ChangePasswordModal.jsx';
 import LoginIntro, { IntroRule } from './components/LoginIntro.jsx';
-import { todayLocal, toLocalYmd } from './lib/dates.js';
+import { todayLocal, toLocalYmd, compareMonths } from './lib/dates.js';
 import { parseOrderSheet, monthFromSheetName, describeMapping } from './lib/orderImport.js';
 import WishlistPage from './pages/WishlistPage.jsx';
 import { detectHeaderRow } from './lib/sheet.js';
@@ -411,6 +411,21 @@ export default function App() {
     }));
   const numStockChecks = (arr) => arr.map((c) => ({ ...c, items: Number(c.items) || 0, disc: Number(c.disc) || 0 }));
 
+  /**
+   * Has this order taken delivery of anything?
+   *
+   * Every "leave history alone" guard used to test `status === 'Received'`, but
+   * a PARTLY received order deliberately keeps its Approved status — so an
+   * order with 4 of 10 already booked into stock was not protected. Rejecting
+   * the batch it sat in flipped it to Rejected: it left Part Arrival, so the
+   * outstanding 6 could never be received, it was excluded from the back-order
+   * figures, and the 4 units stayed on the shelf behind a rejected order.
+   */
+  const hasTakenDelivery = useCallback(
+    (o) => o?.status === ORDER_STATUS.RECEIVED || (Number(o?.qtyReceived) || 0) > 0,
+    [],
+  );
+
   // Helper: recalculate bulk group items/totalCost for affected bulk group IDs after order changes
   // Auto-deletes empty bulk groups (0 remaining orders)
   const recalcBulkGroupForMonths = useCallback(
@@ -450,7 +465,11 @@ export default function App() {
         prev.map((bg) => {
           if (bg.id !== bulkGroupId || bg.status === 'Completed') return bg;
           const bgOrders = ordersAfterChange.filter((o) => o.bulkGroupId === bg.id);
-          if (bgOrders.length > 0 && bgOrders.every((o) => (o.qtyReceived || 0) >= o.quantity)) {
+          // `quantity > 0` matters. An imported row whose quantity cell was
+          // blank arrives as quantity 0, and `0 >= 0` was enough to let it pass
+          // as received — so one unreadable row could auto-complete a batch
+          // that nobody had delivered.
+          if (bgOrders.length > 0 && bgOrders.every((o) => o.quantity > 0 && (o.qtyReceived || 0) >= o.quantity)) {
             dbSync(api.updateBulkGroup(bg.id, { status: 'Completed' }), 'Bulk group completion sync');
             return { ...bg, status: 'Completed' };
           }
@@ -866,9 +885,27 @@ export default function App() {
       const pending = pendingArrival[orderId];
       const val = pending ? pending.qtyReceived : order.qtyReceived || 0;
       const delta = arrivalDelta(order, val);
-      // Guard: re-confirming an already-Received order with the same qty is a no-op
-      if (order.status === ORDER_STATUS.RECEIVED && delta <= 0) {
-        notify('Already Confirmed', `${order.description || orderId} is already marked as received`, 'info');
+      // Nothing new arrived, so nothing is recorded.
+      //
+      // The server is already idempotent here: a delta of zero returns
+      // `alreadyRecorded` and writes nothing at all — not the arrival date, not
+      // the checker. The client, however, applied both optimistically, logged
+      // the action, and sent a "Part Arrival Verified" report. So pressing
+      // Confirm on an imported row without touching the quantity box stamped
+      // today's date over a 2025 arrival on screen, told goods-in it was done,
+      // and notified the team of a delivery that had not happened — until the
+      // next page load put the real data back.
+      //
+      // The old guard only caught this when the status was already 'Received',
+      // which imported part-deliveries are not.
+      if (delta <= 0) {
+        notify(
+          order.status === ORDER_STATUS.RECEIVED ? 'Already Confirmed' : 'Nothing to Record',
+          order.status === ORDER_STATUS.RECEIVED
+            ? `${order.description || orderId} is already marked as received`
+            : `${order.description || orderId} has no additional quantity to book in — enter a higher received quantity first.`,
+          'info',
+        );
         return;
       }
       const { status, ...arrival } = computeArrival(order, val);
@@ -897,11 +934,28 @@ export default function App() {
             // the screen claiming an arrival that did not happen.
             setOrders((prev) => prev.map((x) => (x.id === orderId ? order : x)));
             notify('Arrival Not Saved', res.error || 'The arrival could not be recorded.', 'error');
-          } else if (res.alreadyRecorded) {
-            notify('Already Recorded', `${order.description || orderId} was already booked in.`, 'warning');
+            return;
           }
+          if (res.alreadyRecorded) {
+            // Belt and braces for a race: the server wrote nothing, so neither
+            // should the screen.
+            setOrders((prev) => prev.map((x) => (x.id === orderId ? order : x)));
+            notify('Already Recorded', `${order.description || orderId} was already booked in.`, 'warning');
+            return;
+          }
+          // Everything below is a CONSEQUENCE of an arrival, so it waits for
+          // one. These four lines used to run synchronously, outside this
+          // callback: if the server refused — because an approver had pulled
+          // the batch back in another session, say — the row was reverted, but
+          // the bulk group had already been written to the database as
+          // Completed, the audit trail carried a Confirm Arrival entry, and the
+          // approver had been emailed "Part Arrival Verified — Back Orders: 0"
+          // for a delivery that was never recorded.
+          if (order.bulkGroupId) checkBulkGroupCompletion(order.bulkGroupId, updatedOrders);
+          logAction('Confirm Arrival', 'order', orderId, { qtyReceived: val, status });
+          notify('Arrival Confirmed', `${order.description || orderId}: ${val}/${order.quantity} received`, 'success');
+          sendArrivalReport([updatedOrder]);
         });
-      if (order.bulkGroupId) checkBulkGroupCompletion(order.bulkGroupId, updatedOrders);
       setPendingArrival((prev) => {
         const next = { ...prev };
         delete next[orderId];
@@ -912,9 +966,6 @@ export default function App() {
         next.delete(orderId);
         return next;
       });
-      logAction('Confirm Arrival', 'order', orderId, { qtyReceived: val, status });
-      notify('Arrival Confirmed', `${order.description || orderId}: ${val}/${order.quantity} received`, 'success');
-      sendArrivalReport([updatedOrder]);
     },
     [orders, pendingArrival, currentUser, checkBulkGroupCompletion, dbSync, logAction, notify, sendArrivalReport],
   );
@@ -933,8 +984,12 @@ export default function App() {
         const pending = pendingArrival[orderId];
         const val = pending ? pending.qtyReceived : order.qtyReceived || 0;
         const delta = arrivalDelta(order, val);
-        // Mirror confirmArrival: an already-Received order may still be topped up when delta > 0
-        if (order.status === ORDER_STATUS.RECEIVED && delta <= 0) return;
+        // Mirror confirmArrival: only an actual increase is an arrival. Batch
+        // confirm did not even look at `alreadyRecorded` on the way back, so a
+        // ticked row with an unchanged quantity produced a stamped arrival
+        // date, an audit entry and an arrival report against a write the server
+        // had refused to make.
+        if (delta <= 0) return;
         const upd = {
           ...computeArrival(order, val),
           arrivalDate: todayLocal(),
@@ -948,21 +1003,56 @@ export default function App() {
       });
       if (confirmedIds.length === 0) return;
       setOrders(updatedOrders);
-      updates.forEach(({ orderId, upd, bulkGroupId, qtyReceived }) => {
-        api
-          .confirmOrderArrival(orderId, {
-            qtyReceived,
-            arrivalDate: upd.arrivalDate,
-            arrivalCheckedBy: upd.arrivalCheckedBy,
-          })
-          .then((res) => {
-            if (!res.ok) {
-              const original = orders.find((o) => o.id === orderId);
-              if (original) setOrders((prev) => prev.map((x) => (x.id === orderId ? original : x)));
-              notify('Arrival Not Saved', `${orderId}: ${res.error || 'could not be recorded.'}`, 'error');
-            }
+      // Every request is awaited before anything is claimed about the batch.
+      // The completion write, the audit entry and the arrival report used to
+      // run while the requests were still in flight, so a batch could be marked
+      // Completed in the database and an arrival emailed to the approver for
+      // deliveries the server had refused.
+      //
+      // The requests still go out together — one per order, in parallel, which
+      // is what makes a batch confirm quick — but the consequences wait for all
+      // of them.
+      Promise.all(
+        updates.map(({ orderId, upd, qtyReceived }) =>
+          api
+            .confirmOrderArrival(orderId, {
+              qtyReceived,
+              arrivalDate: upd.arrivalDate,
+              arrivalCheckedBy: upd.arrivalCheckedBy,
+            })
+            .then((res) => ({ orderId, res })),
+        ),
+      ).then((results) => {
+        const savedIds = new Set();
+        const failures = [];
+        for (const { orderId, res } of results) {
+          if (res?.ok && !res.alreadyRecorded) {
+            savedIds.add(orderId);
+            continue;
+          }
+          failures.push({
+            orderId,
+            reason: res?.alreadyRecorded ? 'was already booked in' : res?.error || 'could not be recorded',
           });
-        if (bulkGroupId) checkBulkGroupCompletion(bulkGroupId, updatedOrders);
+          const original = orders.find((o) => o.id === orderId);
+          if (original) setOrders((prev) => prev.map((x) => (x.id === orderId ? original : x)));
+        }
+
+        if (failures.length) {
+          notify(
+            'Some Arrivals Not Saved',
+            `${failures.length} of ${results.length} were not recorded — ${failures[0].orderId} ${failures[0].reason}.`,
+            'error',
+          );
+        }
+        if (savedIds.size === 0) return;
+
+        const savedOrders = confirmedOrdersList.filter((o) => savedIds.has(o.id));
+        const savedBgIds = [...new Set(savedOrders.map((o) => o.bulkGroupId).filter(Boolean))];
+        savedBgIds.forEach((bgId) => checkBulkGroupCompletion(bgId, updatedOrders));
+        logAction('Batch Confirm Arrival', 'order', [...savedIds].join(','), { count: savedIds.size });
+        notify('Arrival Confirmed', `${savedIds.size} order(s) status updated`, 'success');
+        sendArrivalReport(savedOrders);
       });
       setPendingArrival((prev) => {
         const next = { ...prev };
@@ -970,9 +1060,6 @@ export default function App() {
         return next;
       });
       setArrivalSelected(new Set());
-      logAction('Batch Confirm Arrival', 'order', confirmedIds.join(','), { count: confirmedIds.length });
-      notify('Arrival Confirmed', `${confirmedIds.length} order(s) status updated`, 'success');
-      sendArrivalReport(confirmedOrdersList);
     },
     [orders, pendingArrival, currentUser, checkBulkGroupCompletion, dbSync, logAction, notify, sendArrivalReport],
   );
@@ -1162,7 +1249,7 @@ export default function App() {
             .map((o) => o.month)
             .filter(Boolean),
         ),
-      ].sort(),
+      ].sort(compareMonths),
     [orders],
   );
   const orderByUsers = useMemo(
@@ -1269,7 +1356,10 @@ export default function App() {
     [stats],
   );
   const allOrdersMonths = useMemo(
-    () => [...new Set([...orders.map((o) => o.month), ...bulkGroups.map((g) => g.month)].filter(Boolean))].sort(),
+    () =>
+      [...new Set([...orders.map((o) => o.month), ...bulkGroups.map((g) => g.month)].filter(Boolean))].sort(
+        compareMonths,
+      ),
     [orders, bulkGroups],
   );
   const allOrdersUsers = useMemo(() => [...new Set(orders.map((o) => o.orderBy).filter(Boolean))].sort(), [orders]);
@@ -2061,17 +2151,35 @@ export default function App() {
     dbSync(api.updateApproval(approvalId, { status: action, actionDate: today }), 'Approval update not saved');
 
     const label = isApprove ? 'approval' : 'rejection';
+    // An order that has already been received is history. Approving or
+    // rejecting a batch must not rewrite it — doing so removed it from the
+    // received figures, returned it to the arrival queue as outstanding, and
+    // unlocked its arrival date to be overwritten.
+    const receivedIds = new Set(orders.filter(hasTakenDelivery).map((o) => o.id));
+    const actionable = (approval.orderIds || []).filter((id) => !receivedIds.has(id));
     if (approval.orderType === 'single') {
-      setOrders((prev) => prev.map((o) => (o.id === approval.orderId ? { ...o, ...transition } : o)));
-      dbSync(api.updateOrder(approval.orderId, transition), `Order ${label} not saved`);
+      if (receivedIds.has(approval.orderId)) {
+        notify('Already Received', `${approval.orderId} has already been received and was left unchanged.`, 'info');
+      } else {
+        setOrders((prev) => prev.map((o) => (o.id === approval.orderId ? { ...o, ...transition } : o)));
+        dbSync(api.updateOrder(approval.orderId, transition), `Order ${label} not saved`);
+      }
     } else if (approval.orderType === 'bulk' && approval.orderIds) {
-      setOrders((prev) => prev.map((o) => (approval.orderIds.includes(o.id) ? { ...o, ...transition } : o)));
+      setOrders((prev) => prev.map((o) => (actionable.includes(o.id) ? { ...o, ...transition } : o)));
       setBulkGroups((prev) => prev.map((g) => (g.id === approval.orderId ? { ...g, status: newStatus } : g)));
-      dbSync(api.bulkUpdateOrderStatus(approval.orderIds, newStatus, approvalStatus), `Bulk order ${label} not saved`);
+      if (actionable.length) {
+        dbSync(api.bulkUpdateOrderStatus(actionable, newStatus, approvalStatus), `Bulk order ${label} not saved`);
+      }
       dbSync(api.updateBulkGroup(approval.orderId, { status: newStatus }), `Bulk group ${label} not saved`);
     } else if (approval.orderType === 'batch' && approval.orderIds) {
-      setOrders((prev) => prev.map((o) => (approval.orderIds.includes(o.id) ? { ...o, ...transition } : o)));
-      dbSync(api.bulkUpdateOrderStatus(approval.orderIds, newStatus, approvalStatus), `Batch order ${label} not saved`);
+      setOrders((prev) => prev.map((o) => (actionable.includes(o.id) ? { ...o, ...transition } : o)));
+      if (actionable.length) {
+        dbSync(api.bulkUpdateOrderStatus(actionable, newStatus, approvalStatus), `Batch order ${label} not saved`);
+      }
+    }
+    const keptBack = (approval.orderIds || []).length - actionable.length;
+    if (keptBack > 0) {
+      notify('Received Orders Kept', `${keptBack} already-received order(s) were left as they are.`, 'info');
     }
     addNotifEntry({
       id: `N-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
@@ -2117,7 +2225,23 @@ export default function App() {
   };
   const batchStatusOrders = (status) => {
     if (!selOrders.size) return;
-    const ids = [...selOrders];
+    // Orders that have already arrived are excluded, as they are on every other
+    // status-changing path. Without this, select-all in All Orders followed by
+    // "Approved" — to clear a few stragglers — rewrote every delivered row in
+    // the selection: they left the received figures and the received value, and
+    // came back as outstanding work in Part Arrival. "Pending Approval" was
+    // worse, because it also cleared approvalStatus, so they vanished from Part
+    // Arrival altogether while their stock stayed booked in.
+    const received = new Set(orders.filter(hasTakenDelivery).map((o) => o.id));
+    const ids = [...selOrders].filter((id) => !received.has(id));
+    const keptBack = selOrders.size - ids.length;
+    if (keptBack > 0) {
+      notify('Received Orders Kept', `${keptBack} already-received order(s) were left as they are.`, 'info');
+    }
+    if (ids.length === 0) {
+      setSelOrders(new Set());
+      return;
+    }
     const idSet = new Set(ids);
     // Sending an order back to 'Pending Approval' used to leave approval_status
     // at 'approved', so the Part Arrival page still let it be received and the
@@ -2166,16 +2290,35 @@ export default function App() {
     const idSet = new Set(ids);
     setBulkGroups((prev) => prev.map((g) => (selBulk.has(g.id) ? { ...g, status } : g)));
     ids.forEach((id) => dbSync(api.updateBulkGroup(id, { status }), 'Bulk group status not saved'));
-    // Cascade approval status to all linked orders
+    // Cascade approval status to all linked orders.
+    //
+    // An order that has already been RECEIVED is left alone. Running an
+    // approval over a historical batch used to rewrite every delivered row back
+    // to 'Approved', which erased it from the received counts, put it back in
+    // the arrival queue as outstanding work, and — because the idempotency
+    // guard keys off the status — allowed its real arrival date to be
+    // overwritten with today's. A year of delivery history could be lost by
+    // ticking one batch and pressing Approved.
     if (status === 'Approved' || status === 'Rejected') {
       const approvalStatus = status === 'Approved' ? 'approved' : 'rejected';
-      const linkedOrders = orders.filter((o) => o.bulkGroupId && idSet.has(o.bulkGroupId));
+      const isReceived = hasTakenDelivery;
+      const linkedOrders = orders.filter((o) => o.bulkGroupId && idSet.has(o.bulkGroupId) && !isReceived(o));
+      const skipped = orders.filter((o) => o.bulkGroupId && idSet.has(o.bulkGroupId) && isReceived(o)).length;
       setOrders((prev) =>
-        prev.map((o) => (o.bulkGroupId && idSet.has(o.bulkGroupId) ? { ...o, status, approvalStatus } : o)),
+        prev.map((o) =>
+          o.bulkGroupId && idSet.has(o.bulkGroupId) && !isReceived(o) ? { ...o, status, approvalStatus } : o,
+        ),
       );
       linkedOrders.forEach((o) =>
         dbSync(api.updateOrder(o.id, { status, approvalStatus }), 'Order approval cascade failed'),
       );
+      if (skipped > 0) {
+        notify(
+          'Received Orders Kept',
+          `${skipped} order(s) in these batches have already been received and were left as they are.`,
+          'info',
+        );
+      }
     }
     notify('Batch Update', `${ids.length} bulk groups → ${status}`, 'success');
     setSelBulk(new Set());
@@ -2548,9 +2691,15 @@ export default function App() {
     }
 
     notify(
-      'Approval Sent',
-      `${selected.length} orders sent via ${sentChannels.filter((c) => c !== 'WhatsApp (picker shown)').join(' + ') || 'Email'} to ${emailConfig.approverEmail}${sentChannels.includes('WhatsApp (picker shown)') ? ' — select WhatsApp recipients' : ''}`,
-      'success',
+      sentChannels.length ? 'Approval Sent' : 'Approval Queued — Not Sent',
+      // `|| 'Email'` used to turn "nothing was sent" into "sent via Email":
+      // with the wrong SMTP credentials the requester saw a green "Approval
+      // Sent", the orders carried an approval-sent date, and the approver never
+      // received anything.
+      sentChannels.length
+        ? `${selected.length} orders sent via ${sentChannels.filter((c) => c !== 'WhatsApp (picker shown)').join(' + ')} to ${emailConfig.approverEmail}${sentChannels.includes('WhatsApp (picker shown)') ? ' — select WhatsApp recipients' : ''}`
+        : `${selected.length} orders are queued for approval, but nothing could be sent to ${emailConfig.approverEmail} — check the email settings and notify the approver yourself.`,
+      sentChannels.length ? 'success' : 'warning',
     );
     setSelOrders(new Set());
   };
@@ -2565,13 +2714,32 @@ export default function App() {
     const selectedGroups = bulkGroups.filter((g) => selBulk.has(g.id));
     if (!selectedGroups.length) return;
     const now = todayLocal();
-    const linkedOrders = orders.filter((o) => o.bulkGroupId && selBulk.has(o.bulkGroupId));
+    // Already-received rows are not awaiting anyone's approval — a historical
+    // batch is entirely made of them — so they are left out of the request,
+    // the totals and the email table rather than being sent to an approver a
+    // year after they arrived.
+    const linkedOrders = orders.filter((o) => o.bulkGroupId && selBulk.has(o.bulkGroupId) && !hasTakenDelivery(o));
+    const alreadyReceived = orders.filter(
+      (o) => o.bulkGroupId && selBulk.has(o.bulkGroupId) && hasTakenDelivery(o),
+    ).length;
+    if (linkedOrders.length === 0) {
+      notify(
+        'Nothing to Approve',
+        `Every order in the selected batch${selBulk.size === 1 ? '' : 'es'} has already been received.`,
+        'warning',
+      );
+      return;
+    }
+    if (alreadyReceived > 0) {
+      notify('Received Orders Excluded', `${alreadyReceived} already-received order(s) were left out.`, 'info');
+    }
     const totalCost = linkedOrders.reduce((s, o) => s + getEffectiveTotal(o, catalogLookup), 0);
     const totalQty = linkedOrders.reduce((s, o) => s + (Number(o.quantity) || 0), 0);
 
     // Create approval per bulk group
     selectedGroups.forEach((bg) => {
-      const bgOrders = orders.filter((o) => o.bulkGroupId === bg.id);
+      const bgOrders = orders.filter((o) => o.bulkGroupId === bg.id && !hasTakenDelivery(o));
+      if (bgOrders.length === 0) return;
       const bgCost = bgOrders.reduce((s, o) => s + getEffectiveTotal(o, catalogLookup), 0);
       const bgQty = bgOrders.reduce((s, o) => s + (Number(o.quantity) || 0), 0);
       addApproval({
@@ -2600,7 +2768,8 @@ export default function App() {
       '----|--------------|------------------|------------------------------------|------------------|------------|-----------|------|-------------|------------';
     let lines = [];
     selectedGroups.forEach((bg) => {
-      const bgOrders = orders.filter((o) => o.bulkGroupId === bg.id);
+      const bgOrders = orders.filter((o) => o.bulkGroupId === bg.id && !hasTakenDelivery(o));
+      if (bgOrders.length === 0) return;
       const bgCost = bgOrders.reduce((s, o) => s + getEffectiveTotal(o, catalogLookup), 0);
       lines.push(`\n=== ${bg.id} | ${bg.month} | By: ${bg.createdBy || 'N/A'} ===`);
       lines.push(bulkHdr);
@@ -3535,8 +3704,8 @@ export default function App() {
   // Column mapping, header detection and row parsing all live in
   // ./lib/orderImport.js so they can be unit tested against the real workbook
   // shapes without a browser. What stays here is only the wiring.
-  const parseSheetToOrders = (aoa, sheetName, bulkGroupId = null, existingIds) => {
-    const sheetMonth = monthFromSheetName(sheetName);
+  const parseSheetToOrders = (aoa, sheetName, bulkGroupId = null, existingIds, monthLabel) => {
+    const sheetMonth = monthLabel ?? monthFromSheetName(sheetName);
     return parseOrderSheet(aoa, {
       sheetMonth,
       bulkGroupId,
@@ -3572,7 +3741,14 @@ export default function App() {
         wb.SheetNames.forEach((sheetName) => {
           const aoa = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { header: 1, defval: '' });
           const bgId = `BG-${Date.now()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
-          const result = parseSheetToOrders(aoa, sheetName, bgId, existingIds);
+          // The batch and its orders must carry the SAME month label. A tab
+          // named "Jan" or "Week 12" has no year to read, so the rows were left
+          // with month '' while the group kept the raw sheet name — which put
+          // an empty card in the Month Overview and left the orders in no month
+          // view at all, and out of the analytics charts, while still counting
+          // in the totals.
+          const sheetMonth = monthFromSheetName(sheetName) || sheetName.trim();
+          const result = parseSheetToOrders(aoa, sheetName, bgId, existingIds, sheetMonth);
 
           if (result.skipped) {
             skippedSheets.push(`${sheetName} (${result.skipped})`);
@@ -3587,7 +3763,7 @@ export default function App() {
           const totalCost = result.orders.reduce((sum, o) => sum + o.totalCost, 0);
           newBulkGroups.push({
             id: bgId,
-            month: monthFromSheetName(sheetName) || sheetName.trim(),
+            month: sheetMonth,
             createdBy: currentUser.name,
             items: result.orders.length,
             totalCost,
@@ -3691,9 +3867,9 @@ export default function App() {
     setImportBusy(true);
     // The groups have to exist before the orders that reference them, or the
     // link is written against a group id that is not there yet.
-    let groupsSaved = 0;
+    const savedGroups = [];
     for (const g of groups) {
-      if (await api.createBulkGroup(g)) groupsSaved++;
+      if (await api.createBulkGroup(g)) savedGroups.push(g);
     }
 
     // Saved in small batches rather than all at once: an import is hundreds of
@@ -3702,16 +3878,57 @@ export default function App() {
     // this used to fire and forget, then claim success either way.
     const saved = [];
     const failed = [];
+    let firstError = '';
     const BATCH = 10;
     for (let i = 0; i < rows.length; i += BATCH) {
       const slice = rows.slice(i, i + BATCH);
-      const results = await Promise.all(slice.map((o) => api.createOrder(o).catch(() => null)));
-      results.forEach((res, idx) => (res ? saved.push(slice[idx]) : failed.push(slice[idx])));
+      // `historical: true` is what lets a row that already arrived be created
+      // as received. Without it the server refuses every such row, because an
+      // ordinary order may not be born already approved.
+      const results = await Promise.all(slice.map((o) => api.createOrderReporting(o, { historical: true })));
+      results.forEach((res, idx) => {
+        if (res?.ok) {
+          saved.push(slice[idx]);
+        } else {
+          failed.push(slice[idx]);
+          if (!firstError && res?.error) firstError = res.error;
+        }
+      });
     }
     setImportBusy(false);
 
+    // The group tallies were written from what PARSED, before anything was
+    // saved. When rows are rejected the batch then claims items and a value it
+    // does not have, and nothing ever recalculates it — the tally sync only
+    // runs when an order is later added or deleted. So the counts are rebuilt
+    // here from the rows that actually landed, and a group that saved nothing
+    // at all is dropped rather than left as an empty batch.
+    const savedByGroup = new Map();
+    for (const o of saved) {
+      if (!o.bulkGroupId) continue;
+      if (!savedByGroup.has(o.bulkGroupId)) savedByGroup.set(o.bulkGroupId, []);
+      savedByGroup.get(o.bulkGroupId).push(o);
+    }
+    const keptGroups = [];
+    for (const g of savedGroups) {
+      const members = savedByGroup.get(g.id) || [];
+      if (members.length === 0) {
+        dbSync(api.deleteBulkGroup(g.id), 'Import cleanup: batch with no saved orders');
+        continue;
+      }
+      const totalCost = members.reduce((sum, o) => sum + (Number(o.totalCost) || 0), 0);
+      if (members.length !== g.items || Math.abs(totalCost - g.totalCost) > 0.01) {
+        dbSync(api.updateBulkGroup(g.id, { items: members.length, totalCost }), 'Import cleanup: batch tally');
+      }
+      keptGroups.push({ ...g, items: members.length, totalCost });
+    }
+
     if (saved.length) setOrders((prev) => [...prev, ...saved]);
-    if (groupsSaved) setBulkGroups((prev) => [...groups, ...prev]);
+    // Only the groups that actually saved, and only with the tallies they
+    // actually have. This used to push every parsed group into state as soon as
+    // any one of them saved, so a batch whose POST failed sat on screen until
+    // the next reload and then disappeared, leaving its orders behind.
+    if (keptGroups.length) setBulkGroups((prev) => [...keptGroups, ...prev]);
     window.__pendingBulkGroups = null;
     setHistoryImportData([]);
     setHistoryImportPreview(false);
@@ -3719,13 +3936,15 @@ export default function App() {
     if (failed.length === 0) {
       notify(
         'History Imported',
-        `${saved.length} orders${groupsSaved ? ` and ${groupsSaved} batches` : ''} added.`,
+        `${saved.length} orders${keptGroups.length ? ` and ${keptGroups.length} batches` : ''} added.`,
         'success',
       );
     } else {
       notify(
         'Partly Imported',
-        `${saved.length} of ${rows.length} orders saved. ${failed.length} were rejected — the first was ${failed[0].materialNo || failed[0].description}.`,
+        `${saved.length} of ${rows.length} orders saved. ${failed.length} were rejected` +
+          (firstError ? ` — ${firstError}` : '') +
+          `. First was ${failed[0].materialNo || failed[0].description || '(unnamed row)'}.`,
         'error',
       );
     }
@@ -9644,29 +9863,58 @@ export default function App() {
                               oldStatus !== newStatus &&
                               (newStatus === ORDER_STATUS.APPROVED || newStatus === ORDER_STATUS.REJECTED)
                             ) {
+                              // Orders that already arrived are history and are
+                              // left alone, same as the batch-approval path.
+                              // Without this, putting a Completed batch back to
+                              // Approved rewrote every delivered row, dropping
+                              // it out of the received figures and unlocking its
+                              // arrival date to be overwritten.
                               const transition = approvalTransition(newStatus);
-                              currentBgOrders.forEach((o) =>
+                              const keep = hasTakenDelivery;
+                              const toChange = currentBgOrders.filter((o) => !keep(o));
+                              toChange.forEach((o) =>
                                 dbSync(api.updateOrder(o.id, transition), 'Order approval cascade failed'),
                               );
                               setOrders((prev) =>
-                                prev.map((o) => (o.bulkGroupId === syncedGroup.id ? { ...o, ...transition } : o)),
+                                prev.map((o) =>
+                                  o.bulkGroupId === syncedGroup.id && !keep(o) ? { ...o, ...transition } : o,
+                                ),
                               );
+                              if (currentBgOrders.length !== toChange.length) {
+                                notify(
+                                  'Received Orders Kept',
+                                  `${currentBgOrders.length - toChange.length} already-received order(s) were left as they are.`,
+                                  'info',
+                                );
+                              }
                             }
                             // If manually set to Completed, mark all linked orders as Received with full arrival data
                             if (oldStatus !== newStatus && newStatus === 'Completed') {
                               const today = todayLocal();
-                              currentBgOrders.forEach((o) =>
-                                dbSync(
-                                  api.updateOrder(o.id, {
-                                    status: 'Received',
-                                    approvalStatus: 'approved',
-                                    qtyReceived: o.quantity,
-                                    backOrder: 0,
-                                    arrivalDate: o.arrivalDate || today,
-                                  }),
-                                  'Order received cascade failed',
-                                ),
-                              );
+                              // Through the arrival endpoint, not a plain order
+                              // update. A plain PUT writes qty_received and
+                              // nothing else — no stock movement, no
+                              // inventory_transactions row — so marking a batch
+                              // Completed here booked in nothing at all and the
+                              // shortfall only surfaced at the next stock check,
+                              // with no record of where it came from.
+                              currentBgOrders
+                                .filter((o) => o.quantity > 0 && (o.qtyReceived || 0) < o.quantity)
+                                .forEach((o) =>
+                                  dbSync(
+                                    api
+                                      .confirmOrderArrival(o.id, {
+                                        qtyReceived: o.quantity,
+                                        arrivalDate: o.arrivalDate || today,
+                                        arrivalCheckedBy: currentUser?.name || 'System',
+                                      })
+                                      .then((res) => {
+                                        if (!res.ok) throw new Error(res.error || 'refused');
+                                        return res;
+                                      }),
+                                    'Order received cascade failed',
+                                  ),
+                                );
                               setOrders((prev) =>
                                 prev.map((o) =>
                                   o.bulkGroupId === syncedGroup.id
@@ -10151,12 +10399,51 @@ export default function App() {
                         // Include arrival fields when manually marking as Received.
                         // When the quantity changed, also send the recomputed backOrder so it stays
                         // consistent server-side (server only rejects qty_received for non-admins).
+                        // The received quantity is NOT sent through the
+                        // ordinary order update. A plain PUT writes the column
+                        // and nothing else — no stock movement, no
+                        // inventory_transactions row — so marking an order
+                        // Received here closed it out without ever booking the
+                        // parts in, and reducing the quantity of an
+                        // already-received order left the surplus sitting in
+                        // stock against an order that no longer justified it.
+                        // The arrival endpoint is the one place that moves
+                        // stock, and it computes the delta itself.
                         const payload = isManualReceived
-                          ? { ...editFields, qtyReceived, backOrder, arrivalDate }
+                          ? editFields
                           : qtyChanged
                             ? { ...editFields, backOrder }
                             : editFields;
                         dbSync(api.updateOrder(editingOrder.id, payload), 'Order edit not saved');
+                        if (isManualReceived) {
+                          const alreadyIn = Number(originalOrder?.qtyReceived) || 0;
+                          const target = Number(finalOrder.quantity) || 0;
+                          if (target > alreadyIn) {
+                            dbSync(
+                              api
+                                .confirmOrderArrival(editingOrder.id, {
+                                  qtyReceived: target,
+                                  arrivalDate,
+                                  arrivalCheckedBy: currentUser?.name || 'System',
+                                })
+                                .then((res) => {
+                                  if (!res.ok) throw new Error(res.error || 'refused');
+                                  return res;
+                                }),
+                              'Marking received did not update stock',
+                            );
+                          } else if (target < alreadyIn) {
+                            // Booking stock back OUT is a stock adjustment, not
+                            // an arrival, and the arrival endpoint refuses a
+                            // negative delta by design. Say so rather than
+                            // silently leaving the surplus on the shelf.
+                            notify(
+                              'Stock Not Reduced',
+                              `${editingOrder.id} already had ${alreadyIn} received. Adjust Local Inventory by hand if fewer actually arrived.`,
+                              'warning',
+                            );
+                          }
+                        }
                         // Recalculate affected bulk group(s) — both old and new if re-linked
                         const bgIdsToRecalc = [
                           ...new Set([originalOrder?.bulkGroupId, editingOrder.bulkGroupId].filter(Boolean)),
@@ -10267,6 +10554,49 @@ export default function App() {
                     to the system.
                   </span>
                 </div>
+
+                {/*
+                 * Rows whose quantity could not be read are called out here
+                 * rather than discovered later. A quantity of zero is not a
+                 * harmless blank: the row cannot be received (there is nothing
+                 * to receive), and it used to count as fully delivered in
+                 * places that compared `0 >= 0`. Better to fix the sheet, or
+                 * at least know which lines to edit afterwards.
+                 */}
+                {(() => {
+                  const noQty = historyImportData.filter((o) => !(Number(o.quantity) > 0));
+                  if (noQty.length === 0) return null;
+                  return (
+                    <div
+                      style={{
+                        marginBottom: 16,
+                        padding: 12,
+                        background: '#FEE2E2',
+                        border: '1px solid #FECACA',
+                        borderRadius: 8,
+                        fontSize: 12,
+                        color: '#991B1B',
+                        display: 'flex',
+                        alignItems: 'flex-start',
+                        gap: 8,
+                      }}
+                    >
+                      <AlertTriangle size={16} style={{ flexShrink: 0, marginTop: 1 }} />
+                      <span>
+                        <strong>
+                          {noQty.length} row{noQty.length === 1 ? ' has' : 's have'} no readable quantity
+                        </strong>{' '}
+                        — the quantity column was blank or could not be matched. They will import with a quantity of 0
+                        and cannot be received until the quantity is corrected. First:{' '}
+                        {noQty
+                          .slice(0, 3)
+                          .map((o) => o.materialNo || o.description || '(unnamed)')
+                          .join(', ')}
+                        {noQty.length > 3 ? `, and ${noQty.length - 3} more` : ''}.
+                      </span>
+                    </div>
+                  );
+                })()}
 
                 <div
                   style={{

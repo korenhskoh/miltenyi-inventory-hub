@@ -168,6 +168,50 @@ export function firstOfMonth(label) {
   return `${m[2]}-${String(idx + 1).padStart(2, '0')}-01`;
 }
 
+/**
+ * The four statuses the app actually understands.
+ *
+ * A sheet's own "Status" column used to be copied through verbatim, so a cell
+ * reading "Processed", "Delivered" or plain lowercase "received" became the
+ * order's status. Nothing downstream recognises those: the row matched none of
+ * the status tabs, so choosing any status hid it; it was counted in none of the
+ * five status tallies while still counting in the total, so the tiles stopped
+ * summing; and because the check for "already received" is exact-case, a
+ * "received" row kept approvalStatus 'pending', which left it unapprovable,
+ * unreceivable and stuck.
+ *
+ * So the sheet's value is mapped onto the app's vocabulary, and anything that
+ * cannot be mapped is ignored in favour of what the received quantities say —
+ * which is the more reliable evidence anyway.
+ */
+const STATUS_SYNONYMS = {
+  received: 'Received',
+  complete: 'Received',
+  completed: 'Received',
+  delivered: 'Received',
+  arrived: 'Received',
+  closed: 'Received',
+  approved: 'Approved',
+  approve: 'Approved',
+  rejected: 'Rejected',
+  reject: 'Rejected',
+  cancelled: 'Rejected',
+  canceled: 'Rejected',
+  pending: 'Pending Approval',
+  'pending approval': 'Pending Approval',
+  'awaiting approval': 'Pending Approval',
+  open: 'Pending Approval',
+};
+
+export function normalizeStatus(value) {
+  const key = String(value ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ');
+  if (!key) return '';
+  return STATUS_SYNONYMS[key] || '';
+}
+
 const cell = (row, idx) => (idx === undefined ? '' : (row?.[idx] ?? ''));
 const text = (v) =>
   String(v ?? '')
@@ -222,8 +266,7 @@ export function rowToOrder(row, colMap, ctx = {}) {
   const backOrder = qtyReceived - quantity;
 
   const fullyReceived = quantity > 0 && qtyReceived >= quantity;
-  const sheetStatus = text(cell(row, colMap.status));
-  const status = sheetStatus || (fullyReceived ? 'Received' : 'Pending Approval');
+  const status = normalizeStatus(text(cell(row, colMap.status))) || (fullyReceived ? 'Received' : 'Pending Approval');
 
   return {
     id: makeId(),
@@ -245,7 +288,8 @@ export function rowToOrder(row, colMap, ctx = {}) {
     // History that already arrived is history: leaving it unapproved would put
     // years of completed orders into the approvals queue and mark them
     // receivable all over again.
-    approvalStatus: status === 'Received' ? 'approved' : 'pending',
+    approvalStatus:
+      status === 'Received' || status === 'Approved' ? 'approved' : status === 'Rejected' ? 'rejected' : 'pending',
     month: text(cell(row, colMap.month)) || sheetMonth || '',
     year: text(cell(row, colMap.year)) || (orderDate ? orderDate.slice(0, 4) : String(new Date().getFullYear())),
     ...(bulkGroupId ? { bulkGroupId } : {}),

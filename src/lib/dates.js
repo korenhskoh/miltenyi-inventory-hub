@@ -88,3 +88,49 @@ export function monthLabel(v = new Date()) {
   if (Number.isNaN(dt.getTime())) return '';
   return dt.toLocaleDateString('en-SG', { month: 'short', year: 'numeric' });
 }
+
+/**
+ * Sort key for a "Mon YYYY" month label, as used by orders and bulk groups.
+ *
+ * The month dropdowns and the Month Overview grid sorted these strings with a
+ * plain `.sort()`, which is alphabetical: importing the 2025 and 2026 workbooks
+ * produced Apr 2025, Apr 2026, Aug 2025, Aug 2026, Dec 2025, Feb 2026, Jan
+ * 2025… Everything else in the app already ordered months properly; these two
+ * lists were the exception.
+ *
+ * Returns a number that sorts chronologically. A label that is not a month
+ * sorts after every real one, so an oddly named sheet ends up at the bottom
+ * rather than scattered through the list.
+ */
+const MONTH_INDEX = {
+  jan: 0,
+  feb: 1,
+  mar: 2,
+  apr: 3,
+  may: 4,
+  jun: 5,
+  jul: 6,
+  aug: 7,
+  sep: 8,
+  oct: 9,
+  nov: 10,
+  dec: 11,
+};
+
+export function monthSortKey(label) {
+  const m = String(label || '')
+    .trim()
+    .match(/^([A-Za-z]{3})[a-z]*\s+(\d{4})$/);
+  if (!m) return Number.POSITIVE_INFINITY;
+  const idx = MONTH_INDEX[m[1].toLowerCase()];
+  if (idx === undefined) return Number.POSITIVE_INFINITY;
+  return Number(m[2]) * 12 + idx;
+}
+
+/** Comparator for "Mon YYYY" labels, newest last. Unparseable labels sort last. */
+export function compareMonths(a, b) {
+  const ka = monthSortKey(a);
+  const kb = monthSortKey(b);
+  if (ka !== kb) return ka - kb;
+  return String(a).localeCompare(String(b));
+}
