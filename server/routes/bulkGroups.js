@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { query } from '../db.js';
+import { query, withTransaction } from '../db.js';
 import { snakeToCamel, camelToSnake } from '../utils.js';
 import { pickAllowed, requireFields, sanitizeDates } from '../validation.js';
 import { paginate, envelope, limitClause } from '../pagination.js';
@@ -84,11 +84,34 @@ router.put('/:id', async (req, res) => {
   }
 });
 
+// Deleting a batch must not strand its orders.
+//
+// `orders.bulk_group_id` is a plain column with no foreign key, so deleting a
+// batch left its orders pointing at a group that no longer existed — and an
+// order in that state is invisible almost everywhere: the Orders page filters
+// out anything with a bulk group id, and the Part Arrival bulk table iterates
+// the groups, which no longer include it. Approved-but-undelivered orders could
+// not be received at all, while still counting in every dashboard total. The
+// React delete path cascades and removes the orders itself; the WhatsApp bot
+// and a direct API call did not.
+//
+// They are released rather than deleted: clearing the link turns them back into
+// ordinary single orders, which are visible and receivable. Destroying real
+// order history as a side effect of tidying a batch would be worse than the bug.
+async function releaseOrders(client, id) {
+  const r = await client.query('UPDATE orders SET bulk_group_id = NULL WHERE bulk_group_id = $1 RETURNING id', [id]);
+  return r.rowCount;
+}
+
 // DELETE /all - delete all bulk groups
 router.delete('/all', requireAdmin, async (req, res) => {
   try {
-    await query('DELETE FROM bulk_groups');
-    res.json({ success: true });
+    const released = await withTransaction(async (client) => {
+      const r = await client.query('UPDATE orders SET bulk_group_id = NULL WHERE bulk_group_id IS NOT NULL');
+      await client.query('DELETE FROM bulk_groups');
+      return r.rowCount;
+    });
+    res.json({ success: true, ordersReleased: released });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -98,13 +121,17 @@ router.delete('/all', requireAdmin, async (req, res) => {
 router.delete('/:id', requirePermission('deleteBulkOrders'), async (req, res) => {
   try {
     const { id } = req.params;
-    const result = await query('DELETE FROM bulk_groups WHERE id = $1 RETURNING *', [id]);
+    const out = await withTransaction(async (client) => {
+      const released = await releaseOrders(client, id);
+      const result = await client.query('DELETE FROM bulk_groups WHERE id = $1 RETURNING *', [id]);
+      return { found: result.rows.length > 0, released };
+    });
 
-    if (result.rows.length === 0) {
+    if (!out.found) {
       return res.status(404).json({ error: 'Bulk group not found' });
     }
 
-    res.json({ success: true });
+    res.json({ success: true, ordersReleased: out.released });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

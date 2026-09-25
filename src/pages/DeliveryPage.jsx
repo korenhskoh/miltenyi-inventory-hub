@@ -5,6 +5,7 @@ import { Pill, ArrivalBadge, ExportDropdown, SortTh } from '../components/ui.jsx
 import api from '../api.js';
 import { todayLocal } from '../lib/dates.js';
 import Pagination, { usePaginationState, paginate } from '../components/Pagination.jsx';
+import { arrivalCondition } from '../lib/arrival.js';
 
 /**
  * Send an arrival report via the server-side mailer (SMTP config is stored server-side).
@@ -134,19 +135,22 @@ const DeliveryPage = ({
             style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 14, marginBottom: 24 }}
           >
             {[
+              // One shared definition, so these three now sum to the table
+              // below instead of quietly dropping the rows that fell between
+              // them.
               {
                 l: 'Awaiting Arrival',
-                v: ao.filter((o) => !o.arrivalDate && (o.qtyReceived || 0) === 0).length,
+                v: ao.filter((o) => arrivalCondition(o) === 'Awaiting').length,
                 c: '#D97706',
               },
               {
                 l: 'Fully Received',
-                v: ao.filter((o) => (o.qtyReceived || 0) >= o.quantity && o.quantity > 0).length,
+                v: ao.filter((o) => arrivalCondition(o) === 'Arrived').length,
                 c: '#0B7A3E',
               },
               {
                 l: 'Back Order',
-                v: ao.filter((o) => o.arrivalDate && (o.qtyReceived || 0) < o.quantity).length,
+                v: ao.filter((o) => arrivalCondition(o) === 'Back Order').length,
                 c: '#DC2626',
               },
               {
@@ -284,17 +288,30 @@ const DeliveryPage = ({
           return true;
         });
 
-        // Enrich bulk groups with computed fields for sorting
+        // Enrich bulk groups with computed fields for sorting.
+        //
+        // Two populations, deliberately kept apart. `_bgOrders` is what the
+        // expanded table shows and what the Order By / Checked By dropdowns
+        // filter — a view. `_allOrders` is the batch itself, and it is what any
+        // statement ABOUT the batch has to be computed from.
+        //
+        // Conflating the two was the bug: the progress pill, the item count and
+        // Mark Complete all ran over the filtered, approved-only subset. An
+        // imported batch of 30 rows with 12 received and 18 still outstanding
+        // rendered as "12 items, 12/12 received" with a green tick, and Mark
+        // Complete closed the whole batch and sent a "Part Arrival Verified,
+        // Back Orders: 0" message for 18 parts that never arrived. Narrowing a
+        // dropdown made it worse, because the subset shrank again.
         const enriched = filteredBulkGroups.map((bg) => {
-          const bgOrds = orders.filter(
+          const allOrds = orders.filter((o) => o.bulkGroupId === bg.id);
+          const bgOrds = allOrds.filter(
             (o) =>
-              o.bulkGroupId === bg.id &&
               o.approvalStatus === 'approved' &&
               (arrivalOrderByFilter === 'All' || o.orderBy === arrivalOrderByFilter) &&
               (arrivalCheckedByFilter === 'All' || o.arrivalCheckedBy === arrivalCheckedByFilter),
           );
-          const fullyReceived = bgOrds.filter((o) => o.qtyReceived >= o.quantity && o.quantity > 0).length;
-          const hasBackOrder = bgOrds.some((o) => (o.qtyReceived || 0) > 0 && (o.qtyReceived || 0) < o.quantity);
+          const fullyReceived = allOrds.filter((o) => o.qtyReceived >= o.quantity && o.quantity > 0).length;
+          const hasBackOrder = allOrds.some((o) => (o.qtyReceived || 0) > 0 && (o.qtyReceived || 0) < o.quantity);
           // Latest approval date from the group's orders
           const approvedDate = bgOrds.reduce((latest, o) => {
             if (!o.approvalSentDate) return latest;
@@ -303,7 +320,9 @@ const DeliveryPage = ({
           return {
             ...bg,
             _bgOrders: bgOrds,
-            _itemCount: bgOrds.length,
+            _allOrders: allOrds,
+            _itemCount: allOrds.length,
+            _shownCount: bgOrds.length,
             _fullyReceived: fullyReceived,
             _hasBackOrder: hasBackOrder,
             approvedDate,
@@ -371,9 +390,14 @@ const DeliveryPage = ({
                 ) : (
                   bulkPageItems.map((bg) => {
                     const bgOrders = bg._bgOrders;
+                    const allOrders = bg._allOrders;
                     const fullyReceived = bg._fullyReceived;
                     const hasBackOrder = bg._hasBackOrder;
-                    const unapprovedCount = bgOrders.filter((o) => o.approvalStatus !== 'approved').length;
+                    // Counted over the whole batch. Counting it over `bgOrders`
+                    // — which is already filtered to approved — made this
+                    // permanently 0, so the "not yet approved" warning below
+                    // could never appear however many rows were waiting.
+                    const unapprovedCount = allOrders.filter((o) => o.approvalStatus !== 'approved').length;
                     const isExpanded = selectedBulkForArrival === bg.id;
                     return (
                       <Fragment key={bg.id}>
@@ -389,7 +413,7 @@ const DeliveryPage = ({
                           }}
                         >
                           <td className="td" style={{ textAlign: 'center' }}>
-                            {fullyReceived === bgOrders.length ? (
+                            {fullyReceived === allOrders.length ? (
                               <CheckCircle size={16} color="#059669" />
                             ) : hasBackOrder ? (
                               <AlertCircle size={16} color="#DC2626" />
@@ -404,7 +428,7 @@ const DeliveryPage = ({
                             {bg.month}
                           </td>
                           <td className="td" style={{ textAlign: 'center', fontWeight: 600 }}>
-                            {bgOrders.length}
+                            {allOrders.length}
                           </td>
                           <td className="td mono" style={{ fontSize: 11 }}>
                             <span className="pv">{fmt(bg.totalCost)}</span>
@@ -414,12 +438,12 @@ const DeliveryPage = ({
                           </td>
                           <td className="td">
                             <Pill
-                              bg={fullyReceived === bgOrders.length ? '#D1FAE5' : hasBackOrder ? '#FEE2E2' : '#FEF3C7'}
+                              bg={fullyReceived === allOrders.length ? '#D1FAE5' : hasBackOrder ? '#FEE2E2' : '#FEF3C7'}
                               color={
-                                fullyReceived === bgOrders.length ? '#059669' : hasBackOrder ? '#DC2626' : '#D97706'
+                                fullyReceived === allOrders.length ? '#059669' : hasBackOrder ? '#DC2626' : '#D97706'
                               }
                             >
-                              {fullyReceived}/{bgOrders.length} received
+                              {fullyReceived}/{allOrders.length} received
                             </Pill>
                           </td>
                           <td className="td" onClick={(e) => e.stopPropagation()}>
@@ -547,6 +571,17 @@ const DeliveryPage = ({
                                         ? pv.qtyReceived - o.quantity
                                         : (o.qtyReceived || 0) - o.quantity;
                                       const hasPending = !!pv;
+                                      // Whether pressing Confirm would record
+                                      // anything. It used to key off the
+                                      // arrival DATE alone, so an imported row
+                                      // that had fully arrived but had no date
+                                      // in the sheet showed a bright primary
+                                      // Confirm button beside a "2/2 Arrived"
+                                      // pill — work that looked outstanding and
+                                      // was not.
+                                      const canConfirm = hasPending
+                                        ? pv.qtyReceived > (o.qtyReceived || 0)
+                                        : arrivalCondition(o) !== 'Arrived' && !o.arrivalDate;
                                       return (
                                         <tr
                                           key={o.id}
@@ -646,49 +681,45 @@ const DeliveryPage = ({
                                           <td className="td">
                                             <Pill
                                               bg={
-                                                (o.qtyReceived || 0) >= o.quantity && o.quantity > 0
+                                                arrivalCondition(o) === 'Arrived'
                                                   ? '#D1FAE5'
-                                                  : o.arrivalDate && (o.qtyReceived || 0) < o.quantity
+                                                  : arrivalCondition(o) === 'Back Order'
                                                     ? '#FEE2E2'
                                                     : '#FEF3C7'
                                               }
                                               color={
-                                                (o.qtyReceived || 0) >= o.quantity && o.quantity > 0
+                                                arrivalCondition(o) === 'Arrived'
                                                   ? '#059669'
-                                                  : o.arrivalDate && (o.qtyReceived || 0) < o.quantity
+                                                  : arrivalCondition(o) === 'Back Order'
                                                     ? '#DC2626'
                                                     : '#D97706'
                                               }
                                             >
-                                              {(o.qtyReceived || 0) >= o.quantity && o.quantity > 0
-                                                ? `${o.qtyReceived || 0}/${o.quantity} Arrived`
-                                                : o.arrivalDate && (o.qtyReceived || 0) < o.quantity
-                                                  ? `${o.qtyReceived || 0}/${o.quantity} Back Order`
-                                                  : `0/${o.quantity} Awaiting`}
+                                              {`${o.qtyReceived || 0}/${o.quantity} ${arrivalCondition(o)}`}
                                             </Pill>
                                           </td>
                                           <td className="td">
                                             <button
-                                              className={hasPending || !o.arrivalDate ? 'bp' : 'bs'}
-                                              disabled={!hasPending && !!o.arrivalDate}
+                                              className={canConfirm ? 'bp' : 'bs'}
+                                              disabled={!canConfirm}
                                               onClick={() => confirmArrival(o.id)}
                                               style={{
                                                 padding: '4px 10px',
                                                 fontSize: 11,
                                                 borderRadius: 6,
-                                                opacity: hasPending || !o.arrivalDate ? 1 : 0.4,
-                                                cursor: hasPending || !o.arrivalDate ? 'pointer' : 'default',
+                                                opacity: canConfirm ? 1 : 0.4,
+                                                cursor: canConfirm ? 'pointer' : 'default',
                                               }}
                                             >
                                               {hasPending
                                                 ? o.arrivalDate
                                                   ? 'Update'
                                                   : 'Confirm'
-                                                : o.arrivalDate
-                                                  ? o.status === 'Received'
-                                                    ? '\u2713 Done'
-                                                    : 'Confirmed'
-                                                  : 'Confirm'}
+                                                : arrivalCondition(o) === 'Arrived'
+                                                  ? '\u2713 Done'
+                                                  : o.arrivalDate
+                                                    ? 'Confirmed'
+                                                    : 'Confirm'}
                                             </button>
                                           </td>
                                         </tr>
@@ -761,23 +792,29 @@ const DeliveryPage = ({
                                     <button
                                       className="bw"
                                       onClick={async () => {
-                                        const received = bgOrders.filter((o) => o.qtyReceived >= o.quantity).length;
-                                        const backorder = bgOrders.filter((o) => o.qtyReceived < o.quantity).length;
+                                        // The batch, not the filtered view —
+                                        // this message tells someone what
+                                        // arrived, and it was counting only the
+                                        // rows currently on screen.
+                                        const received = allOrders.filter(
+                                          (o) => o.quantity > 0 && (o.qtyReceived || 0) >= o.quantity,
+                                        ).length;
+                                        const backorder = allOrders.length - received;
                                         const itemsList =
-                                          bgOrders
+                                          allOrders
                                             .slice(0, 5)
                                             .map(
                                               (o) =>
                                                 `\u2022 ${(o.description || '').slice(0, 30)}: ${o.qtyReceived}/${o.quantity}`,
                                             )
                                             .join('\n') +
-                                          (bgOrders.length > 5 ? `\n...and ${bgOrders.length - 5} more` : '');
+                                          (allOrders.length > 5 ? `\n...and ${allOrders.length - 5} more` : '');
                                         const arrMsg = fillTemplate(
                                           waMessageTemplates.partArrival?.message ||
                                             '\u2705 *Part Arrival Verified*\n\nMonth: {month}\nDate: {date}\nItems: {totalItems}\nReceived: {received}\nBack Orders: {backOrders}\nVerified By: {verifiedBy}\n\n{itemsList}',
                                           {
                                             month: bg.month,
-                                            totalItems: bgOrders.length,
+                                            totalItems: allOrders.length,
                                             received,
                                             backOrders: backorder,
                                             verifiedBy: currentUser?.name || 'Admin',
@@ -834,7 +871,24 @@ const DeliveryPage = ({
                                   <button
                                     className="bp"
                                     onClick={async () => {
-                                      const allReceived = bgOrders.every((o) => o.qtyReceived >= o.quantity);
+                                      // The whole batch, not the filtered view,
+                                      // and quantity 0 does not count as
+                                      // received — `0 >= 0` was letting a row
+                                      // with a blank quantity cell close a
+                                      // batch out.
+                                      const outstanding = allOrders.filter(
+                                        (o) => !(o.quantity > 0 && (o.qtyReceived || 0) >= o.quantity),
+                                      );
+                                      if (outstanding.length > 0) {
+                                        notify(
+                                          'Not Fully Received',
+                                          `${outstanding.length} of ${allOrders.length} order(s) in ${bg.month} are still outstanding — the first is ${
+                                            outstanding[0].materialNo || outstanding[0].description || 'an unnamed row'
+                                          }.`,
+                                          'warning',
+                                        );
+                                      }
+                                      const allReceived = outstanding.length === 0;
                                       if (allReceived) {
                                         setBulkGroups((prev) =>
                                           prev.map((g) => (g.id === bg.id ? { ...g, status: 'Completed' } : g)),
@@ -847,21 +901,21 @@ const DeliveryPage = ({
                                         if (waConnected && waNotifyRules.partArrivalDone) {
                                           try {
                                             const completeItemsList =
-                                              bgOrders
+                                              allOrders
                                                 .slice(0, 5)
                                                 .map(
                                                   (o) =>
                                                     `\u2022 ${(o.description || '').slice(0, 30)}: ${o.qtyReceived}/${o.quantity}`,
                                                 )
                                                 .join('\n') +
-                                              (bgOrders.length > 5 ? `\n...and ${bgOrders.length - 5} more` : '');
+                                              (allOrders.length > 5 ? `\n...and ${allOrders.length - 5} more` : '');
                                             const completeMsg = fillTemplate(
                                               waMessageTemplates.partArrival?.message ||
                                                 '\u2705 *Part Arrival Verified*\n\nMonth: {month}\nDate: {date}\nItems: {totalItems}\nReceived: {received}\nBack Orders: {backOrders}\nVerified By: {verifiedBy}\n\n{itemsList}',
                                               {
                                                 month: bg.month,
-                                                totalItems: bgOrders.length,
-                                                received: bgOrders.length,
+                                                totalItems: allOrders.length,
+                                                received: allOrders.length,
                                                 backOrders: 0,
                                                 verifiedBy: currentUser?.name || 'Admin',
                                                 date: todayLocal(),
@@ -1039,6 +1093,9 @@ const DeliveryPage = ({
                   const dispQty = pv ? pv.qtyReceived : o.qtyReceived || 0;
                   const dispBO = pv ? pv.qtyReceived - o.quantity : (o.qtyReceived || 0) - o.quantity;
                   const hasPending = !!pv;
+                  const canConfirm = hasPending
+                    ? pv.qtyReceived > (o.qtyReceived || 0)
+                    : arrivalCondition(o) !== 'Arrived' && !o.arrivalDate;
                   return (
                     <tr
                       key={o.id}
@@ -1115,49 +1172,45 @@ const DeliveryPage = ({
                       <td className="td">
                         <Pill
                           bg={
-                            (o.qtyReceived || 0) >= o.quantity && o.quantity > 0
+                            arrivalCondition(o) === 'Arrived'
                               ? '#D1FAE5'
-                              : o.arrivalDate && (o.qtyReceived || 0) < o.quantity
+                              : arrivalCondition(o) === 'Back Order'
                                 ? '#FEE2E2'
                                 : '#FEF3C7'
                           }
                           color={
-                            (o.qtyReceived || 0) >= o.quantity && o.quantity > 0
+                            arrivalCondition(o) === 'Arrived'
                               ? '#059669'
-                              : o.arrivalDate && (o.qtyReceived || 0) < o.quantity
+                              : arrivalCondition(o) === 'Back Order'
                                 ? '#DC2626'
                                 : '#D97706'
                           }
                         >
-                          {(o.qtyReceived || 0) >= o.quantity && o.quantity > 0
-                            ? `${o.qtyReceived || 0}/${o.quantity} Arrived`
-                            : o.arrivalDate && (o.qtyReceived || 0) < o.quantity
-                              ? `${o.qtyReceived || 0}/${o.quantity} Back Order`
-                              : `0/${o.quantity} Awaiting`}
+                          {`${o.qtyReceived || 0}/${o.quantity} ${arrivalCondition(o)}`}
                         </Pill>
                       </td>
                       <td className="td">
                         <button
-                          className={hasPending || !o.arrivalDate ? 'bp' : 'bs'}
-                          disabled={!hasPending && !!o.arrivalDate}
+                          className={canConfirm ? 'bp' : 'bs'}
+                          disabled={!canConfirm}
                           onClick={() => confirmArrival(o.id)}
                           style={{
                             padding: '4px 10px',
                             fontSize: 11,
                             borderRadius: 6,
-                            opacity: hasPending || !o.arrivalDate ? 1 : 0.4,
-                            cursor: hasPending || !o.arrivalDate ? 'pointer' : 'default',
+                            opacity: canConfirm ? 1 : 0.4,
+                            cursor: canConfirm ? 'pointer' : 'default',
                           }}
                         >
                           {hasPending
                             ? o.arrivalDate
                               ? 'Update'
                               : 'Confirm'
-                            : o.arrivalDate
-                              ? o.status === 'Received'
-                                ? '\u2713 Done'
-                                : 'Confirmed'
-                              : 'Confirm'}
+                            : arrivalCondition(o) === 'Arrived'
+                              ? '\u2713 Done'
+                              : o.arrivalDate
+                                ? 'Confirmed'
+                                : 'Confirm'}
                         </button>
                       </td>
                     </tr>
@@ -1361,12 +1414,7 @@ const DeliveryPage = ({
             : arrivalTypeFilter === 'Single'
               ? approvedAll.filter((o) => !o.bulkGroupId)
               : approvedAll;
-        const getArrivalCond = (o) =>
-          (o.qtyReceived || 0) >= o.quantity && o.quantity > 0
-            ? 'Arrived'
-            : o.arrivalDate && (o.qtyReceived || 0) < o.quantity
-              ? 'Back Order'
-              : 'Awaiting';
+        const getArrivalCond = arrivalCondition;
         const arrivalFiltered =
           arrivalStatusFilter === 'All'
             ? approvedOrders

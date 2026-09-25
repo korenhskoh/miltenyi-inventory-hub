@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { toLocalYmd, normalizeDate, daysFromNowLocal, todayLocal } from './dates.js';
+import { toLocalYmd, normalizeDate, daysFromNowLocal, todayLocal, compareMonths, monthSortKey } from './dates.js';
 
 describe('dates', () => {
   it('formats local calendar day (not UTC)', () => {
@@ -20,5 +20,24 @@ describe('dates', () => {
   it('todayLocal / daysFromNowLocal are YYYY-MM-DD', () => {
     expect(todayLocal()).toMatch(/^\d{4}-\d{2}-\d{2}$/);
     expect(daysFromNowLocal(1) > todayLocal()).toBe(true);
+  });
+});
+
+describe('month ordering', () => {
+  it('sorts months chronologically, not alphabetically', () => {
+    // A plain .sort() on these labels gave Apr 2025, Apr 2026, Aug 2025,
+    // Aug 2026, Dec 2025, Feb 2026, Jan 2025 — which is what the All Orders
+    // month dropdown showed after importing two years of workbooks.
+    const labels = ['Dec 2025', 'Jan 2025', 'Apr 2026', 'Feb 2026', 'Aug 2025'];
+    expect([...labels].sort(compareMonths)).toEqual(['Jan 2025', 'Aug 2025', 'Dec 2025', 'Feb 2026', 'Apr 2026']);
+  });
+
+  it('puts a label that is not a month last rather than scattering it', () => {
+    const sorted = ['Week 12', 'Mar 2026', 'Jan 2026'].sort(compareMonths);
+    expect(sorted).toEqual(['Jan 2026', 'Mar 2026', 'Week 12']);
+  });
+
+  it('reads a full month name too', () => {
+    expect(monthSortKey('January 2026')).toBe(monthSortKey('Jan 2026'));
   });
 });

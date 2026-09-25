@@ -110,10 +110,14 @@ router.get(
         SELECT
           o.*,
           CASE
-            WHEN COALESCE(o.list_price, 0) > 0 THEN o.list_price * COALESCE(o.quantity, 0)
-            WHEN COALESCE(c.sg_price, 0) > 0 THEN c.sg_price * COALESCE(o.quantity, 0)
-            WHEN COALESCE(c.transfer_price, 0) > 0 THEN c.transfer_price * COALESCE(o.quantity, 0)
-            WHEN COALESCE(c.dist_price, 0) > 0 THEN c.dist_price * COALESCE(o.quantity, 0)
+            -- Every branch requires a real quantity, to match getEffectiveTotal
+            -- in src/lib/pricing.js: multiplying a price by a quantity of zero
+            -- wrote an imported row's recorded total down to nothing.
+            WHEN COALESCE(o.quantity, 0) <= 0 THEN COALESCE(o.total_cost, 0)
+            WHEN COALESCE(o.list_price, 0) > 0 THEN o.list_price * o.quantity
+            WHEN COALESCE(c.sg_price, 0) > 0 THEN c.sg_price * o.quantity
+            WHEN COALESCE(c.transfer_price, 0) > 0 THEN c.transfer_price * o.quantity
+            WHEN COALESCE(c.dist_price, 0) > 0 THEN c.dist_price * o.quantity
             ELSE COALESCE(o.total_cost, 0)
           END AS effective_total
         FROM orders o
@@ -130,8 +134,13 @@ router.get(
         -- This used to be back_order < 0, a field every order carries from
         -- creation and which is never reset on rejection, so the tile counted
         -- orders that had never even been approved, let alone shipped.
+        -- What makes it a back order is that SOMETHING arrived and it was not
+        -- everything — not whether an arrival date was typed in. Requiring the
+        -- date hid every imported short delivery, because these workbooks
+        -- routinely fill the received count and leave the date column blank.
+        -- Matches arrivalCondition() in src/lib/arrival.js.
         COUNT(*) FILTER (
-          WHERE arrival_date IS NOT NULL
+          WHERE COALESCE(qty_received, 0) > 0
             AND COALESCE(qty_received, 0) < COALESCE(quantity, 0)
             AND COALESCE(status, '') <> 'Rejected'
         )::int AS back_orders,
@@ -146,10 +155,14 @@ router.get(
         COALESCE(SUM(o.quantity), 0)::int AS items,
         COALESCE(SUM(
           CASE
-            WHEN COALESCE(o.list_price, 0) > 0 THEN o.list_price * COALESCE(o.quantity, 0)
-            WHEN COALESCE(c.sg_price, 0) > 0 THEN c.sg_price * COALESCE(o.quantity, 0)
-            WHEN COALESCE(c.transfer_price, 0) > 0 THEN c.transfer_price * COALESCE(o.quantity, 0)
-            WHEN COALESCE(c.dist_price, 0) > 0 THEN c.dist_price * COALESCE(o.quantity, 0)
+            -- Every branch requires a real quantity, to match getEffectiveTotal
+            -- in src/lib/pricing.js: multiplying a price by a quantity of zero
+            -- wrote an imported row's recorded total down to nothing.
+            WHEN COALESCE(o.quantity, 0) <= 0 THEN COALESCE(o.total_cost, 0)
+            WHEN COALESCE(o.list_price, 0) > 0 THEN o.list_price * o.quantity
+            WHEN COALESCE(c.sg_price, 0) > 0 THEN c.sg_price * o.quantity
+            WHEN COALESCE(c.transfer_price, 0) > 0 THEN c.transfer_price * o.quantity
+            WHEN COALESCE(c.dist_price, 0) > 0 THEN c.dist_price * o.quantity
             ELSE COALESCE(o.total_cost, 0)
           END
         ), 0)::float AS value
@@ -226,8 +239,31 @@ router.post('/', async (req, res) => {
 
     // An order may not be born already approved / rejected / received — that
     // would skip the approval workflow entirely.
-    if ((isApprovalDecision(snakeBody) || isCloseOut(snakeBody)) && !(await userHasPermission(req.user, 'approvals'))) {
-      return res.status(403).json({ error: 'Permission required: approvals' });
+    //
+    // Importing history is the one legitimate exception, and it was silently
+    // broken: every row of a historical workbook that had already arrived
+    // carries status 'Received' and a received quantity, which is exactly what
+    // both guards refuse. Anyone but an admin importing two years of orders got
+    // "700 of 800 rejected" with no explanation — and a partially-received row
+    // was refused too, on the qty_received arm alone.
+    //
+    // So the import says what it is, with ?historical=1, and is allowed for
+    // whoever can reach the importer. It lives on the Settings page, so
+    // `settings` is the permission that already gates it; `approvals` is
+    // accepted as well for the people who grant it instead. Ordinary order
+    // creation never sends the flag and is unchanged.
+    const historical = req.query.historical === '1';
+    const mayBackfill =
+      historical &&
+      ((await userHasPermission(req.user, 'settings')) || (await userHasPermission(req.user, 'approvals')));
+    if ((isApprovalDecision(snakeBody) || isCloseOut(snakeBody)) && !mayBackfill) {
+      if (!(await userHasPermission(req.user, 'approvals'))) {
+        return res.status(403).json({
+          error: historical
+            ? 'Permission required: settings or approvals (importing historical orders)'
+            : 'Permission required: approvals',
+        });
+      }
     }
 
     const keys = Object.keys(snakeBody);

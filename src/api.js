@@ -353,10 +353,19 @@ async function getOrders(filters = {}) {
   }
 }
 
-async function createOrder(order) {
+/**
+ * Create an order.
+ *
+ * `historical` marks a row coming from a workbook import. The server refuses to
+ * create an order that is born already approved or already received — that
+ * would skip the approval workflow — but a historical import is precisely a
+ * batch of orders that arrived long ago, so it says so and is allowed when the
+ * caller can reach the importer.
+ */
+async function createOrder(order, { historical = false } = {}) {
   try {
     const res = handleResponse(
-      await fetch(`${BASE}/api/orders`, {
+      await fetch(`${BASE}/api/orders${historical ? '?historical=1' : ''}`, {
         method: 'POST',
         headers: authHeaders(),
         body: JSON.stringify(order),
@@ -366,6 +375,39 @@ async function createOrder(order) {
     return await res.json();
   } catch {
     return null;
+  }
+}
+
+/**
+ * Create an order and say why if it fails.
+ *
+ * `createOrder` returns null on any failure, and every caller treats that as a
+ * plain false — which is right for a single form, where the UI can just say the
+ * save failed. An import saving hundreds of rows needs the reason: "700 of 800
+ * rejected" sent people hunting through the spreadsheet for a problem that was
+ * actually a missing permission. This returns { ok, order, error } instead, and
+ * is deliberately separate so the truthiness contract of `createOrder` is
+ * untouched.
+ */
+async function createOrderReporting(order, { historical = false } = {}) {
+  try {
+    const res = handleResponse(
+      await fetch(`${BASE}/api/orders${historical ? '?historical=1' : ''}`, {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify(order),
+      }),
+    );
+    if (!res.ok) {
+      const reason = await res
+        .json()
+        .then((j) => j?.error)
+        .catch(() => null);
+      return { ok: false, error: reason || `HTTP ${res.status}` };
+    }
+    return { ok: true, order: await res.json() };
+  } catch (e) {
+    return { ok: false, error: e?.message || 'Network error' };
   }
 }
 
@@ -1427,6 +1469,7 @@ const api = {
   getOrders,
   getOrderStats,
   createOrder,
+  createOrderReporting,
   updateOrder,
   deleteOrder,
   bulkUpdateOrderStatus,

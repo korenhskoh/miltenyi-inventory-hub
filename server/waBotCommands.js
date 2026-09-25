@@ -352,11 +352,17 @@ async function executeDeleteConfirm(session) {
     return `🗑️ Order *${id}* deleted.`;
   }
   if (type === 'bulk') {
+    // Release the batch's orders instead of leaving them pointing at a group
+    // that no longer exists — an order in that state cannot be seen or received
+    // anywhere in the app while still counting in every total.
+    const released = await query('UPDATE orders SET bulk_group_id = NULL WHERE bulk_group_id = $1', [id]);
     await query('DELETE FROM bulk_groups WHERE id = $1', [id]);
-    await logBotAudit('delete_bulk', 'bulk_group', id, {});
+    await logBotAudit('delete_bulk', 'bulk_group', id, { ordersReleased: released.rowCount });
     session.state = 'idle';
     session.data = {};
-    return `🗑️ Bulk group *${id}* deleted.`;
+    return `🗑️ Bulk group *${id}* deleted.${
+      released.rowCount ? `\n${released.rowCount} order(s) kept as single orders.` : ''
+    }`;
   }
   session.state = 'idle';
   return 'Nothing to delete.';
