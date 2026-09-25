@@ -302,7 +302,38 @@ router.post('/', async (req, res) => {
 
     const sql = `INSERT INTO orders (${keys.join(', ')}) VALUES (${placeholders.join(', ')}) RETURNING *`;
     const result = await query(sql, values);
-    res.status(201).json(snakeToCamel(result.rows[0]));
+    const created = snakeToCamel(result.rows[0]);
+    res.status(201).json(created);
+
+    // "New order created → Notify team", moved here from the browser.
+    //
+    // It used to fire only from the SPA, so an order raised through the
+    // WhatsApp bot or the API notified nobody however the rule was set. It also
+    // reused the approval-request template, which expects an order count, a
+    // total quantity and a table this caller has never had — so the message
+    // went out with blank fields, no mention of the part actually ordered, and
+    // an unsolicited "Reply APPROVE or REJECT" on what is only a notice. The
+    // bot treats those words as commands, so it invited replies to a question
+    // nobody asked.
+    //
+    // Two exclusions. A historical import creates hundreds of rows at once and
+    // must not message anyone about orders from last year; and an order that
+    // belongs to a batch is announced once by the batch, not once per line.
+    if (!historical && !created.bulkGroupId) {
+      void notifyEvent(
+        'orderCreated',
+        {
+          orderId: created.id,
+          description: created.description || '',
+          materialNo: created.materialNo || '',
+          quantity: created.quantity,
+          total: created.totalCost,
+          orderBy: created.orderBy || '',
+          date: created.orderDate || new Date().toISOString().slice(0, 10),
+        },
+        { subject: `New order: ${created.description || created.id}` },
+      );
+    }
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

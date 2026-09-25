@@ -12,6 +12,16 @@ Date: ${data.date}
 
 _Miltenyi Inventory Hub SG_`,
 
+  bulkOrderCreated: (data) => `\u{1F4E6} *New Bulk Order*
+
+Batch: ${data.month}
+Items: ${data.itemCount}
+Total: ${data.totalCost}
+Raised By: ${data.orderBy}
+Date: ${data.date}
+
+_Miltenyi Inventory Hub SG_`,
+
   backorderReceived: (data) => `\u{1F4E6} *Backorder Update*
 
 Good news! Items have arrived:

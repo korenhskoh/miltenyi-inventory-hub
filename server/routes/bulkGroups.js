@@ -6,6 +6,7 @@ import { paginate, envelope, limitClause } from '../pagination.js';
 import { asyncHandler } from '../middleware/errorHandler.js';
 import { requireAdmin } from '../middleware/auth.js';
 import { requirePermission, userHasPermission } from '../middleware/permissions.js';
+import { notifyEvent } from '../notify.js';
 
 const router = Router();
 
@@ -49,7 +50,31 @@ router.post('/', async (req, res) => {
 
     const sql = `INSERT INTO bulk_groups (${keys.join(', ')}) VALUES (${placeholders.join(', ')}) RETURNING *`;
     const result = await query(sql, values);
-    res.status(201).json(snakeToCamel(result.rows[0]));
+    const created = snakeToCamel(result.rows[0]);
+    res.status(201).json(created);
+
+    // "Bulk order created → Notify all engineers", moved here from the browser
+    // for the same reasons as the single-order rule, and announced ONCE for the
+    // batch rather than once per line — the orders are created individually, so
+    // a batch of forty would otherwise be forty messages.
+    //
+    // The batch is created before its orders, so these are the intended
+    // figures. If some lines then fail to save the count is corrected in the
+    // database but the message has already gone; that is the cost of announcing
+    // the batch rather than spamming the parts.
+    if (req.query.historical !== '1' && Number(created.items) > 0) {
+      void notifyEvent(
+        'bulkOrderCreated',
+        {
+          month: created.month || '',
+          itemCount: created.items,
+          totalCost: created.totalCost,
+          orderBy: created.createdBy || '',
+          date: created.date || new Date().toISOString().slice(0, 10),
+        },
+        { subject: `New bulk order: ${created.month || created.id}` },
+      );
+    }
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

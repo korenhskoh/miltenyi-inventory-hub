@@ -108,10 +108,19 @@ export async function notifyEvent(
   { templateKey = ruleKey, subject, to = null, audienceRole = null } = {},
 ) {
   try {
-    if (!(await isRuleEnabled(ruleKey))) return { sent: 0, skipped: 'rule-off' };
+    // A skip is logged, not silent. "Nothing happened" and "nothing was
+    // supposed to happen" look identical from outside, and telling them apart
+    // was impossible while both produced no trace at all.
+    if (!(await isRuleEnabled(ruleKey))) {
+      logger.info({ ruleKey }, 'Event notification skipped — rule is off');
+      return { sent: 0, skipped: 'rule-off' };
+    }
 
     const { sendText, formatPhoneNumber } = getWaContext();
-    if (!sendText || !formatPhoneNumber) return { sent: 0, skipped: 'whatsapp-not-connected' };
+    if (!sendText || !formatPhoneNumber) {
+      logger.info({ ruleKey }, 'Event notification skipped — WhatsApp not connected');
+      return { sent: 0, skipped: 'whatsapp-not-connected' };
+    }
 
     // The editable template from Settings wins; the built-in is the fallback so
     // a rule still sends something when nobody has customised it.
