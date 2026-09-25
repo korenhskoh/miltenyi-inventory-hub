@@ -661,7 +661,14 @@ const DeliveryPage = ({
                                           // arrived with no date in the sheet, and
                                           // a greyed-out "Confirmed" on a live back
                                           // order, which read as finished work.
-                                          const canConfirm = hasPending && pv.qtyReceived > (o.qtyReceived || 0);
+                                          // Enabled whenever the number in the box differs from what is
+                                          // recorded — in EITHER direction. It was restricted to increases,
+                                          // which greyed the button out at exactly the moment somebody was
+                                          // correcting a figure they had just got wrong, with no way to
+                                          // press it and no explanation. Reducing is a real operation now,
+                                          // so the button is real too.
+                                          const canConfirm = hasPending && pv.qtyReceived !== (o.qtyReceived || 0);
+                                          const isCorrection = hasPending && pv.qtyReceived < (o.qtyReceived || 0);
                                           return (
                                             <tr
                                               key={o.id}
@@ -804,9 +811,11 @@ const DeliveryPage = ({
                                                   }}
                                                 >
                                                   {hasPending
-                                                    ? o.arrivalDate
-                                                      ? 'Update'
-                                                      : 'Confirm'
+                                                    ? isCorrection
+                                                      ? 'Correct'
+                                                      : o.arrivalDate
+                                                        ? 'Update'
+                                                        : 'Confirm'
                                                     : arrivalCondition(o) === 'Arrived'
                                                       ? '\u2713 Done'
                                                       : o.arrivalDate
@@ -1210,7 +1219,14 @@ const DeliveryPage = ({
                       const dispQty = pv ? pv.qtyReceived : o.qtyReceived || 0;
                       const dispBO = pv ? pv.qtyReceived - o.quantity : (o.qtyReceived || 0) - o.quantity;
                       const hasPending = !!pv;
-                      const canConfirm = hasPending && pv.qtyReceived > (o.qtyReceived || 0);
+                      // Enabled whenever the number in the box differs from what is
+                      // recorded — in EITHER direction. It was restricted to increases,
+                      // which greyed the button out at exactly the moment somebody was
+                      // correcting a figure they had just got wrong, with no way to
+                      // press it and no explanation. Reducing is a real operation now,
+                      // so the button is real too.
+                      const canConfirm = hasPending && pv.qtyReceived !== (o.qtyReceived || 0);
+                      const isCorrection = hasPending && pv.qtyReceived < (o.qtyReceived || 0);
                       return (
                         <tr
                           key={o.id}
@@ -1333,9 +1349,11 @@ const DeliveryPage = ({
                               }}
                             >
                               {hasPending
-                                ? o.arrivalDate
-                                  ? 'Update'
-                                  : 'Confirm'
+                                ? isCorrection
+                                  ? 'Correct'
+                                  : o.arrivalDate
+                                    ? 'Update'
+                                    : 'Confirm'
                                 : arrivalCondition(o) === 'Arrived'
                                   ? '\u2713 Done'
                                   : o.arrivalDate

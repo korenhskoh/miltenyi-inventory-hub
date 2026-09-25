@@ -457,24 +457,47 @@ router.post(
 
       const already = Number(order.qty_received) || 0;
       const delta = requested - already;
-      if (delta < 0) {
-        return { status: 400, body: { error: `Already received ${already}; use an adjustment to reduce it.` } };
-      }
+      // A REDUCTION is a correction, and it has to be possible somewhere.
+      //
+      // This used to answer "Already received N; use an adjustment to reduce
+      // it" — advice with nowhere to go: the only adjustment endpoint is
+      // admin-only and moves stock without touching the order, so a goods-in
+      // mistake could not be undone by the person who made it. The figure stood
+      // for good and the stock stayed with it.
+      //
+      // It runs through the same transaction as an arrival because the order
+      // and the stock must move together, and it is recorded as an
+      // `adjustment`, not an arrival, so the history reads honestly.
       if (delta === 0) {
         // Idempotent: a repeated confirmation of the same figure changes
         // nothing rather than booking the stock in a second time.
         return { status: 200, body: { order: snakeToCamel(order), delta: 0, alreadyRecorded: true } };
       }
 
-      const status = requested >= ordered ? 'Received' : order.status;
+      // Fully received sets 'Received'; correcting back below the full quantity
+      // must take it off again, or the order stays closed while short.
+      const wasReceived = lower(order.status) === 'received';
+      const nowFull = ordered > 0 && requested >= ordered;
+      const status = nowFull ? 'Received' : wasReceived ? 'Approved' : order.status;
+      // Corrected to nothing received means it did not arrive, so the arrival
+      // stamp goes with it rather than lingering as evidence of a delivery.
+      const clearStamp = requested === 0;
       const updated = await tx.query(
         `UPDATE orders
          SET qty_received = $1, back_order = $2, status = $3, arrival_date = $4, arrival_checked_by = $5
          WHERE id = $6 RETURNING *`,
-        [requested, requested - ordered, status, req.body?.arrivalDate || null, req.body?.arrivalCheckedBy || null, id],
+        [
+          requested,
+          requested - ordered,
+          status,
+          clearStamp ? null : req.body?.arrivalDate || order.arrival_date || null,
+          clearStamp ? null : req.body?.arrivalCheckedBy || order.arrival_checked_by || null,
+          id,
+        ],
       );
 
       let inventory = null;
+      let movement = 0;
       if (order.material_no) {
         const existing = await tx.query(
           `SELECT * FROM local_inventory
@@ -484,11 +507,23 @@ router.post(
         );
         let row;
         if (existing.rows.length) {
+          // Never below zero. Some of what was booked in may already have been
+          // charged out to an engineer, and taking it back out would invent a
+          // negative shelf. What can be removed is removed; the transaction row
+          // records the amount that actually moved.
+          const onHand = Number(existing.rows[0].quantity) || 0;
+          const applied = delta < 0 ? -Math.min(onHand, -delta) : delta;
           const bumped = await tx.query(
             'UPDATE local_inventory SET quantity = quantity + $1, updated_at = NOW() WHERE id = $2 RETURNING *',
-            [delta, existing.rows[0].id],
+            [applied, existing.rows[0].id],
           );
           row = bumped.rows[0];
+          movement = applied;
+        } else if (delta < 0) {
+          // Nothing on the shelf to take back out. The order is still corrected;
+          // there is simply no stock movement to make.
+          row = null;
+          movement = 0;
         } else {
           // ON CONFLICT, because FOR UPDATE can only lock a row that exists.
           // Two arrivals confirmed at once for a material that has never been
@@ -504,24 +539,41 @@ router.post(
             [order.material_no, order.description || '', delta],
           );
           row = created.rows[0];
+          movement = delta;
         }
-        await tx.query(
-          `INSERT INTO inventory_transactions (inventory_id, material_no, quantity_change, quantity_after, type, user_id, user_name, notes)
-           VALUES ($1, $2, $3, $4, 'arrival', $5, $6, $7)`,
-          [
-            row.id,
-            order.material_no,
-            delta,
-            row.quantity,
-            req.user?.id || null,
-            req.user?.username || null,
-            `Part arrival for ${id}`,
-          ],
-        );
-        inventory = snakeToCamel(row);
+        if (row && movement !== 0) {
+          await tx.query(
+            `INSERT INTO inventory_transactions (inventory_id, material_no, quantity_change, quantity_after, type, user_id, user_name, notes)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+            [
+              row.id,
+              order.material_no,
+              movement,
+              row.quantity,
+              // A correction is not an arrival, and the stock history should not
+              // claim it was one.
+              delta < 0 ? 'adjustment' : 'arrival',
+              req.user?.id || null,
+              req.user?.username || null,
+              delta < 0 ? `Correction for ${id}: received ${already} → ${requested}` : `Part arrival for ${id}`,
+            ],
+          );
+        }
+        if (row) inventory = snakeToCamel(row);
       }
 
-      return { status: 200, body: { order: snakeToCamel(updated.rows[0]), delta, inventory } };
+      return {
+        status: 200,
+        body: {
+          order: snakeToCamel(updated.rows[0]),
+          delta,
+          // What actually moved on the shelf, which is not the same as the
+          // change to the order when some of it had already been used.
+          stockMoved: movement,
+          corrected: delta < 0,
+          inventory,
+        },
+      };
     });
 
     res.status(result.status).json(result.body);
