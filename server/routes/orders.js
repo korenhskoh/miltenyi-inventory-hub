@@ -95,6 +95,36 @@ export function isCloseOut(body) {
   return Number(body.qty_received) > 0 || lower(body.status) === 'received';
 }
 
+/**
+ * Fields that belong to an approval decision rather than to editing an order.
+ *
+ * Deciding an approval is a different job from editing, done by definition on
+ * orders somebody else raised — that is what the `approvals` permission is for.
+ * But ownership was still being enforced over the top of it, and `approvals`
+ * and `editAllOrders` are both off by default, so an approver who held exactly
+ * the permission the job needs was refused with "You can only edit your own
+ * orders".
+ *
+ * That failed in the worst possible way. The client updates the approval record
+ * first — which succeeds, because that endpoint only checks `approvals` — and
+ * then updates the order, which was refused. The request leaves the queue, the
+ * order stays Pending Approval, and there is no longer a button anywhere to try
+ * again; only an admin can rescue it. It looked fine to whoever set the system
+ * up, because an admin's permission check short-circuits.
+ *
+ * So an approval-only write is judged on `approvals`, exactly as an arrival-only
+ * write is judged on `delivery`. Anything beyond these fields is an ordinary
+ * edit and stays subject to ownership.
+ */
+const APPROVAL_FIELDS = new Set(['status', 'approval_status', 'approval_sent_date']);
+
+export function isApprovalOnlyWrite(body) {
+  const keys = Object.keys(body || {});
+  if (keys.length === 0) return false;
+  if (!keys.every((k) => APPROVAL_FIELDS.has(k))) return false;
+  return isApprovalDecision(body) || isApprovalReset(body);
+}
+
 // GET /stats - server-side aggregates for the dashboard (never subject to paging)
 router.get(
   '/stats',
@@ -307,7 +337,9 @@ router.put('/bulk-status', async (req, res) => {
     const bulkArrivalOnly =
       isArrivalOnlyWrite({ status, ...(approvalStatus ? { approval_status: approvalStatus } : {}) }) &&
       (await userHasPermission(req.user, 'delivery'));
-    if (!bulkArrivalOnly && !(await userHasPermission(req.user, 'editAllOrders'))) {
+    const bulkApprovalOnly =
+      isApprovalOnlyWrite({ status, ...(approvalStatus ? { approval_status: approvalStatus } : {}) }) && canApprove;
+    if (!bulkArrivalOnly && !bulkApprovalOnly && !(await userHasPermission(req.user, 'editAllOrders'))) {
       // order_by holds a DISPLAY NAME, so ownership has to be resolved against
       // the users table rather than compared to the token. An order with no
       // owner recorded counts as somebody else's, not as yours.
@@ -427,8 +459,17 @@ router.post(
           );
           row = bumped.rows[0];
         } else {
+          // ON CONFLICT, because FOR UPDATE can only lock a row that exists.
+          // Two arrivals confirmed at once for a material that has never been
+          // stocked — routine when a batch holds the same spare twice and
+          // goods-in presses Batch Confirm — both fell through to the INSERT,
+          // and the second died on the unique index with a raw 500.
           const created = await tx.query(
-            'INSERT INTO local_inventory (material_no, description, quantity) VALUES ($1, $2, $3) RETURNING *',
+            `INSERT INTO local_inventory (material_no, description, quantity)
+             VALUES ($1, $2, $3)
+             ON CONFLICT (material_no, COALESCE(lots_number, '__none__'))
+             DO UPDATE SET quantity = local_inventory.quantity + EXCLUDED.quantity, updated_at = NOW()
+             RETURNING *`,
             [order.material_no, order.description || '', delta],
           );
           row = created.rows[0];
@@ -509,7 +550,8 @@ router.put('/:id', async (req, res) => {
     // order's quantity and price, including one already approved by someone
     // else. Mirror the client rule here.
     const arrivalOnly = isArrivalOnlyWrite(snakeBody) && (await userHasPermission(req.user, 'delivery'));
-    if (!arrivalOnly && !(await userHasPermission(req.user, 'editAllOrders'))) {
+    const approvalOnly = isApprovalOnlyWrite(snakeBody) && (await userHasPermission(req.user, 'approvals'));
+    if (!arrivalOnly && !approvalOnly && !(await userHasPermission(req.user, 'editAllOrders'))) {
       // orders.order_by holds the user's DISPLAY NAME, while the token carries
       // only id/username — so the owner check has to resolve the name from the
       // users table rather than comparing against the token.
