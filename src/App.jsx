@@ -260,7 +260,9 @@ export default function App() {
   const [catalogSort, setCatalogSort] = useState({ key: 'sg', dir: 'desc' });
   const [orderSort, setOrderSort] = useState({ key: null, dir: 'asc' });
   const [bulkSort, setBulkSort] = useState({ key: null, dir: 'asc' });
-  const [arrivalSort, setArrivalSort] = useState({ key: 'approvalSentDate', dir: 'desc' });
+  // Newest order first. This was `approvalSentDate`, which is blank unless an
+  // approval request was actually sent, so the table was effectively unsorted.
+  const [arrivalSort, setArrivalSort] = useState({ key: 'orderDate', dir: 'desc' });
   const [partsCatalog, setPartsCatalog] = useState([]);
   const [catalogUploadMeta, setCatalogUploadMeta] = useState(() => {
     try {

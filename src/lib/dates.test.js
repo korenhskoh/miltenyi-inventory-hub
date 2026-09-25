@@ -41,3 +41,18 @@ describe('month ordering', () => {
     expect(monthSortKey('January 2026')).toBe(monthSortKey('Jan 2026'));
   });
 });
+
+describe('monthSortKey as a sort value', () => {
+  it('orders newest first when reversed', () => {
+    const batches = ['Apr 2026', 'Sep 2026', 'Dec 2025'].map((m) => ({ m, k: monthSortKey(m) }));
+    batches.sort((a, b) => b.k - a.k);
+    expect(batches.map((b) => b.m)).toEqual(['Sep 2026', 'Apr 2026', 'Dec 2025']);
+  });
+
+  it('is not finite for a label that is not a month, so callers can floor it', () => {
+    // Part Arrival maps this to -1 so an oddly named batch sorts to the bottom
+    // of a newest-first list instead of jumping to the top.
+    expect(Number.isFinite(monthSortKey('Week 12'))).toBe(false);
+    expect(Number.isFinite(monthSortKey('Sep 2026'))).toBe(true);
+  });
+});
