@@ -112,7 +112,9 @@ vi.mock('../db.js', () => ({
     // Permission lookups (middleware/permissions.js). These tests are about data
     // being shared between users, so give both of them the rights they exercise.
     if (sqlLower.startsWith('select') && sqlLower.includes('from users')) {
-      return { rows: [{ role: 'user', status: 'active', permissions: { approvals: true } }] };
+      return {
+        rows: [{ role: 'user', status: 'active', permissions: { approvals: true, orders: true, editAllOrders: true } }],
+      };
     }
 
     return { rows: [] };
@@ -155,17 +157,38 @@ const userB = { id: 'U002', username: 'bob', role: 'user' };
 // iterate the router stack manually. Instead, we'll use a simpler approach:
 // call the specific layer by matching path and method.
 
+/**
+ * The terminal handler for a route — the last entry in its stack, past any
+ * permission middleware. These tests are about data being shared between two
+ * users, not about who is allowed to write it; the gates are asserted
+ * separately below and exercised properly in order-guards.test.js. Taking
+ * stack[0] broke the moment a route grew a middleware in front of it.
+ */
 function findHandler(router, method, path) {
   for (const layer of router.stack) {
     if (layer.route) {
       const routePath = layer.route.path;
       const routeMethod = Object.keys(layer.route.methods)[0];
       if (routeMethod === method.toLowerCase() && routePath === path) {
-        return layer.route.stack[0].handle;
+        const stack = layer.route.stack;
+        return stack[stack.length - 1].handle;
       }
     }
   }
   return null;
+}
+
+/** How many handlers a route has, so a missing gate shows up as a count of 1. */
+function handlerCount(router, method, path) {
+  for (const layer of router.stack) {
+    if (layer.route) {
+      const routeMethod = Object.keys(layer.route.methods)[0];
+      if (routeMethod === method.toLowerCase() && layer.route.path === path) {
+        return layer.route.stack.length;
+      }
+    }
+  }
+  return 0;
 }
 
 beforeEach(() => {
@@ -237,12 +260,11 @@ describe('Data consistency - Orders', () => {
     expect(idsB).toContain('ORD-202');
   });
 
-  it('Part arrival update by User A is visible to User B', async () => {
+  it('Order edit by User A is visible to User B', async () => {
     const createHandler = findHandler(ordersRouter, 'POST', '/');
     const updateHandler = findHandler(ordersRouter, 'PUT', '/:id');
     const listHandler = findHandler(ordersRouter, 'GET', '/');
 
-    // Create an approved order (approval_status must be 'approved' for qty_received updates)
     await createHandler(
       mockReq({
         method: 'POST',
@@ -252,21 +274,42 @@ describe('Data consistency - Orders', () => {
       mockRes(),
     );
 
-    // User A records part arrival (qty_received)
-    const updateReq = mockReq({
-      method: 'PUT',
-      params: { id: 'ORD-301' },
-      body: { qtyReceived: 5 },
-      user: userA,
-    });
-    const updateRes = mockRes();
-    await updateHandler(updateReq, updateRes);
+    await updateHandler(
+      mockReq({ method: 'PUT', params: { id: 'ORD-301' }, body: { remark: 'checked on the dock' }, user: userA }),
+      mockRes(),
+    );
 
-    // User B fetches — should see updated qty_received
     const resB = mockRes();
     await listHandler(mockReq({ user: userB, query: {} }), resB);
     expect(resB._json.length).toBe(1);
-    expect(resB._json[0].qtyReceived || resB._json[0].qty_received).toBe(5);
+    expect(resB._json[0].remark).toBe('checked on the dock');
+  });
+
+  it('PUT /:id refuses to write a received quantity', async () => {
+    // This route writes the column and nothing else — no stock movement, no
+    // inventory_transactions row — and POST /:id/arrival is idempotent on the
+    // stored figure, so once a plain PUT had set qty_received the proper
+    // arrival call saw delta === 0 and did nothing. The units went permanently
+    // missing from stock with no trace.
+    const createHandler = findHandler(ordersRouter, 'POST', '/');
+    const updateHandler = findHandler(ordersRouter, 'PUT', '/:id');
+
+    await createHandler(
+      mockReq({
+        method: 'POST',
+        body: { id: 'ORD-302', description: 'Part', quantity: 10, approval_status: 'approved' },
+        user: userA,
+      }),
+      mockRes(),
+    );
+
+    const res = mockRes();
+    await updateHandler(
+      mockReq({ method: 'PUT', params: { id: 'ORD-302' }, body: { qtyReceived: 5 }, user: userA }),
+      res,
+    );
+    expect(res._status).toBe(400);
+    expect(String(res._json.error)).toMatch(/arrival/i);
   });
 });
 
@@ -381,5 +424,23 @@ describe('Data consistency - Bulk-linked orders', () => {
     expect(resB._json.length).toBe(1);
     const order = resB._json[0];
     expect(order.bulkGroupId || order.bulk_group_id).toBe('BG-301');
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════
+describe('Order write routes are permission-gated', () => {
+  // POST / and PUT /:id carried no permission middleware at all: revoking a
+  // user's `orders` permission stopped the WhatsApp bot (which checks it) and
+  // left the REST API wide open to the same account's still-valid 24h token.
+  it('POST / has a gate in front of the handler', () => {
+    expect(handlerCount(ordersRouter, 'POST', '/')).toBeGreaterThan(1);
+  });
+
+  it('PUT /:id has a gate in front of the handler', () => {
+    expect(handlerCount(ordersRouter, 'PUT', '/:id')).toBeGreaterThan(1);
+  });
+
+  it('DELETE /:id keeps its gate', () => {
+    expect(handlerCount(ordersRouter, 'DELETE', '/:id')).toBeGreaterThan(1);
   });
 });

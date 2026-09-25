@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import bcrypt from 'bcryptjs';
-import { query } from '../db.js';
+import { query, withTransaction } from '../db.js';
 import { snakeToCamel, camelToSnake } from '../utils.js';
 import { pickAllowed, requireFields } from '../validation.js';
 import { paginate, envelope, limitClause } from '../pagination.js';
@@ -13,15 +13,25 @@ const router = Router();
 const USER_FIELDS = ['id', 'username', 'password_hash', 'name', 'email', 'phone', 'role', 'status', 'permissions'];
 const USER_REQUIRED = ['username'];
 
-/** Is `id` an active admin with no other active admin to fall back on? */
-async function isLastActiveAdmin(id) {
-  const target = await query('SELECT role, status FROM users WHERE id = $1', [id]);
+/**
+ * Is `id` an active admin with no other active admin to fall back on?
+ *
+ * Runs inside the caller's transaction and locks every active admin row, so two
+ * concurrent demotions cannot both pass. Unlocked, with exactly two admins A
+ * and B, `PUT /users/A {status:'inactive'}` and `PUT /users/B {status:'inactive'}`
+ * both ran their check before either UPDATE, both saw one other active admin,
+ * and both committed — leaving the system with no admin at all and nothing at
+ * runtime able to recover it.
+ */
+async function isLastActiveAdmin(client, id) {
+  const target = await client.query('SELECT role, status FROM users WHERE id = $1 FOR UPDATE', [id]);
   const row = target.rows[0];
   if (!row || row.role !== 'admin' || row.status !== 'active') return false;
-  const others = await query("SELECT COUNT(*) FROM users WHERE role = 'admin' AND status = 'active' AND id <> $1", [
-    id,
-  ]);
-  return parseInt(others.rows[0].count, 10) === 0;
+  const others = await client.query(
+    "SELECT id FROM users WHERE role = 'admin' AND status = 'active' AND id <> $1 FOR UPDATE",
+    [id],
+  );
+  return others.rows.length === 0;
 }
 
 // GET / - list all users (EXCLUDE password_hash)
@@ -92,13 +102,6 @@ router.put('/:id', async (req, res) => {
     if (snakeBody.role && !['admin', 'user'].includes(snakeBody.role)) {
       return res.status(400).json({ error: 'role must be admin or user' });
     }
-    // Never let the last active admin be demoted or deactivated — by themselves
-    // or by another admin.
-    if ((snakeBody.role && snakeBody.role !== 'admin') || (snakeBody.status && snakeBody.status !== 'active')) {
-      if (await isLastActiveAdmin(id)) {
-        return res.status(400).json({ error: 'Cannot demote or deactivate the only active admin' });
-      }
-    }
     const keys = Object.keys(snakeBody);
     const values = Object.values(snakeBody);
 
@@ -106,16 +109,26 @@ router.put('/:id', async (req, res) => {
       return res.status(400).json({ error: 'No fields to update' });
     }
 
-    const setClauses = keys.map((key, i) => `${key} = $${i + 1}`);
-    const sql = `UPDATE users SET ${setClauses.join(', ')} WHERE id = $${keys.length + 1} RETURNING id, username, name, email, phone, role, status, permissions, created`;
-    const result = await query(sql, [...values, id]);
+    // The last-admin check and the UPDATE have to be one atomic step, or two
+    // concurrent demotions each see the other admin and both go through.
+    const demoting =
+      (snakeBody.role && snakeBody.role !== 'admin') || (snakeBody.status && snakeBody.status !== 'active');
 
-    if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'User not found' });
-    }
-    invalidatePermissionCache(id);
+    const outcome = await withTransaction(async (client) => {
+      if (demoting && (await isLastActiveAdmin(client, id))) {
+        return { status: 400, body: { error: 'Cannot demote or deactivate the only active admin' } };
+      }
+      const setClauses = keys.map((key, i) => `${key} = $${i + 1}`);
+      const result = await client.query(
+        `UPDATE users SET ${setClauses.join(', ')} WHERE id = $${keys.length + 1} RETURNING id, username, name, email, phone, role, status, permissions, created`,
+        [...values, id],
+      );
+      if (result.rows.length === 0) return { status: 404, body: { error: 'User not found' } };
+      return { status: 200, body: snakeToCamel(result.rows[0]) };
+    });
 
-    res.json(snakeToCamel(result.rows[0]));
+    if (outcome.status === 200) invalidatePermissionCache(id);
+    res.status(outcome.status).json(outcome.body);
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -126,17 +139,18 @@ router.delete('/:id', async (req, res) => {
   try {
     const { id } = req.params;
     if (id === req.user.id) return res.status(400).json({ error: 'You cannot delete your own account' });
-    if (await isLastActiveAdmin(id)) {
-      return res.status(400).json({ error: 'Cannot delete the only active admin' });
-    }
-    const result = await query('DELETE FROM users WHERE id = $1 RETURNING id', [id]);
 
-    if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'User not found' });
-    }
-    invalidatePermissionCache(id);
+    const outcome = await withTransaction(async (client) => {
+      if (await isLastActiveAdmin(client, id)) {
+        return { status: 400, body: { error: 'Cannot delete the only active admin' } };
+      }
+      const result = await client.query('DELETE FROM users WHERE id = $1 RETURNING id', [id]);
+      if (result.rows.length === 0) return { status: 404, body: { error: 'User not found' } };
+      return { status: 200, body: { success: true } };
+    });
 
-    res.json({ success: true });
+    if (outcome.status === 200) invalidatePermissionCache(id);
+    res.status(outcome.status).json(outcome.body);
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

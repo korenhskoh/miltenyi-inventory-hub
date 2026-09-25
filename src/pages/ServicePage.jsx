@@ -2548,13 +2548,22 @@ export default function ServicePage({ isAdmin = false, notify, machines, setMach
   );
 
   // Load data (region-scoped). Summary is recomputed when region changes.
-  const loadData = useCallback(async () => {
-    setLoading(true);
-    const [mRes, sRes] = await Promise.all([api.getMachines({ all: true }), api.getMachineSummary({ region })]);
-    if (mRes) setMachines(mRes);
-    if (sRes) setSummary(sRes);
-    setLoading(false);
-  }, [setMachines, region]);
+  //
+  // Takes a cancellation signal, like the other fetch effects on this page.
+  // Switching Local → Overseas puts two requests in flight, and if the first
+  // resolves second its setSummary lands last: the tab, the table and the
+  // summary tiles then disagreed until the user toggled region again.
+  const loadData = useCallback(
+    async (isCancelled = () => false) => {
+      setLoading(true);
+      const [mRes, sRes] = await Promise.all([api.getMachines({ all: true }), api.getMachineSummary({ region })]);
+      if (isCancelled()) return;
+      if (mRes) setMachines(mRes);
+      if (sRes) setSummary(sRes);
+      setLoading(false);
+    },
+    [setMachines, region],
+  );
 
   const reloadFcas = useCallback(async () => {
     setFcaLoading(true);
@@ -2564,7 +2573,11 @@ export default function ServicePage({ isAdmin = false, notify, machines, setMach
   }, []);
 
   useEffect(() => {
-    void loadData(); // eslint-disable-line react-hooks/set-state-in-effect
+    let cancelled = false;
+    void loadData(() => cancelled); // eslint-disable-line react-hooks/set-state-in-effect
+    return () => {
+      cancelled = true;
+    };
   }, [loadData]);
 
   useEffect(() => {
@@ -2792,7 +2805,7 @@ export default function ServicePage({ isAdmin = false, notify, machines, setMach
             </button>
           </div>
           <div style={{ marginLeft: 'auto' }}>
-            <button className="svc-icon-btn" onClick={loadData} title="Refresh" disabled={loading}>
+            <button className="svc-icon-btn" onClick={() => loadData()} title="Refresh" disabled={loading}>
               <RefreshCw size={15} className={loading ? 'svc-spin' : ''} />
             </button>
           </div>

@@ -327,7 +327,13 @@ export default function SettingsPage({
                 <input
                   type="number"
                   value={emailConfig.smtpPort}
-                  onChange={(e) => setEmailConfig((prev) => ({ ...prev, smtpPort: parseInt(e.target.value) }))}
+                  // Clearing the box makes parseInt('') NaN, which React blanks
+                  // the control over and JSON.stringify sends as null — mail
+                  // then silently stopped going out. Keep the last good port.
+                  onChange={(e) => {
+                    const v = parseInt(e.target.value, 10);
+                    setEmailConfig((prev) => ({ ...prev, smtpPort: Number.isFinite(v) ? v : '' }));
+                  }}
                   style={{ width: '100%' }}
                 />
               </div>

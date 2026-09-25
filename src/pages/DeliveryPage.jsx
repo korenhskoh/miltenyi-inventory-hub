@@ -6,7 +6,7 @@ import api from '../api.js';
 import { todayLocal } from '../lib/dates.js';
 import Pagination, { usePaginationState, paginate } from '../components/Pagination.jsx';
 import { arrivalCondition } from '../lib/arrival.js';
-import { monthSortKey } from '../lib/dates.js';
+import { monthSortKey, compareMonths } from '../lib/dates.js';
 import { SectionHeader, useCollapsed } from '../components/CollapsibleSection.jsx';
 
 /**
@@ -230,7 +230,9 @@ const DeliveryPage = ({
               ].filter(Boolean),
             ),
           ]
-            .sort()
+            // Chronological, not alphabetical. A plain .sort() on "Mon YYYY"
+            // labels produced Apr 2025, Apr 2026, Aug 2025, Aug 2026, Dec 2025…
+            .sort(compareMonths)
             .map((m) => (
               <option key={m} value={m}>
                 {m}

@@ -183,6 +183,10 @@ router.get(
 // POST / — add single inventory item (upsert on material_no + lots_number)
 router.post(
   '/',
+  // Writes a stock quantity, so it needs the same gate as its siblings. Without
+  // it any logged-in account could set any item to any figure through this
+  // route, which made the admin-only /adjust check next door cosmetic.
+  requirePermission('stockCheck', 'delivery'),
   asyncHandler(async (req, res) => {
     const b = pickAllowed(camelToSnake(req.body), INVENTORY_FIELDS);
     if (!b.material_no) return res.status(400).json({ error: 'material_no required' });
@@ -216,6 +220,10 @@ router.post(
 // POST /bulk — bulk import inventory items
 router.post(
   '/bulk',
+  // Writes a stock quantity, so it needs the same gate as its siblings. Without
+  // it any logged-in account could set any item to any figure through this
+  // route, which made the admin-only /adjust check next door cosmetic.
+  requirePermission('stockCheck', 'delivery'),
   asyncHandler(async (req, res) => {
     const { items } = req.body;
     if (!Array.isArray(items) || items.length === 0) return res.status(400).json({ error: 'items array required' });
@@ -302,6 +310,10 @@ router.post(
 // POST /charge-out — charge out parts (single or bulk)
 router.post(
   '/charge-out',
+  // Writes a stock quantity, so it needs the same gate as its siblings. Without
+  // it any logged-in account could set any item to any figure through this
+  // route, which made the admin-only /adjust check next door cosmetic.
+  requirePermission('stockCheck', 'delivery'),
   asyncHandler(async (req, res) => {
     const { items } = req.body;
     if (!Array.isArray(items) || items.length === 0) return res.status(400).json({ error: 'items array required' });
@@ -495,6 +507,10 @@ router.post(
 // PUT /:id — update inventory item metadata
 router.put(
   '/:id',
+  // Writes a stock quantity, so it needs the same gate as its siblings. Without
+  // it any logged-in account could set any item to any figure through this
+  // route, which made the admin-only /adjust check next door cosmetic.
+  requirePermission('stockCheck', 'delivery'),
   asyncHandler(async (req, res) => {
     const { id } = req.params;
     // Quantity changes must go through /adjust so they are logged; silently

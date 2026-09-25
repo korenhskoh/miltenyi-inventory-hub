@@ -239,11 +239,18 @@ router.get(
 
     const whereClause = conditions.length > 0 ? ' WHERE ' + conditions.join(' AND ') : '';
 
+    // The sort key must be total, or paging breaks: `status`, `month`, `order_by`
+    // and `order_date` all have large tie groups, and page 1 and page 2 are
+    // separate executions, so Postgres was free to order a tie differently in
+    // each — an order could show on both pages while another showed on neither.
+    // `id` is unique, so appending it makes every ordering deterministic.
+    // (`orderBy` arrives as an array if the param is repeated, hence String().)
     let orderClause = ' ORDER BY id DESC';
     if (orderBy) {
-      const snakeCol = orderBy.replace(/[A-Z]/g, (c) => '_' + c.toLowerCase());
+      const raw = Array.isArray(orderBy) ? orderBy[0] : orderBy;
+      const snakeCol = String(raw).replace(/[A-Z]/g, (c) => '_' + c.toLowerCase());
       if (ALLOWED_ORDER_COLUMNS.has(snakeCol)) {
-        orderClause = ` ORDER BY ${snakeCol}`;
+        orderClause = ` ORDER BY ${snakeCol}, id DESC`;
       }
     }
 
@@ -261,7 +268,11 @@ router.get(
 );
 
 // POST / - create order
-router.post('/', async (req, res) => {
+// Gated like every other write here. The WhatsApp bot already checks `orders`
+// before creating one, on the stated assumption that "the REST route requires
+// the orders permission" — it did not, so revoking that permission stopped the
+// bot and left the API wide open to the same account's still-valid token.
+router.post('/', requirePermission('orders', 'bulkOrders'), async (req, res) => {
   try {
     const snakeBody = sanitizeDates(pickAllowed(camelToSnake(req.body), ORDER_FIELDS), ORDER_DATE_FIELDS);
     const err = requireFields(snakeBody, ORDER_REQUIRED);
@@ -652,7 +663,7 @@ router.post(
 );
 
 // PUT /:id - update order by id
-router.put('/:id', async (req, res) => {
+router.put('/:id', requirePermission('orders', 'bulkOrders', 'delivery', 'approvals'), async (req, res) => {
   try {
     const { id } = req.params;
     const snakeBody = sanitizeDates(pickAllowed(camelToSnake(req.body), ORDER_FIELDS), ORDER_DATE_FIELDS);
@@ -703,6 +714,27 @@ router.put('/:id', async (req, res) => {
       if (check.rows.length && check.rows[0].approval_status !== 'approved') {
         return res.status(403).json({ error: 'Order must be approved before recording part arrival' });
       }
+    }
+
+    // qty_received is the one field that must never be written here. This route
+    // writes the column and nothing else — no stock movement, no
+    // inventory_transactions row — and POST /:id/arrival is idempotent on the
+    // stored figure, so once a plain PUT had set it the proper arrival call saw
+    // delta === 0 and did nothing. The units were then permanently missing from
+    // stock with no trace of where they went. POST /:id/arrival computes the
+    // delta and moves the stock in one transaction; send it there.
+    if ('qty_received' in snakeBody) {
+      const current = await query('SELECT qty_received FROM orders WHERE id = $1', [id]);
+      if (current.rows.length === 0) {
+        return res.status(404).json({ error: 'Order not found' });
+      }
+      if (Number(snakeBody.qty_received) !== (Number(current.rows[0].qty_received) || 0)) {
+        return res.status(400).json({
+          error: 'Use POST /api/orders/:id/arrival to record a received quantity, so stock moves with it',
+        });
+      }
+      // Unchanged: harmless to drop, and keeps a no-op echo from failing.
+      delete snakeBody.qty_received;
     }
 
     const keys = Object.keys(snakeBody);

@@ -2,6 +2,9 @@ import cron from 'node-cron';
 import { query as dbQuery } from './db.js';
 import nodemailer from 'nodemailer';
 import logger from './logger.js';
+import { BACK_ORDER_SQL } from './backOrders.js';
+import { APP_TIMEZONE, zonedParts, instantForZonedTime } from './appDates.js';
+import { escapeHtml } from '../src/utils.js';
 
 let cronJob = null;
 let isRunning = false; // prevent overlapping executions
@@ -60,13 +63,16 @@ async function generateReportData(reportTypes) {
       data.totalValue = Number(row.total_value) || 0;
     }
     if (reportTypes.backOrderReport) {
-      const countResult = await dbQuery('SELECT COUNT(*)::int AS cnt FROM orders WHERE back_order < 0');
+      // Was `back_order < 0`, which every order carries from creation — the
+      // report counted orders that had never shipped, rejected ones included.
+      const countResult = await dbQuery(`SELECT COUNT(*)::int AS cnt FROM orders WHERE ${BACK_ORDER_SQL}`);
       data.backOrders = countResult.rows[0]?.cnt || 0;
       const topItems = await dbQuery(
-        'SELECT description, material_no, back_order FROM orders WHERE back_order < 0 ORDER BY back_order ASC LIMIT 10',
+        `SELECT description, material_no, COALESCE(quantity, 0) - COALESCE(qty_received, 0) AS outstanding
+           FROM orders WHERE ${BACK_ORDER_SQL} ORDER BY outstanding DESC LIMIT 10`,
       );
       data.backOrderItems = (topItems.rows || [])
-        .map((o) => `- ${o.description || o.material_no}: ${Math.abs(Number(o.back_order))} pending`)
+        .map((o) => `- ${escapeHtml(o.description || o.material_no || '')}: ${Number(o.outstanding)} pending`)
         .join('\n');
     }
     if (reportTypes.pendingApprovals) {
@@ -418,23 +424,41 @@ export function shouldCatchUp(config, now = new Date()) {
   const minute = Number.isFinite(rawMinute) ? rawMinute : 0;
 
   // The most recent moment the report should have fired, on or before `now`.
-  const slot = new Date(now);
-  slot.setHours(hour, minute, 0, 0);
-  if (slot > now) slot.setDate(slot.getDate() - 1);
+  //
+  // This has to be computed in the SAME timezone the cron job runs in. It used
+  // to use setHours/getDay/getDate, which are the Node process's local time —
+  // UTC on the deploy target, while cron fires in Asia/Singapore. The eight-hour
+  // skew both ways: a redeploy later on the scheduled day re-sent a report every
+  // active user had already received, and a restart after a genuinely missed run
+  // walked the slot back a whole week and dropped it, which is the exact failure
+  // this function exists to prevent.
+  const tz = config.timezone || APP_TIMEZONE;
 
-  if (config.frequency === 'weekly') {
-    const target = Math.max(0, Math.min(6, config.dayOfWeek ?? 1));
-    while (slot.getDay() !== target) slot.setDate(slot.getDate() - 1);
-  } else if (config.frequency === 'monthly') {
-    const target = Math.max(1, Math.min(31, config.dayOfMonth ?? 1));
-    while (slot.getDate() !== target) slot.setDate(slot.getDate() - 1);
+  // Walk back day by day in the zone's own calendar until we find the newest
+  // slot at or before `now` that also matches the configured day.
+  let slotMs = null;
+  for (let back = 0; back <= 40; back++) {
+    const probe = zonedParts(new Date(now.getTime() - back * 86400000), tz);
+    if (config.frequency === 'weekly') {
+      const target = Math.max(0, Math.min(6, config.dayOfWeek ?? 1));
+      if (probe.weekday !== target) continue;
+    } else if (config.frequency === 'monthly') {
+      const target = Math.max(1, Math.min(31, config.dayOfMonth ?? 1));
+      if (probe.day !== target) continue;
+    }
+    const candidate = instantForZonedTime(probe.year, probe.month, probe.day, hour, minute, tz);
+    if (candidate <= now.getTime()) {
+      slotMs = candidate;
+      break;
+    }
   }
+  if (slotMs === null) return false;
 
-  const age = now.getTime() - slot.getTime();
+  const age = now.getTime() - slotMs;
   if (age < 0 || age > CATCHUP_GRACE_MS) return false; // too stale to be useful
   const lastRun = config.lastRun ? new Date(config.lastRun).getTime() : 0;
   if (Number.isNaN(lastRun)) return true;
-  return lastRun < slot.getTime(); // already ran for this slot?
+  return lastRun < slotMs; // already ran for this slot?
 }
 
 /**
