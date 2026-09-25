@@ -324,6 +324,13 @@ const DeliveryPage = ({
             if (!o.approvalSentDate) return latest;
             return !latest || o.approvalSentDate > latest ? o.approvalSentDate : latest;
           }, null);
+          // Who raised the orders in this batch. A batch has no single owner —
+          // its rows can come from several people — so one name is shown when
+          // they agree and the count when they do not, with the full list on
+          // hover. Falls back to whoever created the batch.
+          const owners = [...new Set(allOrds.map((o) => (o.orderBy || '').trim()).filter(Boolean))];
+          const orderByLabel =
+            owners.length === 1 ? owners[0] : owners.length > 1 ? `${owners.length} people` : bg.createdBy || '\u2014';
           return {
             ...bg,
             _bgOrders: bgOrds,
@@ -332,6 +339,8 @@ const DeliveryPage = ({
             _shownCount: bgOrds.length,
             _fullyReceived: fullyReceived,
             _hasBackOrder: hasBackOrder,
+            _orderBy: orderByLabel,
+            _owners: owners,
             approvedDate,
           };
         });
@@ -381,6 +390,12 @@ const DeliveryPage = ({
                         onSort={(k) => toggleSort(setBulkGroupSort, k)}
                       />
                       <SortTh
+                        label="Order By"
+                        sortKey="_orderBy"
+                        sortCfg={bulkGroupSort}
+                        onSort={(k) => toggleSort(setBulkGroupSort, k)}
+                      />
+                      <SortTh
                         label="Approved"
                         sortKey="approvedDate"
                         sortCfg={bulkGroupSort}
@@ -397,7 +412,7 @@ const DeliveryPage = ({
                   <tbody>
                     {bulkPageItems.length === 0 ? (
                       <tr>
-                        <td colSpan={8} style={{ textAlign: 'center', padding: 40, color: '#94A3B8', fontSize: 13 }}>
+                        <td colSpan={9} style={{ textAlign: 'center', padding: 40, color: '#94A3B8', fontSize: 13 }}>
                           No bulk groups match the selected filters
                         </td>
                       </tr>
@@ -449,6 +464,19 @@ const DeliveryPage = ({
                               </td>
                               <td
                                 className="td"
+                                style={{
+                                  fontSize: 11,
+                                  maxWidth: 140,
+                                  overflow: 'hidden',
+                                  textOverflow: 'ellipsis',
+                                  whiteSpace: 'nowrap',
+                                }}
+                                title={bg._owners.length > 1 ? bg._owners.join(', ') : ''}
+                              >
+                                {bg._orderBy}
+                              </td>
+                              <td
+                                className="td"
                                 style={{ fontSize: 11, color: bg.approvedDate ? '#1A202C' : '#94A3B8' }}
                               >
                                 {bg.approvedDate ? fmtDate(bg.approvedDate) : '\u2014'}
@@ -490,7 +518,7 @@ const DeliveryPage = ({
                             {/* Expanded Items List */}
                             {isExpanded && (
                               <tr>
-                                <td colSpan={8} style={{ padding: 0 }}>
+                                <td colSpan={9} style={{ padding: 0 }}>
                                   <div
                                     style={{
                                       padding: '16px 20px',

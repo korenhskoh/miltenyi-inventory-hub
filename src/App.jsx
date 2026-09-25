@@ -126,6 +126,16 @@ import ChangePasswordModal from './components/ChangePasswordModal.jsx';
 import LoginIntro, { IntroRule } from './components/LoginIntro.jsx';
 import { todayLocal, toLocalYmd, compareMonths } from './lib/dates.js';
 import { parseOrderSheet, monthFromSheetName, describeMapping } from './lib/orderImport.js';
+import {
+  reorderNow,
+  awaitingApproval,
+  overdueArrivals,
+  shortDeliveries,
+  spendSplit,
+  serviceAlerts,
+  stockCheckAlerts,
+  monthlyWithLastYear,
+} from './lib/dashboard.js';
 import WishlistPage from './pages/WishlistPage.jsx';
 import { detectHeaderRow } from './lib/sheet.js';
 import { getCatalogPrice, getEffectiveUnitPrice, getEffectiveTotal } from './lib/pricing.js';
@@ -1240,6 +1250,45 @@ export default function App() {
       totalCost: pick(t.totalValue, stats.totalCost),
     };
   }, [stats, serverStats]);
+  // ── What the dashboard needs to answer "what needs me today" ──
+  //
+  // Consumption history is what makes the reorder and overdue panels possible:
+  // it carries monthly charge-out, stock on hand and each part's measured
+  // order-to-arrival time. One request, shared with the forecasting page's
+  // engine, and the dashboard degrades to its other panels if it fails.
+  const [consumption, setConsumption] = useState(null);
+  useEffect(() => {
+    // Only once somebody is signed in — firing this on mount meant a 401
+    // against the login screen on every page load.
+    if (!currentUser) {
+      setConsumption(null);
+      return undefined;
+    }
+    let alive = true;
+    (async () => {
+      const res = await api.getConsumption(36);
+      if (alive) setConsumption(res);
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [currentUser]);
+
+  const today = todayLocal();
+  const attention = useMemo(
+    () => ({
+      reorder: reorderNow(consumption),
+      approval: awaitingApproval(orders, catalogLookup, today),
+      overdue: overdueArrivals(orders, consumption, today),
+      short: shortDeliveries(orders),
+    }),
+    [orders, consumption, catalogLookup, today],
+  );
+  const spend = useMemo(() => spendSplit(orders, catalogLookup), [orders, catalogLookup]);
+  const service = useMemo(() => serviceAlerts(machines, today), [machines, today]);
+  const stockAlerts = useMemo(() => stockCheckAlerts(stockChecks), [stockChecks]);
+  const spendTrend = useMemo(() => monthlyWithLastYear(orders, catalogLookup), [orders, catalogLookup]);
+
   const singleOrderMonths = useMemo(
     () =>
       [
@@ -1454,39 +1503,10 @@ export default function App() {
     storageKey: 'importpreview',
     resetKey: String(historyImportData.length),
   });
-  const topItems = useMemo(() => {
-    const m = {};
-    orders.forEach((o) => {
-      if (!m[o.description])
-        m[o.description] = {
-          name: (o.description || '').length > 30 ? (o.description || '').slice(0, 30) + '...' : o.description || '',
-          qty: 0,
-          cost: 0,
-        };
-      m[o.description].qty += Number(o.quantity) || 0;
-      m[o.description].cost += getEffectiveTotal(o, catalogLookup);
-    });
-    return Object.values(m)
-      .sort((a, b) => b.cost - a.cost)
-      .slice(0, 8);
-  }, [orders, catalogLookup]);
-  const catPriceData = useMemo(
-    () =>
-      Object.entries(CATEGORIES)
-        .map(([k, c]) => {
-          const i = partsCatalog.filter((p) => p.c === k);
-          if (!i.length) return null;
-          return {
-            name: c.short,
-            sg: Math.round(i.reduce((s, p) => s + (p.sg || 0), 0) / i.length),
-            dist: Math.round(i.reduce((s, p) => s + (p.dist || 0), 0) / i.length),
-            count: i.length,
-            color: c.color,
-          };
-        })
-        .filter(Boolean),
-    [partsCatalog],
-  );
+  // `topItems` and `catPriceData` lived here to feed two dashboard charts that
+  // Analytics already drew — "Top 10 Ordered Materials" and "Spend by
+  // Category" — so the front page spent its space repeating the analysis page
+  // instead of saying what needed doing. Both are gone; Analytics keeps them.
   const catalogStats = useMemo(() => {
     const t = partsCatalog.length;
     const cc = {};
@@ -5691,28 +5711,214 @@ export default function App() {
           {/* ═══════════ DASHBOARD ═══════════ */}
           {page === 'dashboard' && (
             <div>
+              {/*
+               * What needs attention today.
+               *
+               * The dashboard used to open with five counts of what had
+               * already happened, and three charts Analytics drew as well.
+               * Nothing on it said what was WAITING: orders could sit
+               * unapproved for a month, a delivery could be weeks late, and
+               * the front page looked exactly the same. These four are the
+               * work queue, and each one clicks through to the page that
+               * clears it.
+               */}
+              <div
+                className="grid-4"
+                style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 14, marginBottom: 20 }}
+              >
+                {[
+                  {
+                    key: 'reorder',
+                    label: 'Reorder Now',
+                    count: attention.reorder.count,
+                    sub:
+                      attention.reorder.count > 0
+                        ? `${attention.reorder.items[0].materialNo} has ${
+                            attention.reorder.items[0].monthsCover === null
+                              ? 'no cover'
+                              : `${attention.reorder.items[0].monthsCover.toFixed(1)} months' cover`
+                          }`
+                        : consumption
+                          ? 'Every part has enough cover'
+                          : 'Loading consumption history…',
+                    tone: '#DC2626',
+                    icon: AlertTriangle,
+                    go: 'forecasting',
+                    rows: attention.reorder.items.map((m) => ({
+                      left: m.materialNo,
+                      mid: m.description || '—',
+                      right: m.monthsCover === null ? 'no cover' : `${m.monthsCover.toFixed(1)} mo left`,
+                    })),
+                  },
+                  {
+                    key: 'approval',
+                    label: 'Awaiting Approval',
+                    count: attention.approval.count,
+                    sub:
+                      attention.approval.count > 0
+                        ? `${fmt(attention.approval.value)}${
+                            attention.approval.oldestDays !== null
+                              ? ` · oldest ${attention.approval.oldestDays} days`
+                              : ''
+                          }`
+                        : 'Nothing waiting',
+                    tone: '#7C3AED',
+                    icon: Clock,
+                    go: 'allorders',
+                    rows: attention.approval.items.slice(0, 5).map((o) => ({
+                      left: o.materialNo || o.id,
+                      mid: o.description || '—',
+                      right: fmt(getEffectiveTotal(o, catalogLookup)),
+                    })),
+                  },
+                  {
+                    key: 'overdue',
+                    label: 'Overdue Arrivals',
+                    count: attention.overdue.count,
+                    sub:
+                      attention.overdue.count > 0
+                        ? `worst is ${attention.overdue.items[0].overdueDays} days past its usual ${attention.overdue.items[0].expectedDays}`
+                        : 'Nothing late',
+                    tone: '#D97706',
+                    icon: Truck,
+                    go: 'delivery',
+                    rows: attention.overdue.items.map((o) => ({
+                      left: o.materialNo || o.id,
+                      mid: o.description || '—',
+                      right: `${o.overdueDays}d late`,
+                    })),
+                  },
+                  {
+                    key: 'short',
+                    label: 'Short Deliveries',
+                    count: attention.short.count,
+                    sub:
+                      attention.short.count > 0
+                        ? `${attention.short.items.reduce((sum, o) => sum + o.missing, 0)} units outstanding`
+                        : 'Nothing short',
+                    tone: '#B91C1C',
+                    icon: AlertCircle,
+                    go: 'delivery',
+                    rows: attention.short.items.map((o) => ({
+                      left: o.materialNo || o.id,
+                      mid: o.description || '—',
+                      right: `${o.missing} short`,
+                    })),
+                  },
+                ].map((c) => (
+                  <button
+                    key={c.key}
+                    onClick={() => setPage(c.go)}
+                    className="card"
+                    style={{
+                      padding: '16px 18px',
+                      textAlign: 'left',
+                      border: 'none',
+                      borderLeft: `3px solid ${c.count > 0 ? c.tone : '#E2E8F0'}`,
+                      cursor: 'pointer',
+                      fontFamily: 'inherit',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: 6,
+                    }}
+                    title={`Open ${c.label}`}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <c.icon size={15} color={c.count > 0 ? c.tone : '#94A3B8'} />
+                      <span
+                        style={{
+                          fontSize: 11,
+                          textTransform: 'uppercase',
+                          letterSpacing: 0.5,
+                          color: '#64748B',
+                          fontWeight: 600,
+                        }}
+                      >
+                        {c.label}
+                      </span>
+                    </div>
+                    <div
+                      className="mono"
+                      style={{ fontSize: 30, fontWeight: 700, color: c.count > 0 ? c.tone : '#94A3B8', lineHeight: 1 }}
+                    >
+                      {c.count}
+                    </div>
+                    <div style={{ fontSize: 11.5, color: '#64748B' }}>{c.sub}</div>
+                    {c.rows.length > 0 && (
+                      <div style={{ marginTop: 4, borderTop: '1px solid #F1F5F9', paddingTop: 6 }}>
+                        {c.rows.map((r, i) => (
+                          <div
+                            key={i}
+                            style={{
+                              display: 'flex',
+                              justifyContent: 'space-between',
+                              gap: 8,
+                              fontSize: 11,
+                              padding: '2px 0',
+                              color: '#475569',
+                            }}
+                          >
+                            <span
+                              className="mono"
+                              style={{ flexShrink: 0, color: '#0B7A3E', fontWeight: 600, fontSize: 10.5 }}
+                            >
+                              {r.left}
+                            </span>
+                            <span
+                              style={{
+                                flex: 1,
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis',
+                                whiteSpace: 'nowrap',
+                                textAlign: 'left',
+                              }}
+                            >
+                              {r.mid}
+                            </span>
+                            <span style={{ flexShrink: 0, color: '#94A3B8' }}>{r.right}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </button>
+                ))}
+              </div>
+
+              {/*
+               * Spend, split by what it means. One combined figure answered
+               * nobody's question: what has actually been paid for, what is
+               * committed and still in transit, and what is only a request
+               * are three different numbers with three different
+               * consequences.
+               */}
               <div
                 className="grid-5"
                 style={{ display: 'grid', gridTemplateColumns: 'repeat(5,1fr)', gap: 14, marginBottom: 24 }}
               >
                 {[
                   {
-                    l: 'Catalog',
-                    v: fmtNum(partsCatalog.length),
-                    i: Database,
-                    bg: 'linear-gradient(135deg,#4338CA,#6366F1)',
+                    l: 'Spent (received)',
+                    v: fmt(spend.received),
+                    i: DollarSign,
+                    bg: 'linear-gradient(135deg,#006837,#0B9A4E)',
+                  },
+                  {
+                    l: 'Committed',
+                    v: fmt(spend.committed),
+                    i: Truck,
+                    bg: 'linear-gradient(135deg,#1E40AF,#3B82F6)',
+                  },
+                  {
+                    l: 'Requested',
+                    v: fmt(spend.pending),
+                    i: Clock,
+                    bg: 'linear-gradient(135deg,#6D28D9,#8B5CF6)',
                   },
                   {
                     l: 'Total Orders',
                     v: headlineStats.total,
                     i: Package,
-                    bg: 'linear-gradient(135deg,#006837,#0B9A4E)',
-                  },
-                  {
-                    l: 'Spend',
-                    v: fmt(headlineStats.totalCost),
-                    i: DollarSign,
-                    bg: 'linear-gradient(135deg,#1E40AF,#3B82F6)',
+                    bg: 'linear-gradient(135deg,#334155,#64748B)',
                   },
                   {
                     l: 'Fulfillment',
@@ -5720,62 +5926,56 @@ export default function App() {
                     i: TrendingUp,
                     bg: 'linear-gradient(135deg,#047857,#10B981)',
                   },
-                  {
-                    l: 'Back Orders',
-                    v: headlineStats.backOrder,
-                    i: AlertTriangle,
-                    bg: 'linear-gradient(135deg,#B91C1C,#EF4444)',
-                  },
                 ].map((s, i) => (
-                  <div key={i} className="sc" style={{ background: s.bg }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                      <div>
-                        <div
-                          style={{
-                            fontSize: 11,
-                            fontWeight: 500,
-                            opacity: 0.85,
-                            marginBottom: 6,
-                            textTransform: 'uppercase',
-                            letterSpacing: 0.8,
-                          }}
-                        >
-                          {s.l}
-                        </div>
-                        <div className="mono" style={{ fontSize: 24, fontWeight: 700, letterSpacing: -1 }}>
-                          {s.v}
-                        </div>
+                  <div
+                    key={i}
+                    className="card"
+                    style={{
+                      padding: '18px 20px',
+                      background: s.bg,
+                      color: '#fff',
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                    }}
+                  >
+                    <div>
+                      <div style={{ fontSize: 10.5, opacity: 0.85, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                        {s.l}
                       </div>
-                      <div style={{ background: 'rgba(255,255,255,.15)', borderRadius: 10, padding: 8 }}>
-                        <s.i size={18} />
+                      <div className="mono" style={{ fontSize: 21, fontWeight: 700, marginTop: 4 }}>
+                        {s.v}
                       </div>
+                    </div>
+                    <div style={{ background: 'rgba(255,255,255,0.18)', borderRadius: 10, padding: 8 }}>
+                      <s.i size={18} />
                     </div>
                   </div>
                 ))}
               </div>
+
               <div
                 className="grid-2"
                 style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 16, marginBottom: 24 }}
               >
                 <div className="card" style={{ padding: '20px 24px' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
-                    <h3 style={{ fontSize: 15, fontWeight: 600 }}>Monthly Trends</h3>
+                    <h3 style={{ fontSize: 15, fontWeight: 600 }}>Order Value vs Last Year</h3>
                     <span style={{ fontSize: 11, color: '#94A3B8' }}>
-                      {monthlyData.length > 0
-                        ? `${monthlyData[0].name} — ${monthlyData[monthlyData.length - 1].name}`
-                        : ''}
+                      {spendTrend.length > 0 ? `${spendTrend[0].name} — ${spendTrend[spendTrend.length - 1].name}` : ''}
                     </span>
                   </div>
+                  {/*
+                   * A trend line on its own says very little. Against the same
+                   * month a year earlier it answers a question, and two years
+                   * of history exist now, so the comparison is free.
+                   */}
                   <ResponsiveContainer width="100%" height={250}>
-                    <AreaChart data={monthlyData}>
+                    <AreaChart data={spendTrend}>
                       <defs>
                         <linearGradient id="g1" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="5%" stopColor="#0B7A3E" stopOpacity={0.15} />
+                          <stop offset="5%" stopColor="#0B7A3E" stopOpacity={0.18} />
                           <stop offset="95%" stopColor="#0B7A3E" stopOpacity={0} />
-                        </linearGradient>
-                        <linearGradient id="g2" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="5%" stopColor="#DC2626" stopOpacity={0.15} />
-                          <stop offset="95%" stopColor="#DC2626" stopOpacity={0} />
                         </linearGradient>
                       </defs>
                       <CartesianGrid strokeDasharray="3 3" stroke="#F0F2F5" />
@@ -5785,121 +5985,203 @@ export default function App() {
                         axisLine={false}
                         tickLine={false}
                       />
-                      <YAxis tick={{ fontSize: 11, fill: '#94A3B8' }} axisLine={false} tickLine={false} />
-                      <Tooltip contentStyle={{ borderRadius: 10, border: 'none', fontSize: 12 }} />
+                      <YAxis
+                        tick={{ fontSize: 11, fill: '#94A3B8' }}
+                        axisLine={false}
+                        tickLine={false}
+                        tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`}
+                      />
+                      <Tooltip
+                        formatter={(v) => (v === null ? '—' : fmt(v))}
+                        contentStyle={{ borderRadius: 10, border: 'none', fontSize: 12 }}
+                      />
                       <Area
                         type="monotone"
-                        dataKey="received"
+                        dataKey="value"
                         stroke="#0B7A3E"
                         fillOpacity={1}
                         fill="url(#g1)"
-                        name="Received"
+                        name="This year"
                         strokeWidth={2}
                       />
                       <Area
                         type="monotone"
-                        dataKey="backOrder"
-                        stroke="#DC2626"
-                        fillOpacity={1}
-                        fill="url(#g2)"
-                        name="Back Order"
-                        strokeWidth={2}
+                        dataKey="lastYear"
+                        stroke="#94A3B8"
+                        strokeDasharray="5 4"
+                        fill="transparent"
+                        name="Last year"
+                        strokeWidth={1.5}
+                        connectNulls
                       />
+                      <Legend iconSize={10} wrapperStyle={{ fontSize: 11 }} />
                     </AreaChart>
                   </ResponsiveContainer>
                 </div>
                 <div className="card" style={{ padding: '20px 24px' }}>
                   <h3 style={{ fontSize: 15, fontWeight: 600, marginBottom: 16 }}>Status</h3>
-                  <ResponsiveContainer width="100%" height={190}>
+                  <ResponsiveContainer width="100%" height={200}>
                     <PieChart>
                       <Pie
                         data={statusPieData}
                         cx="50%"
                         cy="50%"
-                        innerRadius={50}
-                        outerRadius={75}
-                        paddingAngle={4}
+                        innerRadius={55}
+                        outerRadius={85}
+                        paddingAngle={2}
                         dataKey="value"
-                        strokeWidth={0}
                       >
                         {statusPieData.map((e, i) => (
                           <Cell key={i} fill={e.color} />
                         ))}
                       </Pie>
-                      <Tooltip />
+                      <Tooltip contentStyle={{ borderRadius: 10, border: 'none', fontSize: 12 }} />
                     </PieChart>
                   </ResponsiveContainer>
-                  <div style={{ display: 'flex', justifyContent: 'center', gap: 14, marginTop: 8 }}>
-                    {statusPieData.map((s, i) => (
-                      <div
-                        key={i}
-                        style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, color: '#64748B' }}
-                      >
-                        <div style={{ width: 8, height: 8, borderRadius: '50%', background: s.color }} />
-                        {s.name} ({s.value})
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, justifyContent: 'center', marginTop: 8 }}>
+                    {statusPieData.map((e, i) => (
+                      <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11 }}>
+                        <div style={{ width: 8, height: 8, borderRadius: '50%', background: e.color }} />
+                        <span style={{ color: '#64748B' }}>
+                          {e.name} ({e.value})
+                        </span>
                       </div>
                     ))}
                   </div>
                 </div>
               </div>
-              <div className="grid-2" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
-                <div className="card" style={{ padding: '20px 24px' }}>
-                  <h3 style={{ fontSize: 15, fontWeight: 600, marginBottom: 16 }}>Top Items by Cost</h3>
-                  <ResponsiveContainer width="100%" height={260}>
-                    <BarChart data={topItems} layout="vertical" margin={{ left: 140 }}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#F0F2F5" horizontal={false} />
-                      <XAxis
-                        type="number"
-                        tick={{ fontSize: 10, fill: '#94A3B8' }}
-                        axisLine={false}
-                        tickLine={false}
-                        tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`}
-                      />
-                      <YAxis
-                        type="category"
-                        dataKey="name"
-                        tick={{ fontSize: 10, fill: '#4A5568' }}
-                        axisLine={false}
-                        tickLine={false}
-                        width={135}
-                      />
-                      <Tooltip
-                        formatter={(v) => fmt(v)}
-                        contentStyle={{ borderRadius: 10, border: 'none', fontSize: 12 }}
-                      />
-                      <Bar dataKey="cost" fill="#0B7A3E" radius={[0, 6, 6, 0]} barSize={16} />
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
-                <div className="card" style={{ padding: '20px 24px' }}>
-                  <h3 style={{ fontSize: 15, fontWeight: 600, marginBottom: 16 }}>
-                    Avg Price: Unit Price vs Distributor
-                  </h3>
-                  <ResponsiveContainer width="100%" height={260}>
-                    <BarChart data={catPriceData}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#F0F2F5" />
-                      <XAxis
-                        dataKey="name"
-                        tick={{ fontSize: 10, fill: '#94A3B8' }}
-                        axisLine={false}
-                        tickLine={false}
-                      />
-                      <YAxis
-                        tick={{ fontSize: 10, fill: '#94A3B8' }}
-                        axisLine={false}
-                        tickLine={false}
-                        tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`}
-                      />
-                      <Tooltip
-                        formatter={(v) => fmt(v)}
-                        contentStyle={{ borderRadius: 10, border: 'none', fontSize: 12 }}
-                      />
-                      <Bar dataKey="sg" name="Unit Price" fill="#0B7A3E" radius={[4, 4, 0, 0]} barSize={14} />
-                      <Bar dataKey="dist" name="Distributor" fill="#2563EB" radius={[4, 4, 0, 0]} barSize={14} />
-                      <Legend iconSize={10} wrapperStyle={{ fontSize: 11 }} />
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
+
+              {/*
+               * The service module and the stock checks both already store
+               * exactly the dates and counts that hurt when they are missed —
+               * a contract running out, an instrument overdue for service, a
+               * count that did not reconcile — and nothing read them anywhere
+               * near the front page.
+               */}
+              <div className="grid-3" style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 16 }}>
+                {[
+                  {
+                    key: 'contracts',
+                    title: 'Contracts Expiring',
+                    sub: 'next 90 days',
+                    count: service.expiringCount,
+                    go: 'service',
+                    empty: 'No contracts due to expire',
+                    rows: service.expiring.map((m) => ({
+                      left: m.name,
+                      mid: m.customerName || m.customer_name || m.location || '—',
+                      right: m.expired ? 'expired' : `${m.daysLeft}d`,
+                      alarm: m.expired,
+                    })),
+                  },
+                  {
+                    key: 'maintenance',
+                    title: 'Maintenance Due',
+                    sub: 'next 90 days',
+                    count: service.dueMaintenanceCount,
+                    go: 'service',
+                    empty: 'Nothing due for service',
+                    rows: service.dueMaintenance.map((m) => ({
+                      left: m.name,
+                      mid: m.modality || m.location || '—',
+                      right: m.overdue ? 'overdue' : `${m.daysLeft}d`,
+                      alarm: m.overdue,
+                    })),
+                  },
+                  {
+                    key: 'stock',
+                    title: 'Stock Discrepancies',
+                    sub: stockAlerts.count > 0 ? `${stockAlerts.discrepancies} item(s) unreconciled` : 'unresolved',
+                    count: stockAlerts.count,
+                    go: 'stockcheck',
+                    empty: 'Every count reconciled',
+                    rows: stockAlerts.items.map((c) => ({
+                      left: c.id,
+                      mid: c.checkedBy || c.checked_by || '—',
+                      right: `${c.disc} off`,
+                      alarm: true,
+                    })),
+                  },
+                ].map((panel) => (
+                  <div key={panel.key} className="card" style={{ padding: '18px 20px' }}>
+                    <button
+                      onClick={() => setPage(panel.go)}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'baseline',
+                        justifyContent: 'space-between',
+                        width: '100%',
+                        background: 'transparent',
+                        border: 'none',
+                        padding: 0,
+                        marginBottom: 12,
+                        cursor: 'pointer',
+                        fontFamily: 'inherit',
+                        textAlign: 'left',
+                      }}
+                      title={`Open ${panel.title}`}
+                    >
+                      <span>
+                        <span style={{ fontSize: 14, fontWeight: 600, color: '#0F172A' }}>{panel.title}</span>{' '}
+                        <span style={{ fontSize: 11, color: '#94A3B8' }}>{panel.sub}</span>
+                      </span>
+                      <span
+                        className="mono"
+                        style={{ fontSize: 20, fontWeight: 700, color: panel.count > 0 ? '#DC2626' : '#94A3B8' }}
+                      >
+                        {panel.count}
+                      </span>
+                    </button>
+                    {panel.rows.length === 0 ? (
+                      <div style={{ fontSize: 12, color: '#94A3B8' }}>{panel.empty}</div>
+                    ) : (
+                      panel.rows.map((r, i) => (
+                        <div
+                          key={i}
+                          style={{
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            gap: 8,
+                            fontSize: 12,
+                            padding: '4px 0',
+                            borderBottom: i < panel.rows.length - 1 ? '1px solid #F7FAFC' : 'none',
+                          }}
+                        >
+                          <span
+                            style={{
+                              fontWeight: 600,
+                              color: '#334155',
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                              whiteSpace: 'nowrap',
+                              maxWidth: 130,
+                            }}
+                          >
+                            {r.left}
+                          </span>
+                          <span
+                            style={{
+                              flex: 1,
+                              color: '#94A3B8',
+                              fontSize: 11,
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                              whiteSpace: 'nowrap',
+                            }}
+                          >
+                            {r.mid}
+                          </span>
+                          <span
+                            className="mono"
+                            style={{ fontSize: 11, fontWeight: 600, color: r.alarm ? '#DC2626' : '#64748B' }}
+                          >
+                            {r.right}
+                          </span>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                ))}
               </div>
             </div>
           )}
