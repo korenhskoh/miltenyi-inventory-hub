@@ -532,6 +532,38 @@ router.post(
           to: shortBy > 0 ? null : o.orderBy || null,
         },
       );
+
+      // "Delivery arrival → Notify assigned engineer" was a switch with nothing
+      // behind it: no code read the rule, so the message never fired however it
+      // was set. The engineer is recorded on the order and is the person
+      // actually waiting for the part, so they are told separately from the
+      // requester — and only when they are somebody else, to avoid sending the
+      // same person two messages about one delivery.
+      const engineer = (o.engineer || '').trim();
+      if (
+        engineer &&
+        engineer.toLowerCase() !==
+          String(o.orderBy || '')
+            .trim()
+            .toLowerCase()
+      ) {
+        void notifyEvent(
+          'deliveryArrival',
+          {
+            orderId: o.id,
+            description: o.description || '',
+            materialNo: o.materialNo || '',
+            month: o.month || '',
+            itemCount: o.qtyReceived,
+            quantity: o.quantity,
+            qtyReceived: o.qtyReceived,
+            totalValue: o.totalCost,
+            engineer,
+            date: o.arrivalDate || new Date().toISOString().slice(0, 10),
+          },
+          { subject: `Delivery for ${engineer}: ${o.description || o.id}`, to: engineer },
+        );
+      }
     }
   }),
 );

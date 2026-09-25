@@ -939,7 +939,11 @@ app.get('/api/health', async (req, res) => {
 const getWaContext = () => ({
   sock,
   formatPhoneNumber,
-  sendText: sock ? sendWaText : null,
+  // The CONNECTION STATE, not merely whether a socket object exists — baileys
+  // leaves a truthy `sock` behind while disconnected, which is the same trap
+  // that made the original guard useless. This is the test /api/whatsapp/send
+  // has always applied.
+  sendText: connectionStatus === 'connected' && sock ? sendWaText : null,
 });
 // Event-driven notifications need the same WhatsApp context the scheduler uses.
 setNotifyWaContext(getWaContext);

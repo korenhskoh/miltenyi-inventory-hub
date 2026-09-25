@@ -60,6 +60,16 @@ async function waRecipients() {
  * has no phone on file, or no account, the rule falls back to the team so the
  * message is not simply lost, and says which happened.
  */
+/** Active users of one role with a phone on file — for a rule aimed at a group. */
+async function waRecipientsByRole(role) {
+  const r = await query(
+    `SELECT name, phone FROM users
+      WHERE status = 'active' AND phone IS NOT NULL AND phone <> '' AND role = $1`,
+    [role],
+  );
+  return r.rows;
+}
+
 async function waRecipientByName(name) {
   const wanted = String(name || '').trim();
   if (!wanted) return { rows: [], reason: 'no-name' };
@@ -92,7 +102,11 @@ async function logNotification(type, to, subject, status) {
  * @param {string} [opts.templateKey]  key in waMessageTemplates / messageTemplates
  * @param {string} [opts.subject]      what to record in notif_log
  */
-export async function notifyEvent(ruleKey, data, { templateKey = ruleKey, subject, to = null } = {}) {
+export async function notifyEvent(
+  ruleKey,
+  data,
+  { templateKey = ruleKey, subject, to = null, audienceRole = null } = {},
+) {
   try {
     if (!(await isRuleEnabled(ruleKey))) return { sent: 0, skipped: 'rule-off' };
 
@@ -129,6 +143,15 @@ export async function notifyEvent(ruleKey, data, { templateKey = ruleKey, subjec
         recipients = await waRecipients();
         audience = `${recipients.length} user(s) — ${to} has no phone on file`;
         logger.warn({ ruleKey, to }, 'Named recipient unreachable, notified the team instead');
+      }
+    } else if (audienceRole) {
+      recipients = await waRecipientsByRole(audienceRole);
+      if (recipients.length) {
+        audience = `${recipients.length} ${audienceRole}(s)`;
+      } else {
+        recipients = await waRecipients();
+        audience = `${recipients.length} user(s) — no ${audienceRole} has a phone on file`;
+        logger.warn({ ruleKey, audienceRole }, 'No one in that role is reachable, notified the team instead');
       }
     } else {
       recipients = await waRecipients();

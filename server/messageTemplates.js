@@ -34,13 +34,13 @@ Date: ${data.date}
 
 _Miltenyi Inventory Hub SG_`,
 
-  deliveryArrival: (data) => `\u{1F69A} *Delivery Arrived*
+  deliveryArrival: (data) => `\u{1F69A} *Your Part Has Arrived*
 
-Bulk Order: ${data.month}
-Items Delivered: ${data.itemCount}
-Total Value: ${data.totalValue}
-
-Please verify and update received quantities in the system.
+Material: ${data.materialNo}
+Item: ${data.description}
+Received: ${data.qtyReceived} of ${data.quantity}
+Order: ${data.orderId}
+Date: ${data.date}
 
 _Miltenyi Inventory Hub SG_`,
 
@@ -54,6 +54,19 @@ Date: ${data.date}
 
 Items:
 ${data.itemsList}
+
+_Miltenyi Inventory Hub SG_`,
+
+  lowStockAlert: (data) => `\u{1F4C9} *Low Stock*
+
+Material: ${data.materialNo}
+Item: ${data.description}
+On hand: ${data.quantity}
+Reorder point: ${data.reorderPoint}
+Using about ${data.perMonth}/month — roughly ${data.monthsCover} months left
+Typical lead time: ${data.leadTimeDays} days
+
+Ordering now still leaves a gap. Please raise an order.
 
 _Miltenyi Inventory Hub SG_`,
 

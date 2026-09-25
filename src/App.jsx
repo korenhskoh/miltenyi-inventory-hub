@@ -497,9 +497,7 @@ export default function App() {
     partArrivalDone: true,
     deliveryArrival: true,
     backOrderUpdate: true,
-    lowStockAlert: false,
-    monthlySummary: false,
-    urgentRequest: true,
+    lowStockAlert: true,
   });
   const [waMessageTemplates, setWaMessageTemplates] = useState({
     orderApproval: {
