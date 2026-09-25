@@ -269,16 +269,30 @@ export default function WhatsAppPage({
           {/* Auto-notification Rules */}
           <div className="card" style={{ padding: '18px 20px' }}>
             <h4 style={{ fontSize: 13, fontWeight: 600, marginBottom: 12 }}>Auto-Notify Rules via Baileys</h4>
+            {/*
+             * Every rule listed here is read by code that actually sends. Two
+             * that were not have gone:
+             *
+             * "Monthly summary" duplicated the working control in Scheduled
+             * Reports below — two identically labelled switches on one screen,
+             * only the lower one live, so turning this one off did not stop the
+             * broadcast. Silently-not-stopping is worse than never starting.
+             *
+             * "Urgent request → Broadcast to all" had no event, no template and
+             * no code, and shipped switched ON — the rule somebody would most
+             * rely on in an emergency, advertising that it worked. It can come
+             * back when there is an urgent-order concept for it to listen to.
+             *
+             * The labels now name who is actually messaged.
+             */}
             {[
               { key: 'orderCreated', label: 'New order created → Notify team' },
               { key: 'bulkOrderCreated', label: 'Bulk order created → Notify all engineers' },
               { key: 'partArrivalDone', label: 'Part arrival verified → Notify requester' },
               { key: 'deliveryArrival', label: 'Delivery arrival → Notify assigned engineer' },
-              { key: 'backOrderUpdate', label: 'Back order update → Team group' },
-              { key: 'lowStockAlert', label: 'Low stock alert → Supervisor' },
-              { key: 'monthlySummary', label: 'Monthly summary → All engineers' },
-              { key: 'urgentRequest', label: 'Urgent request → Broadcast to all' },
-            ].map((rule, i) => (
+              { key: 'backOrderUpdate', label: 'Short delivery → Notify team' },
+              { key: 'lowStockAlert', label: 'Low stock (at reorder point) → Notify admins' },
+            ].map((rule, i, rules) => (
               <div
                 key={i}
                 style={{
@@ -286,7 +300,7 @@ export default function WhatsAppPage({
                   alignItems: 'center',
                   justifyContent: 'space-between',
                   padding: '10px 0',
-                  borderBottom: i < 7 ? '1px solid #F0F2F5' : 'none',
+                  borderBottom: i < rules.length - 1 ? '1px solid #F0F2F5' : 'none',
                 }}
               >
                 <span style={{ fontSize: 12.5 }}>{rule.label}</span>

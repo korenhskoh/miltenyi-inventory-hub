@@ -145,9 +145,7 @@ export async function initDatabase() {
         partArrivalDone: true,
         deliveryArrival: true,
         backOrderUpdate: true,
-        lowStockAlert: false,
-        monthlySummary: false,
-        urgentRequest: true,
+        lowStockAlert: true,
       };
 
       // scheduledNotifs

@@ -12,6 +12,9 @@ vi.mock('./db.js', () => ({
           .toLowerCase();
         return { rows: users.filter((u) => u.name.toLowerCase() === wanted) };
       }
+      if (/role = \$1/.test(sql)) {
+        return { rows: users.filter((u) => u.role === params?.[0]) };
+      }
       return { rows: users };
     }
     return { rows: [] }; // notif_log insert
@@ -187,5 +190,32 @@ describe('custom templates reach the sender under the name Settings saves', () =
     };
     await notifyEvent('partArrivalDone', { description: 'x' });
     expect(sent[0].text).toBe('exact');
+  });
+});
+
+describe('notifyEvent addressed to a role', () => {
+  beforeEach(() => {
+    sent.length = 0;
+    users.length = 0;
+    users.push(
+      { name: 'Boss', phone: '91110000', role: 'admin' },
+      { name: 'Engineer', phone: '91110001', role: 'user' },
+    );
+    cfg.waNotifyRules = { lowStockAlert: true };
+    cfg.waMessageTemplates = { lowStockAlert: { message: 'Low: {materialNo}' } };
+    setWaContext(() => ctx);
+  });
+
+  it('messages only that role', async () => {
+    const r = await notifyEvent('lowStockAlert', { materialNo: 'X' }, { audienceRole: 'admin' });
+    expect(r.sent).toBe(1);
+    expect(sent[0].jid).toBe('91110000@s.whatsapp.net');
+  });
+
+  it('falls back to the team when nobody in that role can be reached', async () => {
+    users.length = 0;
+    users.push({ name: 'Engineer', phone: '91110001', role: 'user' });
+    const r = await notifyEvent('lowStockAlert', { materialNo: 'X' }, { audienceRole: 'admin' });
+    expect(r.sent).toBe(1); // better somebody hears it than nobody does
   });
 });

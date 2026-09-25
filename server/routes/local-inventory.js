@@ -7,6 +7,8 @@ import { asyncHandler } from '../middleware/errorHandler.js';
 import { requireAdmin } from '../middleware/auth.js';
 import { requirePermission } from '../middleware/permissions.js';
 import { APP_TIMEZONE } from '../appDates.js';
+import { checkLowStock } from '../lowStock.js';
+import logger from '../logger.js';
 
 const router = Router();
 
@@ -379,6 +381,13 @@ router.post(
     }
 
     res.json({ success: true, processed: processed.length, errors, items: processed });
+
+    // After the response, and never awaited: a charge-out must not be delayed
+    // or failed by an alert about it. This is the moment stock actually falls,
+    // so it is the moment to say a part has reached its reorder point.
+    if (processed.length) {
+      void checkLowStock(processed).catch((e) => logger.warn({ err: e }, 'Low-stock check failed'));
+    }
   }),
 );
 
