@@ -219,3 +219,59 @@ describe('notifyEvent addressed to a role', () => {
     expect(r.sent).toBe(1); // better somebody hears it than nobody does
   });
 });
+
+describe('the order-created message names the part', () => {
+  beforeEach(() => {
+    sent.length = 0;
+    users.length = 0;
+    users.push({ name: 'A', phone: '91110000', role: 'user' });
+    cfg.waNotifyRules = { orderCreated: true, bulkOrderCreated: true };
+    cfg.waMessageTemplates = {};
+    setWaContext(() => ctx);
+  });
+
+  it('includes the material, quantity and cost, and asks for no reply', async () => {
+    // The old path reused the approval-request template, which wants an order
+    // count, a total quantity and a table this caller never had — so the
+    // message went out with blank fields, never said what was ordered, and
+    // ended "Reply APPROVE or REJECT" on what is only a notice. The bot treats
+    // those words as commands, so it invited replies to a question nobody had
+    // asked.
+    await notifyEvent('orderCreated', {
+      orderId: 'ORD-1',
+      description: 'Peristaltic Pump Head',
+      materialNo: '130-092-628',
+      quantity: 2,
+      total: 842.5,
+      orderBy: 'Fu Siong',
+      date: '2026-09-25',
+    });
+    const text = sent[0].text;
+    expect(text).toContain('130-092-628');
+    expect(text).toContain('Peristaltic Pump Head');
+    expect(text).toContain('Fu Siong');
+    expect(text).not.toMatch(/APPROVE|REJECT/);
+    expect(text).not.toContain('undefined');
+    expect(text).not.toMatch(/:\s*$/m); // no field left blank
+  });
+
+  it('announces a batch once, with its size and value', async () => {
+    await notifyEvent('bulkOrderCreated', {
+      month: 'Sep 2026',
+      itemCount: 12,
+      totalCost: 4200,
+      orderBy: 'Fu Siong',
+      date: '2026-09-25',
+    });
+    expect(sent).toHaveLength(1);
+    expect(sent[0].text).toContain('Sep 2026');
+    expect(sent[0].text).toContain('12');
+    expect(sent[0].text).not.toMatch(/APPROVE|REJECT/);
+  });
+
+  it('still respects the toggle', async () => {
+    cfg.waNotifyRules = { orderCreated: false, bulkOrderCreated: false };
+    expect((await notifyEvent('orderCreated', { orderId: 'X' })).skipped).toBe('rule-off');
+    expect((await notifyEvent('bulkOrderCreated', { month: 'X' })).skipped).toBe('rule-off');
+  });
+});

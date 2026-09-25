@@ -486,10 +486,12 @@ async function getBulkGroups() {
   }
 }
 
-async function createBulkGroup(group) {
+/** `historical` marks a batch coming from a workbook import, which must not
+ *  announce itself on WhatsApp — it is history, not a new order. */
+async function createBulkGroup(group, { historical = false } = {}) {
   try {
     const res = handleResponse(
-      await fetch(`${BASE}/api/bulk-groups`, {
+      await fetch(`${BASE}/api/bulk-groups${historical ? '?historical=1' : ''}`, {
         method: 'POST',
         headers: authHeaders(),
         body: JSON.stringify(group),

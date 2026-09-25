@@ -649,41 +649,11 @@ export default function App() {
     [waConnected, waNotifyRules, waMessageTemplates, emailConfig, emailTemplates, currentUser, users, addNotifEntry],
   );
 
-  // Helper: send event-driven WA notification when waNotifyRules flag is enabled
-  const sendAutoWaNotify = useCallback(
-    async (ruleKey, templateKey, data, subject) => {
-      if (!waConnected || !waNotifyRules[ruleKey]) return;
-      const tpl = waMessageTemplates[templateKey];
-      const message = fillTemplate(tpl?.message || data.message || '', data);
-      if (!message) return;
-      const recipients = users.filter((u) => u.status === 'active' && u.phone);
-      let sent = 0;
-      for (const u of recipients) {
-        try {
-          const r = await fetch('/api/whatsapp/send', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${api.getToken()}` },
-            body: JSON.stringify({ phone: u.phone, template: 'custom', data: { message } }),
-          });
-          const result = await r.json().catch(() => ({}));
-          if (r.ok && result.success) sent++;
-        } catch (e) {
-          /* non-blocking */
-        }
-      }
-      if (recipients.length > 0) {
-        addNotifEntry({
-          id: `N-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-          type: 'whatsapp',
-          to: `${recipients.length} user(s)`,
-          subject: subject || `Auto-notification: ${ruleKey}`,
-          date: todayLocal(),
-          status: sent === recipients.length ? 'Delivered' : sent > 0 ? 'Partial' : 'Failed',
-        });
-      }
-    },
-    [waConnected, waNotifyRules, waMessageTemplates, users, addNotifEntry],
-  );
+  // `sendAutoWaNotify` lived here and has gone with its two callers. Sending
+  // from the browser meant the rule only fired when somebody happened to be on
+  // this screen — an order raised through the WhatsApp bot or the API notified
+  // nobody, whatever the toggle said. Both events are sent by the server now,
+  // through notifyEvent, which honours the same rules and reaches every caller.
 
   // ── Scheduled Reports State (must be declared before sendScheduledReport) ──
   const [scheduledNotifs, setScheduledNotifs] = useState({
@@ -2102,21 +2072,9 @@ export default function App() {
       'success',
     );
     logAction('create', 'order', o.id, { description: o.description, quantity: o.quantity, totalCost: o.totalCost });
-    // Auto-notify: order created
-    sendAutoWaNotify(
-      'orderCreated',
-      'orderApproval',
-      {
-        orderId: o.id,
-        description: (o.description || '').slice(0, 40),
-        materialNo: o.materialNo || 'N/A',
-        quantity: o.quantity,
-        totalCost: (o.totalCost || 0).toFixed(2),
-        orderBy: currentUser?.name || 'System',
-        date: o.orderDate,
-      },
-      `New Order: ${o.description}`,
-    );
+    // The "order created" notification is sent by the server now, from
+    // POST /api/orders — so it fires however the order was raised, not only
+    // from this screen, and uses a template that names the part.
   };
 
   // ── Duplicate Order ──
@@ -3458,20 +3416,8 @@ export default function App() {
       items: successOrders.length,
       totalCost: bg.totalCost,
     });
-    // Auto-notify: bulk order created
-    sendAutoWaNotify(
-      'bulkOrderCreated',
-      'bulkApproval',
-      {
-        batchCount: 1,
-        itemCount: successOrders.length,
-        totalQty: successOrders.reduce((s, o) => s + (o.quantity || 0), 0),
-        totalCost: bg.totalCost.toFixed(2),
-        orderBy: bulkOrderBy || currentUser?.name || 'System',
-        date: todayLocal(),
-      },
-      `Bulk Order: ${successOrders.length} items for ${bulkMonth}`,
-    );
+    // The "bulk order created" notification is sent by the server, once for
+    // the batch, from POST /api/bulk-groups.
   };
 
   // ── Auth Handlers ──
@@ -3887,7 +3833,7 @@ export default function App() {
     // link is written against a group id that is not there yet.
     const savedGroups = [];
     for (const g of groups) {
-      if (await api.createBulkGroup(g)) savedGroups.push(g);
+      if (await api.createBulkGroup(g, { historical: true })) savedGroups.push(g);
     }
 
     // Saved in small batches rather than all at once: an import is hundreds of
