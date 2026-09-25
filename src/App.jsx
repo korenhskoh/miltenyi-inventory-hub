@@ -260,7 +260,9 @@ export default function App() {
   const [catalogSort, setCatalogSort] = useState({ key: 'sg', dir: 'desc' });
   const [orderSort, setOrderSort] = useState({ key: null, dir: 'asc' });
   const [bulkSort, setBulkSort] = useState({ key: null, dir: 'asc' });
-  const [arrivalSort, setArrivalSort] = useState({ key: 'approvalSentDate', dir: 'desc' });
+  // Newest order first. This was `approvalSentDate`, which is blank unless an
+  // approval request was actually sent, so the table was effectively unsorted.
+  const [arrivalSort, setArrivalSort] = useState({ key: 'orderDate', dir: 'desc' });
   const [partsCatalog, setPartsCatalog] = useState([]);
   const [catalogUploadMeta, setCatalogUploadMeta] = useState(() => {
     try {
@@ -876,12 +878,14 @@ export default function App() {
       //
       // The old guard only caught this when the status was already 'Received',
       // which imported part-deliveries are not.
-      if (delta <= 0) {
+      // Zero means nothing changed; a reduction is a correction and is allowed.
+      // This used to refuse anything that was not an increase, which is why the
+      // button was dead at exactly the moment somebody was fixing a figure they
+      // had just entered wrongly.
+      if (delta === 0) {
         notify(
-          order.status === ORDER_STATUS.RECEIVED ? 'Already Confirmed' : 'Nothing to Record',
-          order.status === ORDER_STATUS.RECEIVED
-            ? `${order.description || orderId} is already marked as received`
-            : `${order.description || orderId} has no additional quantity to book in — enter a higher received quantity first.`,
+          'Nothing to Record',
+          `${order.description || orderId} already shows ${val} received — change the number to record something.`,
           'info',
         );
         return;
@@ -930,9 +934,33 @@ export default function App() {
           // approver had been emailed "Part Arrival Verified — Back Orders: 0"
           // for a delivery that was never recorded.
           if (order.bulkGroupId) checkBulkGroupCompletion(order.bulkGroupId, updatedOrders);
-          logAction('Confirm Arrival', 'order', orderId, { qtyReceived: val, status });
-          notify('Arrival Confirmed', `${order.description || orderId}: ${val}/${order.quantity} received`, 'success');
-          sendArrivalReport([updatedOrder]);
+          const correction = delta < 0;
+          logAction(correction ? 'Correct Arrival' : 'Confirm Arrival', 'order', orderId, {
+            qtyReceived: val,
+            previous: order.qtyReceived || 0,
+            status,
+          });
+          if (correction) {
+            // Say what happened to the SHELF as well as to the order: some of
+            // what was booked in may already have been charged out, in which
+            // case only part of it could be taken back.
+            const moved = Math.abs(res.stockMoved ?? delta);
+            notify(
+              'Arrival Corrected',
+              `${order.description || orderId}: ${order.qtyReceived || 0} → ${val} received` +
+                (moved < Math.abs(delta)
+                  ? `. Only ${moved} could be removed from stock — the rest had already been used.`
+                  : ''),
+              'warning',
+            );
+          } else {
+            notify(
+              'Arrival Confirmed',
+              `${order.description || orderId}: ${val}/${order.quantity} received`,
+              'success',
+            );
+            sendArrivalReport([updatedOrder]);
+          }
         });
       setPendingArrival((prev) => {
         const next = { ...prev };
@@ -962,11 +990,9 @@ export default function App() {
         const pending = pendingArrival[orderId];
         const val = pending ? pending.qtyReceived : order.qtyReceived || 0;
         const delta = arrivalDelta(order, val);
-        // Mirror confirmArrival: only an actual increase is an arrival. Batch
-        // confirm did not even look at `alreadyRecorded` on the way back, so a
-        // ticked row with an unchanged quantity produced a stamped arrival
-        // date, an audit entry and an arrival report against a write the server
-        // had refused to make.
+        // Only increases here. A correction is a deliberate, one-row act with
+        // its own confirmation; sweeping a batch downwards by accident is not
+        // something a bulk button should make easy.
         if (delta <= 0) return;
         const upd = {
           ...computeArrival(order, val),

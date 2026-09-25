@@ -6,6 +6,7 @@ import api from '../api.js';
 import { todayLocal } from '../lib/dates.js';
 import Pagination, { usePaginationState, paginate } from '../components/Pagination.jsx';
 import { arrivalCondition } from '../lib/arrival.js';
+import { monthSortKey } from '../lib/dates.js';
 import { SectionHeader, useCollapsed } from '../components/CollapsibleSection.jsx';
 
 /**
@@ -89,11 +90,19 @@ const DeliveryPage = ({
   api,
   setPage,
 }) => {
-  // Sort state for single/bulk arrival tables (default: newest approved first)
-  const [singleArrivalSort, setSingleArrivalSort] = useState({ key: 'approvalSentDate', dir: 'desc' });
-  const [bulkArrivalSort, setBulkArrivalSort] = useState({ key: 'approvalSentDate', dir: 'desc' });
-  // Sort state for bulk group rows (table header sort)
-  const [bulkGroupSort, setBulkGroupSort] = useState({ key: 'approvedDate', dir: 'desc' });
+  // Newest order first, everywhere on this page.
+  //
+  // All of these used to default to `approvalSentDate`, which is only written
+  // when an approval request is actually SENT — so it is blank on every
+  // imported order and on anything approved without one. A blank sorts equal to
+  // every other blank, which means the tables were effectively unsorted and the
+  // row you wanted could be anywhere. `orderDate` is on every order.
+  const [singleArrivalSort, setSingleArrivalSort] = useState({ key: 'orderDate', dir: 'desc' });
+  const [bulkArrivalSort, setBulkArrivalSort] = useState({ key: 'orderDate', dir: 'desc' });
+  // Batches sort by the month they are for, newest first — see `_monthSort`,
+  // which is a real number because "Sep 2026" and "Apr 2026" do not compare
+  // sensibly as text.
+  const [bulkGroupSort, setBulkGroupSort] = useState({ key: '_monthSort', dir: 'desc' });
   const [arrivalCheckedByFilter, setArrivalCheckedByFilter] = useState('All');
 
   // The three tables fold away, and remember it. Collapsed by default: the page
@@ -341,6 +350,12 @@ const DeliveryPage = ({
             _hasBackOrder: hasBackOrder,
             _orderBy: orderByLabel,
             _owners: owners,
+            // A number, so the batches order chronologically rather than
+            // alphabetically — Apr 2026 before Sep 2026, not after it. A label
+            // that is not a month (a sheet tab called "Week 12", say) gets -1 so
+            // it sorts to the BOTTOM of a newest-first list rather than jumping
+            // to the top, which is where Infinity would have put it.
+            _monthSort: Number.isFinite(monthSortKey(bg.month)) ? monthSortKey(bg.month) : -1,
             approvedDate,
           };
         });
@@ -646,7 +661,14 @@ const DeliveryPage = ({
                                           // arrived with no date in the sheet, and
                                           // a greyed-out "Confirmed" on a live back
                                           // order, which read as finished work.
-                                          const canConfirm = hasPending && pv.qtyReceived > (o.qtyReceived || 0);
+                                          // Enabled whenever the number in the box differs from what is
+                                          // recorded — in EITHER direction. It was restricted to increases,
+                                          // which greyed the button out at exactly the moment somebody was
+                                          // correcting a figure they had just got wrong, with no way to
+                                          // press it and no explanation. Reducing is a real operation now,
+                                          // so the button is real too.
+                                          const canConfirm = hasPending && pv.qtyReceived !== (o.qtyReceived || 0);
+                                          const isCorrection = hasPending && pv.qtyReceived < (o.qtyReceived || 0);
                                           return (
                                             <tr
                                               key={o.id}
@@ -789,9 +811,11 @@ const DeliveryPage = ({
                                                   }}
                                                 >
                                                   {hasPending
-                                                    ? o.arrivalDate
-                                                      ? 'Update'
-                                                      : 'Confirm'
+                                                    ? isCorrection
+                                                      ? 'Correct'
+                                                      : o.arrivalDate
+                                                        ? 'Update'
+                                                        : 'Confirm'
                                                     : arrivalCondition(o) === 'Arrived'
                                                       ? '\u2713 Done'
                                                       : o.arrivalDate
@@ -1195,7 +1219,14 @@ const DeliveryPage = ({
                       const dispQty = pv ? pv.qtyReceived : o.qtyReceived || 0;
                       const dispBO = pv ? pv.qtyReceived - o.quantity : (o.qtyReceived || 0) - o.quantity;
                       const hasPending = !!pv;
-                      const canConfirm = hasPending && pv.qtyReceived > (o.qtyReceived || 0);
+                      // Enabled whenever the number in the box differs from what is
+                      // recorded — in EITHER direction. It was restricted to increases,
+                      // which greyed the button out at exactly the moment somebody was
+                      // correcting a figure they had just got wrong, with no way to
+                      // press it and no explanation. Reducing is a real operation now,
+                      // so the button is real too.
+                      const canConfirm = hasPending && pv.qtyReceived !== (o.qtyReceived || 0);
+                      const isCorrection = hasPending && pv.qtyReceived < (o.qtyReceived || 0);
                       return (
                         <tr
                           key={o.id}
@@ -1318,9 +1349,11 @@ const DeliveryPage = ({
                               }}
                             >
                               {hasPending
-                                ? o.arrivalDate
-                                  ? 'Update'
-                                  : 'Confirm'
+                                ? isCorrection
+                                  ? 'Correct'
+                                  : o.arrivalDate
+                                    ? 'Update'
+                                    : 'Confirm'
                                 : arrivalCondition(o) === 'Arrived'
                                   ? '\u2713 Done'
                                   : o.arrivalDate
