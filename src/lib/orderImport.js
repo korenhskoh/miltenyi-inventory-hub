@@ -265,31 +265,35 @@ export function rowToOrder(row, colMap, ctx = {}) {
   // negative means short.
   const backOrder = qtyReceived - quantity;
 
-  // Three states, not two. The sheet's "Quantity Received" and "Quantity Back
-  // Order" columns are how the engineers record a PARTIAL delivery — 3 of 5
-  // arrived, 2 still outstanding — and a partial used to fall through to
-  // "Pending Approval" along with the rows where nothing had shipped at all.
+  // What the two engineer columns mean.
   //
-  // That was wrong twice over. It put a part-delivered order into the approvals
-  // queue, and because the arrival endpoint refuses to record against an
-  // unapproved order, the engineer was answered with "Order must be approved
-  // before recording part arrival" when the remaining units finally turned up —
-  // on an order from last year that nobody was going to re-approve.
+  // These sheets are a record of orders that were RAISED AND APPROVED — that is
+  // why they are in the workbook at all. Nothing here is waiting for someone to
+  // approve it. "Quantity Received" and "Quantity Back Order" say how much of
+  // an approved order has turned up so far:
   //
-  // If anything arrived, the order was approved and shipped; that is what the
-  // received count means. Full delivery closes it out as Received, a partial
-  // stays open as Approved so the rest can still be booked in.
+  //   received >= quantity   the delivery is complete          -> Received
+  //   0 < received < quantity   part came, the rest is on back order -> Approved
+  //   received blank or 0    nothing has shipped yet, all on back order -> Approved
+  //
+  // The importer used to call both of the bottom two "Pending Approval", which
+  // was wrong twice over. It filled the approvals queue with orders nobody
+  // needed to approve, and — because POST /:id/arrival refuses to record
+  // against an unapproved order — it answered the engineer with "Order must be
+  // approved before recording part arrival" when the back-ordered parts finally
+  // came in. Those outstanding rows are exactly the ones that WILL receive
+  // stock later, so the rows the import got wrong were the rows that mattered.
+  //
+  // The sheet's own back-order column is written as (received - ordered):
+  // negative while short, 0 once complete. That is the same convention the app
+  // writes everywhere else, so it is recomputed above from the received count
+  // rather than trusted as a second source that could drift.
   const fullyReceived = quantity > 0 && qtyReceived >= quantity;
-  const partlyReceived = qtyReceived > 0 && !fullyReceived;
   const declaredStatus = normalizeStatus(text(cell(row, colMap.status)));
-  const derivedStatus = fullyReceived ? 'Received' : partlyReceived ? 'Approved' : 'Pending Approval';
-  // A received count outranks a stale status cell: whatever the column says, an
-  // order parts have already arrived against is not awaiting approval, and
-  // importing it as though it were locks the rest of the delivery out.
-  const status =
-    qtyReceived > 0 && (declaredStatus === 'Pending Approval' || !declaredStatus)
-      ? derivedStatus
-      : declaredStatus || derivedStatus;
+  const derivedStatus = fullyReceived ? 'Received' : 'Approved';
+  // An explicit Rejected (or Received) in a Status column still wins; a stale
+  // "Pending Approval" cell does not, because history is not pending.
+  const status = !declaredStatus || declaredStatus === 'Pending Approval' ? derivedStatus : declaredStatus;
 
   return {
     id: makeId(),
@@ -308,11 +312,11 @@ export function rowToOrder(row, colMap, ctx = {}) {
     emailFull: '',
     emailBack: '',
     status,
-    // History that already arrived is history: leaving it unapproved would put
-    // years of completed orders into the approvals queue and mark them
-    // receivable all over again.
-    approvalStatus:
-      status === 'Received' || status === 'Approved' ? 'approved' : status === 'Rejected' ? 'rejected' : 'pending',
+    // History is history: everything in these workbooks was already raised and
+    // approved. Leaving any of it unapproved put years of orders into the
+    // approvals queue and — worse — blocked the arrival endpoint on exactly the
+    // rows still waiting for stock.
+    approvalStatus: status === 'Rejected' ? 'rejected' : 'approved',
     month: text(cell(row, colMap.month)) || sheetMonth || '',
     year: text(cell(row, colMap.year)) || (orderDate ? orderDate.slice(0, 4) : String(new Date().getFullYear())),
     ...(bulkGroupId ? { bulkGroupId } : {}),
