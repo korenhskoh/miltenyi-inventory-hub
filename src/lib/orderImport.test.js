@@ -153,9 +153,11 @@ describe('row parsing', () => {
     expect(o.arrivalDate).toBe('2026-09-25');
   });
 
-  it('records a short delivery as a negative back order', () => {
+  it('records a short delivery as a negative back order, still open for the rest', () => {
     const row = ['130-115-120', 'Bio tubing', 5, 28.564, 142.82, 46288, 'Fu Siong', '', '', 46290, 3, -2, ''];
-    expect(rowToOrder(row, cols, ctx)).toMatchObject({ qtyReceived: 3, backOrder: -2, status: 'Pending Approval' });
+    // Approved, not "Pending Approval": three of the five have already arrived,
+    // and an unapproved order cannot have an arrival recorded against it.
+    expect(rowToOrder(row, cols, ctx)).toMatchObject({ qtyReceived: 3, backOrder: -2, status: 'Approved' });
   });
 
   it('marks received history as approved so it does not flood the queue', () => {
@@ -292,5 +294,78 @@ describe('status normalisation', () => {
     expect(rowToOrder(withStatus('approved'), cols, ctx).approvalStatus).toBe('approved');
     expect(rowToOrder(withStatus('rejected'), cols, ctx).approvalStatus).toBe('rejected');
     expect(rowToOrder(withStatus(''), cols, ctx).approvalStatus).toBe('pending');
+  });
+});
+
+describe('the engineers’ Quantity Received / Quantity Back Order columns', () => {
+  const COLS = detectOrderColumns(HEADERS);
+  const row = (qty, received, backOrder, status = '') => [
+    '130-115-120',
+    'Bio tubing, OD=6,4mm, 250mm',
+    qty,
+    28.56,
+    '',
+    '2025-07-15',
+    'Fu Siong',
+    status,
+    '',
+    '2025-07-28',
+    received,
+    backOrder,
+    'Fu Siong',
+  ];
+
+  it('closes out a full delivery as Received and approved', () => {
+    const o = rowToOrder(row(5, 5, 0), COLS, { sheetMonth: 'Jul 2025' });
+    expect(o.status).toBe('Received');
+    expect(o.approvalStatus).toBe('approved');
+    expect(o.qtyReceived).toBe(5);
+    expect(o.backOrder).toBe(0);
+  });
+
+  it('keeps a PARTIAL delivery open as Approved, not Pending Approval', () => {
+    // 3 of 5 arrived with 2 still on back order. This used to import as
+    // "Pending Approval"/pending, which put a part-delivered order into the
+    // approvals queue AND made the arrival endpoint refuse the remaining
+    // units — "Order must be approved before recording part arrival" — on an
+    // order from last year that nobody was going to re-approve.
+    const o = rowToOrder(row(5, 3, -2), COLS, { sheetMonth: 'Jul 2025' });
+    expect(o.status).toBe('Approved');
+    expect(o.approvalStatus).toBe('approved');
+    expect(o.qtyReceived).toBe(3);
+    expect(o.backOrder).toBe(-2);
+  });
+
+  it('leaves a row where nothing has shipped awaiting approval', () => {
+    const o = rowToOrder(row(10, '', -10), COLS, { sheetMonth: 'Jul 2025' });
+    expect(o.status).toBe('Pending Approval');
+    expect(o.approvalStatus).toBe('pending');
+    expect(o.qtyReceived).toBe(0);
+    expect(o.backOrder).toBe(-10);
+  });
+
+  // These workbooks carry no Status column, so add one to cover sheets that do.
+  const WITH_STATUS = [...HEADERS, 'Status'];
+  const STATUS_COLS = detectOrderColumns(WITH_STATUS);
+  const statusRow = (qty, received, backOrder, status) => [...row(qty, received, backOrder), status];
+
+  it('lets a received count outrank a stale "Pending Approval" status cell', () => {
+    const o = rowToOrder(statusRow(5, 3, -2, 'Pending Approval'), STATUS_COLS, { sheetMonth: 'Jul 2025' });
+    expect(o.status).toBe('Approved');
+    expect(o.approvalStatus).toBe('approved');
+  });
+
+  it('still honours an explicit Rejected status', () => {
+    const o = rowToOrder(statusRow(5, 0, -5, 'Rejected'), STATUS_COLS, { sheetMonth: 'Jul 2025' });
+    expect(o.status).toBe('Rejected');
+    expect(o.approvalStatus).toBe('rejected');
+  });
+
+  it('recomputes back order from the received count, keeping the sheet’s sign', () => {
+    // The sheet writes it as (received - ordered): negative when short, 0 when
+    // complete. That is the same convention the app writes everywhere else, so
+    // an engineer reading either sees the same number.
+    expect(rowToOrder(row(5, 1, -4), COLS, {}).backOrder).toBe(-4);
+    expect(rowToOrder(row(5, 5, 0), COLS, {}).backOrder).toBe(0);
   });
 });

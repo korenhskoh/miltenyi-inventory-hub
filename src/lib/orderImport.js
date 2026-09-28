@@ -265,8 +265,31 @@ export function rowToOrder(row, colMap, ctx = {}) {
   // negative means short.
   const backOrder = qtyReceived - quantity;
 
+  // Three states, not two. The sheet's "Quantity Received" and "Quantity Back
+  // Order" columns are how the engineers record a PARTIAL delivery — 3 of 5
+  // arrived, 2 still outstanding — and a partial used to fall through to
+  // "Pending Approval" along with the rows where nothing had shipped at all.
+  //
+  // That was wrong twice over. It put a part-delivered order into the approvals
+  // queue, and because the arrival endpoint refuses to record against an
+  // unapproved order, the engineer was answered with "Order must be approved
+  // before recording part arrival" when the remaining units finally turned up —
+  // on an order from last year that nobody was going to re-approve.
+  //
+  // If anything arrived, the order was approved and shipped; that is what the
+  // received count means. Full delivery closes it out as Received, a partial
+  // stays open as Approved so the rest can still be booked in.
   const fullyReceived = quantity > 0 && qtyReceived >= quantity;
-  const status = normalizeStatus(text(cell(row, colMap.status))) || (fullyReceived ? 'Received' : 'Pending Approval');
+  const partlyReceived = qtyReceived > 0 && !fullyReceived;
+  const declaredStatus = normalizeStatus(text(cell(row, colMap.status)));
+  const derivedStatus = fullyReceived ? 'Received' : partlyReceived ? 'Approved' : 'Pending Approval';
+  // A received count outranks a stale status cell: whatever the column says, an
+  // order parts have already arrived against is not awaiting approval, and
+  // importing it as though it were locks the rest of the delivery out.
+  const status =
+    qtyReceived > 0 && (declaredStatus === 'Pending Approval' || !declaredStatus)
+      ? derivedStatus
+      : declaredStatus || derivedStatus;
 
   return {
     id: makeId(),
