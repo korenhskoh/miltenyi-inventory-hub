@@ -4,8 +4,10 @@ import { Upload, Check, X, Download, Search, Trash2 } from 'lucide-react';
 import { fmtDate, exportToFile } from '../utils.js';
 import { todayLocal } from '../lib/dates.js';
 import { Pill, BatchBar, BatchBtn, SelBox } from '../components/ui.jsx';
+import { ProgressBar } from '../components/motion.jsx';
 import Pagination, { usePagination } from '../components/Pagination.jsx';
 import { allSelected } from '../lib/selection.js';
+import { buildCountSheet, missingFromCount, discrepancySummary, variance as rowVariance } from '../lib/stockCheck.js';
 
 /** Split one CSV line into cells, respecting double-quoted fields (with "" escapes). */
 const splitCsvLine = (line) => {
@@ -139,6 +141,29 @@ const StockCheckPage = ({
   });
   const historyRows = historyPager.pageItems;
   const selectionBeyondPage = selStockChecks.size > historyRows.filter((r) => selStockChecks.has(r.id)).length;
+  // Live accuracy of the check in progress, from the one shared definition.
+  const liveSummary = discrepancySummary(stockInventoryList);
+
+  // A count sheet can run to thousands of parts, so the table is searchable,
+  // filterable and paged. All three work over the WHOLE sheet — the summary
+  // strip and the saved result are always computed from every line, never from
+  // the page on screen, so narrowing the view can never change the numbers.
+  const [countSearch, setCountSearch] = useState('');
+  const [countFilter, setCountFilter] = useState('all');
+  const visibleCountRows = stockInventoryList.filter((i) => {
+    const q = countSearch.trim().toLowerCase();
+    if (q && ![i.materialNo, i.description].join(' ').toLowerCase().includes(q)) return false;
+    if (countFilter === 'pending') return !i.checked;
+    if (countFilter === 'counted') return i.checked;
+    if (countFilter === 'disc') return i.checked && rowVariance(i) !== 0;
+    if (countFilter === 'unknown') return i.inSystem === false;
+    return true;
+  });
+  const countPager = usePagination(visibleCountRows, {
+    storageKey: 'stockcount',
+    initialSize: 50,
+    resetKey: `${countSearch}|${countFilter}|${stockInventoryList.length}`,
+  });
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 20 }}>
@@ -207,8 +232,16 @@ const StockCheckPage = ({
                   const file = e.target.files[0];
                   if (!file) return;
 
-                  readRowsFromFile(file)
-                    .then((lines) => {
+                  // The uploaded file is the PHYSICAL count someone made in the
+                  // store room, so its quantity column fills physicalQty. The
+                  // figure it is audited against is what the system holds, read
+                  // from Local Inventory here. These were the wrong way round:
+                  // the file's column was read as the system quantity and Local
+                  // Inventory — the thing being audited — was never consulted,
+                  // so the discrepancy rate compared the count against whatever
+                  // had been typed in the file.
+                  Promise.all([readRowsFromFile(file), api.getLocalInventory({ all: true })])
+                    .then(([lines, inventory]) => {
                       if (!lines.length) {
                         notify('Invalid File', 'Could not parse items from file', 'warning');
                         return;
@@ -223,24 +256,27 @@ const StockCheckPage = ({
                       );
                       const qtyIdx = headers.findIndex(
                         (h) =>
-                          h.includes('qty') || h.includes('quantity') || h.includes('stock') || h.includes('system'),
+                          h.includes('count') ||
+                          h.includes('physical') ||
+                          h.includes('actual') ||
+                          h.includes('qty') ||
+                          h.includes('quantity') ||
+                          h.includes('stock'),
                       );
 
-                      const invList = lines
-                        .slice(1)
-                        .map((cols, i) => {
-                          return {
-                            id: `INV-${String(i + 1).padStart(3, '0')}`,
-                            materialNo: matIdx >= 0 ? cols[matIdx] : cols[0] || '',
-                            description: descIdx >= 0 ? cols[descIdx] : cols[1] || '',
-                            systemQty: parseInt(qtyIdx >= 0 ? cols[qtyIdx] : cols[2]) || 0,
-                            // null, not 0 — an uncounted row has no count yet,
-                            // and the input distinguishes the two.
-                            physicalQty: null,
-                            checked: false,
-                          };
-                        })
-                        .filter((item) => item.materialNo);
+                      const invList = buildCountSheet(
+                        lines.slice(1).map((cols) => ({
+                          materialNo: matIdx >= 0 ? cols[matIdx] : cols[0] || '',
+                          description: descIdx >= 0 ? cols[descIdx] : cols[1] || '',
+                          countedQty: qtyIdx >= 0 ? cols[qtyIdx] : cols[2],
+                        })),
+                        Array.isArray(inventory) ? inventory : inventory?.data || [],
+                      );
+                      const unknown = invList.filter((i) => !i.inSystem).length;
+                      const missed = missingFromCount(
+                        invList,
+                        Array.isArray(inventory) ? inventory : inventory?.data || [],
+                      );
 
                       if (invList.length > 0) {
                         const newId = `SC-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`;
@@ -257,7 +293,14 @@ const StockCheckPage = ({
                           notes: `Uploaded: ${file.name}`,
                           inventory: invList,
                         });
-                        notify('File Uploaded', `${invList.length} items loaded for stock check`, 'success');
+                        const notes = [
+                          `${invList.length} counted line(s)`,
+                          unknown ? `${unknown} not in the system` : '',
+                          missed.length ? `${missed.length} stocked part(s) not counted` : '',
+                        ]
+                          .filter(Boolean)
+                          .join(' · ');
+                        notify('Count Uploaded', notes, unknown || missed.length ? 'warning' : 'success');
                       } else {
                         notify('Invalid File', 'Could not parse items from file', 'warning');
                       }
@@ -318,13 +361,18 @@ const StockCheckPage = ({
               <button
                 className="bp"
                 onClick={() => {
-                  const discrepancies = stockInventoryList.filter(
-                    (i) => i.checked && i.physicalQty !== i.systemQty,
-                  ).length;
+                  // One definition of a discrepancy, shared with the summary
+                  // strip and the tests: a counted line whose physical count
+                  // differs from what Local Inventory holds.
+                  const sum = discrepancySummary(stockInventoryList);
+                  const discrepancies = sum.discrepancies;
+                  const rate = Math.round(sum.discrepancyRate * 1000) / 10;
                   const scUpdates = {
                     status: 'Completed',
                     disc: discrepancies,
-                    notes: `Completed by ${currentUser.name}. ${discrepancies} discrepancies found.`,
+                    notes:
+                      `Completed by ${currentUser.name}. ${discrepancies} of ${sum.counted} counted line(s) ` +
+                      `differ from the system (${rate}% discrepancy rate; ${sum.unitsShort} short, ${sum.unitsOver} over).`,
                     // The counts themselves. Without this the record kept the
                     // zeroes written at upload time, so the discrepancy total was
                     // right while the exported report showed every physical
@@ -339,7 +387,11 @@ const StockCheckPage = ({
                   setActiveCheckId(null);
                   setStockCheckMode(false);
                   setStockInventoryList([]);
-                  notify('Stock Check Completed', `${discrepancies} discrepancies found`, 'success');
+                  notify(
+                    'Stock Check Completed',
+                    `${discrepancies} of ${sum.counted} line(s) differ from the system — ${rate}% discrepancy rate`,
+                    discrepancies ? 'warning' : 'success',
+                  );
                 }}
               >
                 <Check size={14} /> Complete Check
@@ -362,20 +414,51 @@ const StockCheckPage = ({
             </div>
           </div>
 
-          {/* Progress Bar */}
-          <div style={{ height: 8, background: '#E2E8F0', borderRadius: 4, marginBottom: 20, overflow: 'hidden' }}>
-            <div
-              style={{
-                height: '100%',
-                width: `${(stockInventoryList.filter((i) => i.checked).length / stockInventoryList.length) * 100}%`,
-                background: 'linear-gradient(90deg,#006837,#00A550)',
-                borderRadius: 4,
-                transition: 'width 0.3s',
-              }}
-            />
+          {/* Progress Bar — the sheen runs while the count is unfinished, so an
+              audit in progress looks like one, and stops on completion. */}
+          <ProgressBar
+            done={liveSummary.counted}
+            total={liveSummary.lines}
+            label={`${liveSummary.counted} of ${liveSummary.lines} lines counted`}
+            style={{ marginBottom: 20 }}
+          />
+
+          {/* Find a part, or jump to what still needs attention. */}
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 12, flexWrap: 'wrap' }}>
+            <div style={{ position: 'relative', flex: '1 1 220px', minWidth: 180 }}>
+              <Search
+                size={14}
+                style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: '#94A3B8' }}
+              />
+              <input
+                value={countSearch}
+                onChange={(e) => setCountSearch(e.target.value)}
+                placeholder="Search material no. or description..."
+                style={{ width: '100%', paddingLeft: 30 }}
+              />
+            </div>
+            <select value={countFilter} onChange={(e) => setCountFilter(e.target.value)} style={{ minWidth: 150 }}>
+              <option value="all">All lines ({liveSummary.lines})</option>
+              <option value="pending">Not counted ({liveSummary.lines - liveSummary.counted})</option>
+              <option value="counted">Counted ({liveSummary.counted})</option>
+              <option value="disc">Discrepancies ({liveSummary.discrepancies})</option>
+              <option value="unknown">Not in system ({liveSummary.notInSystem})</option>
+            </select>
+            {(countSearch || countFilter !== 'all') && (
+              <button
+                className="bs"
+                onClick={() => {
+                  setCountSearch('');
+                  setCountFilter('all');
+                }}
+                style={{ padding: '6px 12px', fontSize: 11 }}
+              >
+                Clear
+              </button>
+            )}
           </div>
 
-          <div style={{ maxHeight: 400, overflow: 'auto' }}>
+          <div style={{ maxHeight: 460, overflow: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
               <thead style={{ position: 'sticky', top: 0, background: '#F8FAFB', zIndex: 10 }}>
                 <tr>
@@ -396,8 +479,8 @@ const StockCheckPage = ({
                 </tr>
               </thead>
               <tbody>
-                {stockInventoryList.map((item, idx) => {
-                  const variance = item.checked ? item.physicalQty - item.systemQty : null;
+                {countPager.pageItems.map((item) => {
+                  const variance = rowVariance(item);
                   return (
                     <tr
                       key={item.id}
@@ -417,6 +500,14 @@ const StockCheckPage = ({
                       </td>
                       <td className="td" style={{ textAlign: 'center', fontWeight: 600 }}>
                         {item.systemQty}
+                        {item.inSystem === false && (
+                          <div
+                            title="This part is not in Local Inventory, so the system holds none of it. Counting any is itself the discrepancy."
+                            style={{ fontSize: 10, fontWeight: 600, color: '#D97706' }}
+                          >
+                            not in system
+                          </div>
+                        )}
                       </td>
                       <td className="td" style={{ textAlign: 'center' }}>
                         <input
@@ -434,9 +525,15 @@ const StockCheckPage = ({
                           placeholder="—"
                           onChange={(e) => {
                             const raw = e.target.value;
+                            // Matched by id, never by array position. The
+                            // table is filtered and paged, so the row's index
+                            // within the page is not its index in the list —
+                            // typing on page 2 would have overwritten the count
+                            // of whichever part sat in that position on page 1,
+                            // silently, in the middle of an audit.
                             setStockInventoryList((prev) =>
-                              prev.map((x, i) => {
-                                if (i !== idx) return x;
+                              prev.map((x) => {
+                                if (x.id !== item.id) return x;
                                 if (raw === '') return { ...x, physicalQty: null, checked: false };
                                 const parsed = parseInt(raw, 10);
                                 if (!Number.isFinite(parsed)) return x;
@@ -497,9 +594,32 @@ const StockCheckPage = ({
                     </tr>
                   );
                 })}
+                {countPager.pageItems.length === 0 && (
+                  <tr>
+                    <td colSpan={6} style={{ padding: 24, textAlign: 'center', color: '#94A3B8', fontSize: 13 }}>
+                      No lines match this search or filter.
+                    </td>
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>
+
+          {/* Paged, because a count sheet can run to thousands of parts.
+              Note this pages the FILTERED rows; the summary below is always
+              over the whole sheet. */}
+          <Pagination
+            page={countPager.page}
+            totalPages={countPager.totalPages}
+            total={countPager.total}
+            from={countPager.from}
+            to={countPager.to}
+            pageSize={countPager.pageSize}
+            setPage={countPager.setPage}
+            setPageSize={countPager.setPageSize}
+            unit="lines"
+            style={{ marginTop: 10 }}
+          />
 
           {/* Summary */}
           <div
@@ -513,24 +633,26 @@ const StockCheckPage = ({
             }}
           >
             <div>
-              <span style={{ fontSize: 12, color: '#64748B' }}>Checked: </span>
-              <strong>{stockInventoryList.filter((i) => i.checked).length}</strong>
+              <span style={{ fontSize: 12, color: '#64748B' }}>Counted: </span>
+              <strong>{liveSummary.counted}</strong>
             </div>
             <div>
               <span style={{ fontSize: 12, color: '#64748B' }}>Matches: </span>
-              <strong style={{ color: '#059669' }}>
-                {stockInventoryList.filter((i) => i.checked && i.physicalQty === i.systemQty).length}
-              </strong>
+              <strong style={{ color: '#059669' }}>{liveSummary.matched}</strong>
             </div>
             <div>
               <span style={{ fontSize: 12, color: '#64748B' }}>Discrepancies: </span>
-              <strong style={{ color: '#DC2626' }}>
-                {stockInventoryList.filter((i) => i.checked && i.physicalQty !== i.systemQty).length}
+              <strong style={{ color: '#DC2626' }}>{liveSummary.discrepancies}</strong>
+            </div>
+            <div title="Share of counted lines that differ from Local Inventory">
+              <span style={{ fontSize: 12, color: '#64748B' }}>Discrepancy rate: </span>
+              <strong style={{ color: liveSummary.discrepancies ? '#DC2626' : '#059669' }}>
+                {Math.round(liveSummary.discrepancyRate * 1000) / 10}%
               </strong>
             </div>
             <div>
               <span style={{ fontSize: 12, color: '#64748B' }}>Pending: </span>
-              <strong style={{ color: '#D97706' }}>{stockInventoryList.filter((i) => !i.checked).length}</strong>
+              <strong style={{ color: '#D97706' }}>{liveSummary.lines - liveSummary.counted}</strong>
             </div>
           </div>
         </div>

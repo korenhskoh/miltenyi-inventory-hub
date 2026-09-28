@@ -153,16 +153,22 @@ describe('row parsing', () => {
     expect(o.arrivalDate).toBe('2026-09-25');
   });
 
-  it('records a short delivery as a negative back order', () => {
+  it('records a short delivery as a negative back order, still open for the rest', () => {
     const row = ['130-115-120', 'Bio tubing', 5, 28.564, 142.82, 46288, 'Fu Siong', '', '', 46290, 3, -2, ''];
-    expect(rowToOrder(row, cols, ctx)).toMatchObject({ qtyReceived: 3, backOrder: -2, status: 'Pending Approval' });
+    // Approved, not "Pending Approval": three of the five have already arrived,
+    // and an unapproved order cannot have an arrival recorded against it.
+    expect(rowToOrder(row, cols, ctx)).toMatchObject({ qtyReceived: 3, backOrder: -2, status: 'Approved' });
   });
 
-  it('marks received history as approved so it does not flood the queue', () => {
+  it('marks history as approved so it does not flood the queue', () => {
+    // Everything in these workbooks was raised and approved already — that is
+    // why it is in the workbook. A still-outstanding row is an APPROVED order
+    // waiting on its delivery, not one waiting on a signature.
     const row = ['130-127-575', 'Kit', 2, 100, 200, 46288, 'Fu Siong', '', '', '', 2, 0, ''];
     expect(rowToOrder(row, cols, ctx).approvalStatus).toBe('approved');
-    const pending = ['130-127-575', 'Kit', 2, 100, 200, 46288, 'Fu Siong', '', '', '', 0, -2, ''];
-    expect(rowToOrder(pending, cols, ctx).approvalStatus).toBe('pending');
+    const outstanding = ['130-127-575', 'Kit', 2, 100, 200, 46288, 'Fu Siong', '', '', '', 0, -2, ''];
+    expect(rowToOrder(outstanding, cols, ctx).approvalStatus).toBe('approved');
+    expect(rowToOrder(outstanding, cols, ctx).status).toBe('Approved');
   });
 
   it('dates an undated historical row to its own month, not to today', () => {
@@ -276,12 +282,15 @@ describe('status normalisation', () => {
     expect(rowToOrder(withStatus('completed'), cols, ctx).status).toBe('Received');
     expect(rowToOrder(withStatus('  RECEIVED '), cols, ctx).status).toBe('Received');
     expect(rowToOrder(withStatus('Cancelled'), cols, ctx).status).toBe('Rejected');
-    expect(rowToOrder(withStatus('Pending Approval'), cols, ctx).status).toBe('Pending Approval');
+    // A "Pending Approval" cell in a historical sheet is stale — the order is in
+    // the workbook because it was approved. It imports as Approved, which is
+    // also what lets its back-ordered parts be booked in later.
+    expect(rowToOrder(withStatus('Pending Approval'), cols, ctx).status).toBe('Approved');
   });
 
   it('ignores a status it cannot map and trusts the quantities instead', () => {
     const o = rowToOrder(withStatus('LIFE21'), cols, ctx);
-    expect(o.status).toBe('Pending Approval'); // 0 of 2 received
+    expect(o.status).toBe('Approved'); // 0 of 2 received — approved, still on back order
     const received = [...withStatus('Processed')];
     received[10] = 2; // quantity received
     expect(rowToOrder(received, cols, ctx).status).toBe('Received');
@@ -291,6 +300,82 @@ describe('status normalisation', () => {
     expect(rowToOrder(withStatus('delivered'), cols, ctx).approvalStatus).toBe('approved');
     expect(rowToOrder(withStatus('approved'), cols, ctx).approvalStatus).toBe('approved');
     expect(rowToOrder(withStatus('rejected'), cols, ctx).approvalStatus).toBe('rejected');
-    expect(rowToOrder(withStatus(''), cols, ctx).approvalStatus).toBe('pending');
+    expect(rowToOrder(withStatus(''), cols, ctx).approvalStatus).toBe('approved');
+  });
+});
+
+describe('the engineers’ Quantity Received / Quantity Back Order columns', () => {
+  const COLS = detectOrderColumns(HEADERS);
+  const row = (qty, received, backOrder, status = '') => [
+    '130-115-120',
+    'Bio tubing, OD=6,4mm, 250mm',
+    qty,
+    28.56,
+    '',
+    '2025-07-15',
+    'Fu Siong',
+    status,
+    '',
+    '2025-07-28',
+    received,
+    backOrder,
+    'Fu Siong',
+  ];
+
+  it('closes out a full delivery as Received and approved', () => {
+    const o = rowToOrder(row(5, 5, 0), COLS, { sheetMonth: 'Jul 2025' });
+    expect(o.status).toBe('Received');
+    expect(o.approvalStatus).toBe('approved');
+    expect(o.qtyReceived).toBe(5);
+    expect(o.backOrder).toBe(0);
+  });
+
+  it('keeps a PARTIAL delivery open as Approved, not Pending Approval', () => {
+    // 3 of 5 arrived with 2 still on back order. This used to import as
+    // "Pending Approval"/pending, which put a part-delivered order into the
+    // approvals queue AND made the arrival endpoint refuse the remaining
+    // units — "Order must be approved before recording part arrival" — on an
+    // order from last year that nobody was going to re-approve.
+    const o = rowToOrder(row(5, 3, -2), COLS, { sheetMonth: 'Jul 2025' });
+    expect(o.status).toBe('Approved');
+    expect(o.approvalStatus).toBe('approved');
+    expect(o.qtyReceived).toBe(3);
+    expect(o.backOrder).toBe(-2);
+  });
+
+  it('keeps a fully outstanding row approved and awaiting its delivery', () => {
+    // Quantity Received blank, Quantity Back Order -10: none of it has shipped.
+    // This is the row that WILL receive stock, so it above all must not import
+    // as unapproved — the arrival endpoint refuses to record against one.
+    const o = rowToOrder(row(10, '', -10), COLS, { sheetMonth: 'Jul 2025' });
+    expect(o.status).toBe('Approved');
+    expect(o.approvalStatus).toBe('approved');
+    expect(o.qtyReceived).toBe(0);
+    expect(o.backOrder).toBe(-10);
+  });
+
+  // These workbooks carry no Status column, so add one to cover sheets that do.
+  const WITH_STATUS = [...HEADERS, 'Status'];
+  const STATUS_COLS = detectOrderColumns(WITH_STATUS);
+  const statusRow = (qty, received, backOrder, status) => [...row(qty, received, backOrder), status];
+
+  it('overrides a stale "Pending Approval" status cell', () => {
+    const o = rowToOrder(statusRow(5, 3, -2, 'Pending Approval'), STATUS_COLS, { sheetMonth: 'Jul 2025' });
+    expect(o.status).toBe('Approved');
+    expect(o.approvalStatus).toBe('approved');
+  });
+
+  it('still honours an explicit Rejected status', () => {
+    const o = rowToOrder(statusRow(5, 0, -5, 'Rejected'), STATUS_COLS, { sheetMonth: 'Jul 2025' });
+    expect(o.status).toBe('Rejected');
+    expect(o.approvalStatus).toBe('rejected');
+  });
+
+  it('recomputes back order from the received count, keeping the sheet’s sign', () => {
+    // The sheet writes it as (received - ordered): negative when short, 0 when
+    // complete. That is the same convention the app writes everywhere else, so
+    // an engineer reading either sees the same number.
+    expect(rowToOrder(row(5, 1, -4), COLS, {}).backOrder).toBe(-4);
+    expect(rowToOrder(row(5, 5, 0), COLS, {}).backOrder).toBe(0);
   });
 });

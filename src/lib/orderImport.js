@@ -265,8 +265,35 @@ export function rowToOrder(row, colMap, ctx = {}) {
   // negative means short.
   const backOrder = qtyReceived - quantity;
 
+  // What the two engineer columns mean.
+  //
+  // These sheets are a record of orders that were RAISED AND APPROVED — that is
+  // why they are in the workbook at all. Nothing here is waiting for someone to
+  // approve it. "Quantity Received" and "Quantity Back Order" say how much of
+  // an approved order has turned up so far:
+  //
+  //   received >= quantity   the delivery is complete          -> Received
+  //   0 < received < quantity   part came, the rest is on back order -> Approved
+  //   received blank or 0    nothing has shipped yet, all on back order -> Approved
+  //
+  // The importer used to call both of the bottom two "Pending Approval", which
+  // was wrong twice over. It filled the approvals queue with orders nobody
+  // needed to approve, and — because POST /:id/arrival refuses to record
+  // against an unapproved order — it answered the engineer with "Order must be
+  // approved before recording part arrival" when the back-ordered parts finally
+  // came in. Those outstanding rows are exactly the ones that WILL receive
+  // stock later, so the rows the import got wrong were the rows that mattered.
+  //
+  // The sheet's own back-order column is written as (received - ordered):
+  // negative while short, 0 once complete. That is the same convention the app
+  // writes everywhere else, so it is recomputed above from the received count
+  // rather than trusted as a second source that could drift.
   const fullyReceived = quantity > 0 && qtyReceived >= quantity;
-  const status = normalizeStatus(text(cell(row, colMap.status))) || (fullyReceived ? 'Received' : 'Pending Approval');
+  const declaredStatus = normalizeStatus(text(cell(row, colMap.status)));
+  const derivedStatus = fullyReceived ? 'Received' : 'Approved';
+  // An explicit Rejected (or Received) in a Status column still wins; a stale
+  // "Pending Approval" cell does not, because history is not pending.
+  const status = !declaredStatus || declaredStatus === 'Pending Approval' ? derivedStatus : declaredStatus;
 
   return {
     id: makeId(),
@@ -285,11 +312,11 @@ export function rowToOrder(row, colMap, ctx = {}) {
     emailFull: '',
     emailBack: '',
     status,
-    // History that already arrived is history: leaving it unapproved would put
-    // years of completed orders into the approvals queue and mark them
-    // receivable all over again.
-    approvalStatus:
-      status === 'Received' || status === 'Approved' ? 'approved' : status === 'Rejected' ? 'rejected' : 'pending',
+    // History is history: everything in these workbooks was already raised and
+    // approved. Leaving any of it unapproved put years of orders into the
+    // approvals queue and — worse — blocked the arrival endpoint on exactly the
+    // rows still waiting for stock.
+    approvalStatus: status === 'Rejected' ? 'rejected' : 'approved',
     month: text(cell(row, colMap.month)) || sheetMonth || '',
     year: text(cell(row, colMap.year)) || (orderDate ? orderDate.slice(0, 4) : String(new Date().getFullYear())),
     ...(bulkGroupId ? { bulkGroupId } : {}),
