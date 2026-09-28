@@ -8,11 +8,11 @@ vi.mock('motion/react', () => ({
   useReducedMotion: () => false,
 }));
 
-const { CountUp, Stagger, FadeIn, Reveal } = await import('./motion.jsx');
+const { CountUp, Stagger, FadeIn, Reveal, ProgressBar, progressRatio } = await import('./motion.jsx');
 
 describe('motion primitives', () => {
   it('all export as components', () => {
-    for (const C of [CountUp, Stagger, FadeIn, Reveal]) expect(typeof C).toBe('function');
+    for (const C of [CountUp, Stagger, FadeIn, Reveal, ProgressBar]) expect(typeof C).toBe('function');
   });
 });
 
@@ -65,5 +65,26 @@ describe('count-up easing', () => {
     const from = 100;
     const to = 40;
     expect(from + (to - from) * eased(1)).toBe(40);
+  });
+});
+
+describe('progress ratio', () => {
+  it('is a fraction of the total', () => {
+    expect(progressRatio(1, 4)).toBe(0.25);
+    expect(progressRatio(4, 4)).toBe(1);
+  });
+
+  it('reads as zero rather than NaN when there is nothing to do', () => {
+    // An empty count sheet divided by zero rendered a "NaN%" width, which the
+    // browser drops — leaving a bar that never appeared at all.
+    expect(progressRatio(0, 0)).toBe(0);
+    expect(progressRatio(3, 0)).toBe(0);
+    expect(progressRatio(1, undefined)).toBe(0);
+    expect(progressRatio('x', 5)).toBe(0);
+  });
+
+  it('never runs past the end of its track', () => {
+    expect(progressRatio(7, 4)).toBe(1);
+    expect(progressRatio(-2, 4)).toBe(0);
   });
 });

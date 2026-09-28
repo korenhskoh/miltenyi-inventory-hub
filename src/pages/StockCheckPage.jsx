@@ -4,6 +4,7 @@ import { Upload, Check, X, Download, Search, Trash2 } from 'lucide-react';
 import { fmtDate, exportToFile } from '../utils.js';
 import { todayLocal } from '../lib/dates.js';
 import { Pill, BatchBar, BatchBtn, SelBox } from '../components/ui.jsx';
+import { ProgressBar } from '../components/motion.jsx';
 import Pagination, { usePagination } from '../components/Pagination.jsx';
 import { allSelected } from '../lib/selection.js';
 import { buildCountSheet, missingFromCount, discrepancySummary, variance as rowVariance } from '../lib/stockCheck.js';
@@ -392,18 +393,14 @@ const StockCheckPage = ({
             </div>
           </div>
 
-          {/* Progress Bar */}
-          <div style={{ height: 8, background: '#E2E8F0', borderRadius: 4, marginBottom: 20, overflow: 'hidden' }}>
-            <div
-              style={{
-                height: '100%',
-                width: `${(stockInventoryList.filter((i) => i.checked).length / stockInventoryList.length) * 100}%`,
-                background: 'linear-gradient(90deg,#006837,#00A550)',
-                borderRadius: 4,
-                transition: 'width 0.3s',
-              }}
-            />
-          </div>
+          {/* Progress Bar — the sheen runs while the count is unfinished, so an
+              audit in progress looks like one, and stops on completion. */}
+          <ProgressBar
+            done={liveSummary.counted}
+            total={liveSummary.lines}
+            label={`${liveSummary.counted} of ${liveSummary.lines} lines counted`}
+            style={{ marginBottom: 20 }}
+          />
 
           <div style={{ maxHeight: 400, overflow: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>

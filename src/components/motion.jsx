@@ -127,4 +127,104 @@ export function CountUp({ value, duration = 500, format = (n) => n.toLocaleStrin
   );
 }
 
+/**
+ * Clamp a completion ratio to 0..1, tolerating a zero or missing total.
+ *
+ * Exported for the tests: an empty list must read as 0%, not NaN%, and a stray
+ * over-count must not push the bar past its track.
+ */
+export function progressRatio(done, total) {
+  const d = Number(done);
+  const t = Number(total);
+  if (!Number.isFinite(d) || !Number.isFinite(t) || t <= 0) return 0;
+  return Math.max(0, Math.min(1, d / t));
+}
+
+/**
+ * A progress bar that looks like it is working while it is.
+ *
+ * The fill eases to its new width, and while the job is unfinished a sheen
+ * travels along it — that motion is the signal that something is still in
+ * progress, which a static bar cannot give. On completion the sheen stops and
+ * the bar settles with one short pulse, so finishing reads as an event rather
+ * than as the animation simply disappearing.
+ *
+ * Reduced motion drops the sheen and the pulse and snaps the width, per the
+ * rule at the top of this file.
+ */
+export function ProgressBar({
+  done = 0,
+  total = 0,
+  height = 8,
+  track = '#E2E8F0',
+  fill = 'linear-gradient(90deg,#006837,#00A550)',
+  label,
+  style,
+  className,
+}) {
+  const reduce = useReducedMotion();
+  const ratio = progressRatio(done, total);
+  const complete = total > 0 && ratio >= 1;
+  const running = total > 0 && !complete;
+
+  return (
+    <div
+      role="progressbar"
+      aria-valuemin={0}
+      aria-valuemax={Number(total) || 0}
+      aria-valuenow={Number(done) || 0}
+      aria-label={label}
+      style={{
+        height,
+        background: track,
+        borderRadius: height / 2,
+        overflow: 'hidden',
+        position: 'relative',
+        ...style,
+      }}
+      className={className}
+    >
+      <motion.div
+        initial={false}
+        animate={{
+          width: `${ratio * 100}%`,
+          // One short swell as the last item lands.
+          scaleY: complete && !reduce ? [1, 1.18, 1] : 1,
+        }}
+        transition={
+          reduce
+            ? { duration: 0 }
+            : {
+                width: { type: 'spring', stiffness: 220, damping: 30, mass: 0.6 },
+                scaleY: { duration: 0.34, ease: [0.22, 1, 0.36, 1] },
+              }
+        }
+        style={{
+          height: '100%',
+          background: fill,
+          borderRadius: height / 2,
+          position: 'relative',
+          overflow: 'hidden',
+          transformOrigin: 'center',
+        }}
+      >
+        {running && !reduce && (
+          <motion.div
+            aria-hidden="true"
+            initial={{ x: '-120%' }}
+            animate={{ x: '320%' }}
+            transition={{ duration: 1.5, ease: 'linear', repeat: Infinity, repeatDelay: 0.5 }}
+            style={{
+              position: 'absolute',
+              inset: 0,
+              width: '45%',
+              background: 'linear-gradient(90deg,transparent,rgba(255,255,255,0.55),transparent)',
+            }}
+          />
+        )}
+      </motion.div>
+    </div>
+  );
+}
+
 export { motion, AnimatePresence, useReducedMotion };

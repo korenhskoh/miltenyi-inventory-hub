@@ -8,6 +8,7 @@ import Pagination, { usePaginationState, paginate } from '../components/Paginati
 import { arrivalCondition } from '../lib/arrival.js';
 import { monthSortKey, compareMonths } from '../lib/dates.js';
 import { SectionHeader, useCollapsed } from '../components/CollapsibleSection.jsx';
+import { ProgressBar } from '../components/motion.jsx';
 
 /**
  * Send an arrival report via the server-side mailer (SMTP config is stored server-side).
@@ -517,6 +518,15 @@ const DeliveryPage = ({
                                 >
                                   {fullyReceived}/{allOrders.length} received
                                 </Pill>
+                                {/* A batch still taking deliveries shows the
+                                    sheen, so "in progress" reads at a glance. */}
+                                <ProgressBar
+                                  done={fullyReceived}
+                                  total={allOrders.length}
+                                  height={4}
+                                  label={`${fullyReceived} of ${allOrders.length} lines fully received`}
+                                  style={{ marginTop: 6, maxWidth: 130 }}
+                                />
                               </td>
                               <td className="td" onClick={(e) => e.stopPropagation()}>
                                 <button
