@@ -143,6 +143,27 @@ const StockCheckPage = ({
   const selectionBeyondPage = selStockChecks.size > historyRows.filter((r) => selStockChecks.has(r.id)).length;
   // Live accuracy of the check in progress, from the one shared definition.
   const liveSummary = discrepancySummary(stockInventoryList);
+
+  // A count sheet can run to thousands of parts, so the table is searchable,
+  // filterable and paged. All three work over the WHOLE sheet — the summary
+  // strip and the saved result are always computed from every line, never from
+  // the page on screen, so narrowing the view can never change the numbers.
+  const [countSearch, setCountSearch] = useState('');
+  const [countFilter, setCountFilter] = useState('all');
+  const visibleCountRows = stockInventoryList.filter((i) => {
+    const q = countSearch.trim().toLowerCase();
+    if (q && ![i.materialNo, i.description].join(' ').toLowerCase().includes(q)) return false;
+    if (countFilter === 'pending') return !i.checked;
+    if (countFilter === 'counted') return i.checked;
+    if (countFilter === 'disc') return i.checked && rowVariance(i) !== 0;
+    if (countFilter === 'unknown') return i.inSystem === false;
+    return true;
+  });
+  const countPager = usePagination(visibleCountRows, {
+    storageKey: 'stockcount',
+    initialSize: 50,
+    resetKey: `${countSearch}|${countFilter}|${stockInventoryList.length}`,
+  });
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 20 }}>
@@ -402,7 +423,42 @@ const StockCheckPage = ({
             style={{ marginBottom: 20 }}
           />
 
-          <div style={{ maxHeight: 400, overflow: 'auto' }}>
+          {/* Find a part, or jump to what still needs attention. */}
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 12, flexWrap: 'wrap' }}>
+            <div style={{ position: 'relative', flex: '1 1 220px', minWidth: 180 }}>
+              <Search
+                size={14}
+                style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: '#94A3B8' }}
+              />
+              <input
+                value={countSearch}
+                onChange={(e) => setCountSearch(e.target.value)}
+                placeholder="Search material no. or description..."
+                style={{ width: '100%', paddingLeft: 30 }}
+              />
+            </div>
+            <select value={countFilter} onChange={(e) => setCountFilter(e.target.value)} style={{ minWidth: 150 }}>
+              <option value="all">All lines ({liveSummary.lines})</option>
+              <option value="pending">Not counted ({liveSummary.lines - liveSummary.counted})</option>
+              <option value="counted">Counted ({liveSummary.counted})</option>
+              <option value="disc">Discrepancies ({liveSummary.discrepancies})</option>
+              <option value="unknown">Not in system ({liveSummary.notInSystem})</option>
+            </select>
+            {(countSearch || countFilter !== 'all') && (
+              <button
+                className="bs"
+                onClick={() => {
+                  setCountSearch('');
+                  setCountFilter('all');
+                }}
+                style={{ padding: '6px 12px', fontSize: 11 }}
+              >
+                Clear
+              </button>
+            )}
+          </div>
+
+          <div style={{ maxHeight: 460, overflow: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
               <thead style={{ position: 'sticky', top: 0, background: '#F8FAFB', zIndex: 10 }}>
                 <tr>
@@ -423,7 +479,7 @@ const StockCheckPage = ({
                 </tr>
               </thead>
               <tbody>
-                {stockInventoryList.map((item, idx) => {
+                {countPager.pageItems.map((item) => {
                   const variance = rowVariance(item);
                   return (
                     <tr
@@ -469,9 +525,15 @@ const StockCheckPage = ({
                           placeholder="—"
                           onChange={(e) => {
                             const raw = e.target.value;
+                            // Matched by id, never by array position. The
+                            // table is filtered and paged, so the row's index
+                            // within the page is not its index in the list —
+                            // typing on page 2 would have overwritten the count
+                            // of whichever part sat in that position on page 1,
+                            // silently, in the middle of an audit.
                             setStockInventoryList((prev) =>
-                              prev.map((x, i) => {
-                                if (i !== idx) return x;
+                              prev.map((x) => {
+                                if (x.id !== item.id) return x;
                                 if (raw === '') return { ...x, physicalQty: null, checked: false };
                                 const parsed = parseInt(raw, 10);
                                 if (!Number.isFinite(parsed)) return x;
@@ -532,9 +594,32 @@ const StockCheckPage = ({
                     </tr>
                   );
                 })}
+                {countPager.pageItems.length === 0 && (
+                  <tr>
+                    <td colSpan={6} style={{ padding: 24, textAlign: 'center', color: '#94A3B8', fontSize: 13 }}>
+                      No lines match this search or filter.
+                    </td>
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>
+
+          {/* Paged, because a count sheet can run to thousands of parts.
+              Note this pages the FILTERED rows; the summary below is always
+              over the whole sheet. */}
+          <Pagination
+            page={countPager.page}
+            totalPages={countPager.totalPages}
+            total={countPager.total}
+            from={countPager.from}
+            to={countPager.to}
+            pageSize={countPager.pageSize}
+            setPage={countPager.setPage}
+            setPageSize={countPager.setPageSize}
+            unit="lines"
+            style={{ marginTop: 10 }}
+          />
 
           {/* Summary */}
           <div
