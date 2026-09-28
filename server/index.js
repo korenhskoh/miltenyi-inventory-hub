@@ -10,6 +10,7 @@ import { usePostgresAuthState } from './waAuthState.js';
 import QRCode from 'qrcode';
 import pinoHttp from 'pino-http';
 import logger from './logger.js';
+import { installConsoleBridge } from './consoleBridge.js';
 import { initDatabase } from './initDb.js';
 import pool, { query as dbQuery } from './db.js';
 import nodemailer from 'nodemailer';
@@ -88,9 +89,16 @@ let waHealthCheckTimer = null; // periodic health check
 const WA_STABLE_THRESHOLD = 2 * 60 * 1000; // 2 min = "stable" → reset retry counter
 const WA_HEALTH_CHECK_INTERVAL = 45 * 1000; // check every 45s
 
-// Baileys internal logger (keep silent — our own logger handles app logging)
+// Baileys internal logger (keep silent — our own logger handles app logging).
+//
+// Silencing this is not enough on its own: the `libsignal` package Baileys
+// depends on calls console.error directly and ignores the logger entirely, so
+// its decryption retries flooded the deployment logs. installConsoleBridge
+// routes stray console output into this logger and demotes that known noise to
+// debug — see server/consoleBridge.js.
 const baileysLogger = logger.child({ component: 'baileys' });
 baileysLogger.level = 'silent';
+installConsoleBridge(logger);
 
 // Message Templates (imported from shared module)
 import { messageTemplates } from './messageTemplates.js';
