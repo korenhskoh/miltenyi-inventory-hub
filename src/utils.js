@@ -86,3 +86,45 @@ export const exportToPDF = (data, columns, title) => {
   );
   w.document.close();
 };
+
+// ════════════════════════ RICH CLIPBOARD ══════════════════════════════
+/**
+ * Put formatted content on the clipboard so pasting into Outlook, Word or
+ * Gmail produces the real thing rather than markup or a wall of text.
+ *
+ * Needed because a `mailto:` URL cannot carry an HTML body — the protocol has
+ * no such field — so a company without SMTP access had no way to get a
+ * formatted table into a mail at all. Writing both flavours lets the receiving
+ * app choose: a rich editor takes the HTML, a plain-text one takes the text.
+ *
+ * Returns true only when something actually reached the clipboard. The browser
+ * refuses outside a user gesture, over plain HTTP, and when the page is not
+ * focused, and older Safari has no ClipboardItem at all — so the caller must
+ * be able to tell, and offer the user another way through.
+ */
+export async function copyRichHtml(html, text) {
+  const plain = text ?? String(html ?? '').replace(/<[^>]*>/g, '');
+  try {
+    const CI = globalThis.ClipboardItem;
+    if (typeof CI !== 'undefined' && navigator.clipboard?.write) {
+      await navigator.clipboard.write([
+        new CI({
+          'text/html': new Blob([html], { type: 'text/html' }),
+          'text/plain': new Blob([plain], { type: 'text/plain' }),
+        }),
+      ]);
+      return true;
+    }
+  } catch {
+    // Fall through: better a plain-text paste than nothing on the clipboard.
+  }
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(plain);
+      return true;
+    }
+  } catch {
+    /* nothing worked */
+  }
+  return false;
+}

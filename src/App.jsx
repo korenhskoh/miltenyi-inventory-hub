@@ -106,6 +106,7 @@ import {
   exportToPDF,
   fillTemplate,
   escapeHtml,
+  copyRichHtml,
 } from './utils.js';
 import {
   STATUS_CFG,
@@ -141,6 +142,7 @@ import { detectHeaderRow } from './lib/sheet.js';
 import { getCatalogPrice, getEffectiveUnitPrice, getEffectiveTotal } from './lib/pricing.js';
 import { computeArrival, arrivalDelta, arrivalCondition } from './lib/arrival.js';
 import { ORDER_STATUS, approvalTransition } from './lib/approvals.js';
+import { buildApprovalEmailHtml, buildApprovalEmailText } from './lib/approvalEmail.js';
 import { allSelected, nextSelection } from './lib/selection.js';
 import { deletionWarning, writeFailed, failureReason } from './lib/orderChanges.js';
 import SettingsPage from './pages/SettingsPage.jsx';
@@ -2434,81 +2436,90 @@ export default function App() {
   };
 
   // ── HTML Email Builder ──
-  const buildApprovalHtml = ({ title, headerFields, sections, footer }) => {
-    // Excel-style grid table
-    const border = '1px solid #D0D5DD';
-    const thStyle = `padding:8px 10px;text-align:left;font-size:11px;font-weight:700;color:#fff;background:#2D6A4F;border:${border};white-space:nowrap;letter-spacing:0.3px;`;
-    const thRight = thStyle + 'text-align:right;';
-    const thCenter = thStyle + 'text-align:center;';
-    const tdStyle = `padding:7px 10px;font-size:11px;color:#1A202C;border:${border};vertical-align:top;`;
-    const tdMono = tdStyle + 'font-family:Consolas,monospace;font-weight:600;color:#1B4332;';
-    const tdRight = tdStyle + 'text-align:right;';
-    const tdCenter = tdStyle + 'text-align:center;';
-    const renderTable = (cols, rows, totals, colAlign) => {
-      let html =
-        '<table cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse;border:2px solid #2D6A4F;margin:12px 0;">';
-      html +=
-        '<thead><tr>' +
-        cols
-          .map((c, ci) => {
-            const align = colAlign?.[ci];
-            return `<th style="${align === 'right' ? thRight : align === 'center' ? thCenter : thStyle}">${escapeHtml(c)}</th>`;
-          })
-          .join('') +
-        '</tr></thead><tbody>';
-      rows.forEach((r, i) => {
-        const bg = i % 2 === 0 ? '#fff' : '#F0FDF4';
-        html +=
-          `<tr style="background:${bg}">` +
-          r
-            .map((v, ci) => {
-              const align = colAlign?.[ci];
-              const style = ci === 0 ? tdMono : align === 'right' ? tdRight : align === 'center' ? tdCenter : tdStyle;
-              return `<td style="${style}">${escapeHtml(v)}</td>`;
-            })
-            .join('') +
-          '</tr>';
-      });
-      if (totals) {
-        html +=
-          `<tr style="background:#D8F3DC;font-weight:700;">` +
-          totals
-            .map((v, ci) => {
-              const align = colAlign?.[ci];
-              const base = align === 'right' ? tdRight : tdStyle;
-              return `<td style="${base}font-weight:700;color:#1B4332;">${escapeHtml(v)}</td>`;
-            })
-            .join('') +
-          '</tr>';
+  /**
+   * The approval request in the shape the approver is used to reading: the
+   * orange-headed table from the manual mail, nothing around it.
+   *
+   * `signature` is only for the SMTP send. A clipboard paste lands above
+   * whatever signature Outlook adds, so including one there prints it twice.
+   */
+  const approvalEmailOrders = useCallback(
+    (selected) =>
+      selected.map((o) => ({
+        materialNo: o.materialNo || '',
+        description: o.description || '',
+        quantity: o.quantity,
+        unitPrice: getEffectiveUnitPrice(o, catalogLookup),
+        totalCost: getEffectiveTotal(o, catalogLookup),
+      })),
+    [catalogLookup],
+  );
+
+  /**
+   * A short sign-off for the SMTP send, which has no Outlook signature behind
+   * it. Built from the sender details already in Settings rather than a new
+   * field to fill in; blank ones simply do not appear.
+   */
+  const approvalSignatureHtml = useCallback(() => {
+    const parts = [
+      emailConfig.senderName && `<b>${escapeHtml(emailConfig.senderName)}</b>`,
+      emailConfig.senderTitle && escapeHtml(emailConfig.senderTitle),
+      emailConfig.senderEmail && escapeHtml(emailConfig.senderEmail),
+    ].filter(Boolean);
+    if (!parts.length) return null;
+    return (
+      '<div style="font-family:Calibri,Arial,sans-serif;font-size:11pt;color:#000000;">' +
+      '<i>Best Regards,</i><br>' +
+      parts.join('<br>') +
+      '</div>'
+    );
+  }, [emailConfig.senderName, emailConfig.senderTitle, emailConfig.senderEmail]);
+
+  const approverFirstName = useCallback(() => {
+    const name = String(emailConfig.approverName || '').trim();
+    if (name) return name.split(/\s+/)[0];
+    // Fall back to the local part of the address: "roy.ang@..." -> "Roy".
+    const local = String(emailConfig.approverEmail || '').split('@')[0];
+    const first = local.split(/[._-]/)[0];
+    return first ? first.charAt(0).toUpperCase() + first.slice(1) : '';
+  }, [emailConfig.approverName, emailConfig.approverEmail]);
+
+  /**
+   * Put the approval table on the clipboard as rich HTML.
+   *
+   * This is the route for a company whose SMTP is not available to the app: a
+   * `mailto:` URL cannot carry an HTML body at all, so the formatted table has
+   * to reach Outlook through a paste. It also keeps the mail coming from the
+   * real company address, under the sender's own signature.
+   */
+  const copyApprovalForOutlook = useCallback(
+    async (selected) => {
+      if (!selected?.length) {
+        notify('Nothing Selected', 'Select the orders to put in the approval request first.', 'warning');
+        return;
       }
-      html += '</tbody></table>';
-      return html;
-    };
-    let body = `<div style="max-width:900px;margin:0 auto;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#1A202C;">`;
-    body += `<div style="background:linear-gradient(135deg,#1B4332,#2D6A4F);padding:24px 32px;border-radius:10px 10px 0 0;">`;
-    body += `<h1 style="margin:0;font-size:20px;color:#fff;font-weight:700;">${escapeHtml(title)}</h1></div>`;
-    body += `<div style="padding:24px 32px;background:#fff;border:1px solid #E8ECF0;border-top:none;">`;
-    // Header summary as compact grid
-    body +=
-      '<table cellpadding="0" cellspacing="0" style="border-collapse:collapse;margin-bottom:16px;border:1px solid #D0D5DD;">' +
-      headerFields
-        .map(
-          ([l, v]) =>
-            `<tr><td style="padding:6px 14px;font-size:11px;color:#64748B;font-weight:600;background:#F8FAFB;border:1px solid #D0D5DD;white-space:nowrap;">${escapeHtml(l)}</td><td style="padding:6px 14px;font-size:12px;font-weight:700;color:#1B4332;border:1px solid #D0D5DD;">${escapeHtml(v)}</td></tr>`,
-        )
-        .join('') +
-      '</table>';
-    sections.forEach((s) => {
-      if (s.heading)
-        body += `<h3 style="font-size:13px;font-weight:700;color:#1B4332;margin:20px 0 6px;padding:6px 10px;background:#D8F3DC;border-left:4px solid #2D6A4F;border-radius:0 4px 4px 0;">${escapeHtml(s.heading)}</h3>`;
-      body += renderTable(s.cols, s.rows, s.totals, s.colAlign);
-    });
-    body += `<div style="margin-top:24px;padding:16px 20px;background:#FEF3C7;border-radius:8px;border-left:4px solid #D97706;">`;
-    body += `<p style="margin:0;font-size:13px;color:#92400E;font-weight:600;">Reply <strong>APPROVE</strong> to approve or <strong>REJECT</strong> to decline.</p></div>`;
-    body += `</div><div style="padding:14px 32px;background:#F8FAFB;border:1px solid #E8ECF0;border-top:none;border-radius:0 0 10px 10px;text-align:center;">`;
-    body += `<p style="margin:0;font-size:11px;color:#94A3B8;">${escapeHtml(footer || 'Miltenyi Inventory Hub SG')}</p></div></div>`;
-    return body;
-  };
+      const rows = approvalEmailOrders(selected);
+      const opts = { greetingName: approverFirstName() };
+      const ok = await copyRichHtml(buildApprovalEmailHtml(rows, opts), buildApprovalEmailText(rows, opts));
+      if (ok) {
+        notify(
+          'Copied for Outlook',
+          `${selected.length} item(s) copied as a formatted table. Open a new mail in Outlook and paste \u2014 your signature stays below it.`,
+          'success',
+        );
+      } else {
+        // The browser refuses the clipboard outside a user gesture, over plain
+        // HTTP and when the page is not focused. Say which, rather than letting
+        // a silent no-op look like a copy.
+        notify(
+          'Could Not Copy',
+          'The browser blocked the clipboard. This needs a secure (https) page and the window in focus \u2014 click the page and try again.',
+          'error',
+        );
+      }
+    },
+    [approvalEmailOrders, approverFirstName, notify],
+  );
 
   const smtpConfig = () => ({
     host: emailConfig.smtpHost,
@@ -2663,56 +2674,9 @@ export default function App() {
 
       // SMTP path: build HTML email + Excel attachment
       if (method === 'smtp' || method === 'both') {
-        const htmlEmail = buildApprovalHtml({
-          title: '📋 Order Approval Request',
-          headerFields: [
-            ['Requested By', currentUser?.name || 'System'],
-            ['Date', now],
-            ['Total Orders', selected.length],
-            ['Total Quantity', `${totalQty} units`],
-            ['Total Cost', `S$${totalCost.toFixed(2)}`],
-          ],
-          sections: [
-            {
-              cols: [
-                'No.',
-                'Order ID',
-                'Material No.',
-                'Description',
-                'Ordered By',
-                'Date',
-                'Status',
-                'Qty',
-                'Unit Price',
-                'Total (SGD)',
-              ],
-              colAlign: [null, null, null, null, null, 'center', 'center', 'center', 'right', 'right'],
-              rows: selected.map((o, i) => [
-                i + 1,
-                o.id || '',
-                o.materialNo || 'N/A',
-                o.description || '',
-                o.orderBy || '',
-                o.orderDate || '',
-                o.status || 'Pending',
-                o.quantity || 0,
-                `S$${getEffectiveUnitPrice(o, catalogLookup).toFixed(2)}`,
-                `S$${getEffectiveTotal(o, catalogLookup).toFixed(2)}`,
-              ]),
-              totals: [
-                '',
-                '',
-                '',
-                '',
-                '',
-                '',
-                `${selected.length} orders`,
-                `${totalQty} units`,
-                '',
-                `S$${totalCost.toFixed(2)}`,
-              ],
-            },
-          ],
+        const htmlEmail = buildApprovalEmailHtml(approvalEmailOrders(selected), {
+          greetingName: approverFirstName(),
+          signature: approvalSignatureHtml(),
         });
         const excelAttachment = buildApprovalExcel(
           selected.map((o) => [
@@ -2969,18 +2933,13 @@ export default function App() {
 
       // SMTP path: build HTML email + Excel attachment
       if (method === 'smtp' || method === 'both') {
-        const htmlEmail = buildApprovalHtml({
-          title: '📋 Bulk Order Approval Request',
-          headerFields: [
-            ['Requested By', currentUser?.name || 'System'],
-            ['Date', now],
-            ['Batches', selectedGroups.length],
-            ['Total Items', linkedOrders.length],
-            ['Total Quantity', `${totalQty} units`],
-            ['Total Cost', `S$${totalCost.toFixed(2)}`],
-          ],
-          sections: bulkSections,
-          footer: `Grand Total: ${selectedGroups.length} batches | ${linkedOrders.length} items | ${totalQty} units | S$${totalCost.toFixed(2)} — Miltenyi Inventory Hub SG`,
+        // The approver reads the same orange-headed table whichever way it
+        // arrives, so SMTP and the clipboard build it from one place. The
+        // signature is added here only: a clipboard paste lands above Outlook's
+        // own signature and would otherwise print two.
+        const htmlEmail = buildApprovalEmailHtml(approvalEmailOrders(linkedOrders), {
+          greetingName: approverFirstName(),
+          signature: approvalSignatureHtml(),
         });
         const bulkExcelAttachment = buildApprovalExcel(
           linkedOrders.map((o) => [
@@ -6731,6 +6690,16 @@ export default function App() {
                     Order Approval & Notify {emailConfig.approvalAutoEmail !== false && '📧'}
                     {emailConfig.approvalAutoWhatsApp !== false && waConnected && '💬'}
                   </BatchBtn>
+                  {/* mailto: cannot carry an HTML body, so with no SMTP the formatted
+                      table has to reach Outlook through a paste. This also keeps the
+                      mail coming from the real company address. */}
+                  <BatchBtn
+                    onClick={() => copyApprovalForOutlook(orders.filter((o) => selOrders.has(o.id)))}
+                    bg="#C55A11"
+                    icon={Copy}
+                  >
+                    Copy for Outlook
+                  </BatchBtn>
                   <BatchBtn onClick={() => batchStatusOrders('Pending Approval')} bg="#D97706" icon={Clock}>
                     Pending Approval
                   </BatchBtn>
@@ -7033,6 +7002,15 @@ export default function App() {
                   <BatchBtn onClick={batchApprovalNotifyBulk} bg="#7C3AED" icon={Send}>
                     Order Approval & Notify {emailConfig.approvalAutoEmail !== false && '📧'}
                     {emailConfig.approvalAutoWhatsApp !== false && waConnected && '💬'}
+                  </BatchBtn>
+                  <BatchBtn
+                    onClick={() =>
+                      copyApprovalForOutlook(orders.filter((o) => o.bulkGroupId && selBulk.has(o.bulkGroupId)))
+                    }
+                    bg="#C55A11"
+                    icon={Copy}
+                  >
+                    Copy for Outlook
                   </BatchBtn>
                   <BatchBtn onClick={() => batchStatusBulk('Pending Approval')} bg="#D97706" icon={Clock}>
                     Pending Approval
@@ -7415,6 +7393,16 @@ export default function App() {
                               <BatchBtn onClick={batchApprovalNotifyOrders} bg="#7C3AED" icon={Send}>
                                 Order Approval & Notify {emailConfig.approvalAutoEmail !== false && '📧'}
                                 {emailConfig.approvalAutoWhatsApp !== false && waConnected && '💬'}
+                              </BatchBtn>
+                              {/* mailto: cannot carry an HTML body, so with no SMTP the formatted
+                                  table has to reach Outlook through a paste. This also keeps the
+                                  mail coming from the real company address. */}
+                              <BatchBtn
+                                onClick={() => copyApprovalForOutlook(orders.filter((o) => selOrders.has(o.id)))}
+                                bg="#C55A11"
+                                icon={Copy}
+                              >
+                                Copy for Outlook
                               </BatchBtn>
                               <BatchBtn onClick={() => batchStatusOrders('Pending Approval')} bg="#D97706" icon={Clock}>
                                 Pending Approval
