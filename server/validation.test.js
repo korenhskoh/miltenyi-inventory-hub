@@ -27,6 +27,51 @@ describe('pickAllowed', () => {
   });
 });
 
+describe('pickAllowed — deliberately clearing a field', () => {
+  // Dropping every null made "remove this line from its batch" (bulkGroupId:
+  // null) arrive at the server as an empty body, answered with 400 "No fields
+  // to update". The row disappeared from the modal optimistically and was back
+  // after a reload, so the batch kept reporting its old item count.
+  it('drops a null when the field is not listed as nullable', () => {
+    expect(pickAllowed({ bulk_group_id: null }, ['bulk_group_id'])).toEqual({});
+  });
+
+  it('keeps a null for a field named in nullable, so the column is cleared', () => {
+    const result = pickAllowed({ bulk_group_id: null }, ['bulk_group_id'], {
+      nullable: new Set(['bulk_group_id']),
+    });
+    expect(result).toEqual({ bulk_group_id: null });
+  });
+
+  it('accepts nullable as a plain array as well as a Set', () => {
+    expect(pickAllowed({ remark: null }, ['remark'], { nullable: ['remark'] })).toEqual({ remark: null });
+  });
+
+  it('still drops nulls for fields outside the nullable list', () => {
+    // The point of an allow-list: clearing a batch id must not open the door to
+    // blanking a quantity or a status by sending null for them.
+    const result = pickAllowed(
+      { bulk_group_id: null, quantity: null, status: null },
+      ['bulk_group_id', 'quantity', 'status'],
+      { nullable: new Set(['bulk_group_id']) },
+    );
+    expect(result).toEqual({ bulk_group_id: null });
+  });
+
+  it('keepNull still clears everything, regardless of the nullable list', () => {
+    const result = pickAllowed({ a: null, b: null }, ['a', 'b'], { keepNull: true });
+    expect(result).toEqual({ a: null, b: null });
+  });
+
+  it('leaves undefined alone even for a nullable field', () => {
+    // undefined means "not mentioned in this edit"; null means "clear it".
+    const result = pickAllowed({ bulk_group_id: undefined }, ['bulk_group_id'], {
+      nullable: new Set(['bulk_group_id']),
+    });
+    expect(result).toEqual({});
+  });
+});
+
 describe('requireFields', () => {
   it('returns null when all required fields are present', () => {
     const err = requireFields({ name: 'Alice', email: 'a@b.com' }, ['name', 'email']);

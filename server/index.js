@@ -1040,9 +1040,19 @@ async function start() {
   const server = app.listen(PORT, '0.0.0.0', () => {
     logger.info({ port: PORT }, 'Miltenyi Inventory Hub Server started');
 
-    // Auto-connect WhatsApp on server start
-    logger.info('Auto-connecting WhatsApp...');
-    connectWhatsApp().catch((err) => logger.error({ err }, 'WhatsApp auto-connect failed'));
+    // Auto-connect WhatsApp on server start, unless asked not to.
+    //
+    // With no reachable WhatsApp — a test run, a CI box, an operator who wants
+    // to pair by hand — the connect simply never completes and the backoff loop
+    // reconnects forever, writing a warning every 30-45 seconds for as long as
+    // the process lives. WHATSAPP_AUTOCONNECT=false leaves the socket alone;
+    // the Connect button and POST /api/whatsapp/connect still work.
+    if (String(process.env.WHATSAPP_AUTOCONNECT || '').toLowerCase() === 'false') {
+      logger.info('WHATSAPP_AUTOCONNECT=false — not connecting WhatsApp at startup');
+    } else {
+      logger.info('Auto-connecting WhatsApp...');
+      connectWhatsApp().catch((err) => logger.error({ err }, 'WhatsApp auto-connect failed'));
+    }
 
     // Start scheduled report cron job
     startScheduler(getWaContext).catch((err) => logger.error({ err }, 'Scheduler init failed'));

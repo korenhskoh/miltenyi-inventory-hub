@@ -3,11 +3,23 @@
  * Skips undefined values. Skips null too unless `keepNull` is set — updates
  * need to be able to clear a column (e.g. remove a contract end date).
  */
-export function pickAllowed(obj, allowedFields, { keepNull = false } = {}) {
+export function pickAllowed(obj, allowedFields, { keepNull = false, nullable = null } = {}) {
   const result = {};
+  const nullableSet = nullable instanceof Set ? nullable : nullable ? new Set(nullable) : null;
   for (const field of allowedFields) {
     if (obj[field] === undefined) continue;
-    if (obj[field] === null && !keepNull) continue;
+    // Clearing a field is a real edit, not a no-op. Dropping every null meant
+    // "remove this order from its bulk group" (bulkGroupId: null) arrived as an
+    // empty body and came back 400 "No fields to update" — the row vanished
+    // from the modal optimistically and was still in the group after a reload,
+    // so the batch kept showing its old item count.
+    //
+    // Only the fields named in `nullable` may be cleared, so this does not
+    // become a way to blank a quantity or a status by accident.
+    if (obj[field] === null) {
+      const allowedToClear = keepNull || (nullableSet ? nullableSet.has(field) : false);
+      if (!allowedToClear) continue;
+    }
     result[field] = obj[field];
   }
   return result;

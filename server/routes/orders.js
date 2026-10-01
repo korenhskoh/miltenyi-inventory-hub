@@ -8,6 +8,7 @@ import { requireAdmin } from '../middleware/auth.js';
 import logger from '../logger.js';
 import { notifyEvent } from '../notify.js';
 import { requirePermission, userHasPermission } from '../middleware/permissions.js';
+import { quantityEditOutcome } from '../quantityEdit.js';
 
 const router = Router();
 
@@ -79,6 +80,25 @@ export function isApprovalReset(body) {
  * orders somebody else raised. That is what the `delivery` permission is for,
  * so an arrival-only write is judged on that instead of on who owns the order.
  */
+/**
+ * Order fields that an update may deliberately CLEAR by sending null.
+ *
+ * Everything else keeps the drop-nulls behaviour, so a stray null cannot blank
+ * a quantity, a price or a status. `bulk_group_id` is the one that matters most
+ * day to day: removing a line from a batch is exactly "set this to null", and
+ * while nulls were dropped that request arrived empty and was refused.
+ */
+const NULLABLE_ORDER_FIELDS = new Set([
+  'bulk_group_id',
+  'arrival_date',
+  'arrival_checked_by',
+  'approval_sent_date',
+  'remark',
+  'engineer',
+  'email_full',
+  'email_back',
+]);
+
 const ARRIVAL_FIELDS = new Set(['qty_received', 'back_order', 'arrival_date', 'arrival_checked_by', 'status']);
 
 function isArrivalOnlyWrite(body) {
@@ -666,7 +686,10 @@ router.post(
 router.put('/:id', requirePermission('orders', 'bulkOrders', 'delivery', 'approvals'), async (req, res) => {
   try {
     const { id } = req.params;
-    const snakeBody = sanitizeDates(pickAllowed(camelToSnake(req.body), ORDER_FIELDS), ORDER_DATE_FIELDS);
+    const snakeBody = sanitizeDates(
+      pickAllowed(camelToSnake(req.body), ORDER_FIELDS, { nullable: NULLABLE_ORDER_FIELDS }),
+      ORDER_DATE_FIELDS,
+    );
 
     if (
       (isApprovalDecision(snakeBody) || isApprovalReset(snakeBody)) &&
@@ -735,6 +758,34 @@ router.put('/:id', requirePermission('orders', 'bulkOrders', 'delivery', 'approv
       }
       // Unchanged: harmless to drop, and keeps a no-op echo from failing.
       delete snakeBody.qty_received;
+    }
+
+    // Changing the ordered quantity changes the two figures read off it.
+    //
+    // back_order and status are derived from ordered-vs-received. The arrival
+    // endpoint keeps them in step when the received side moves; nothing did
+    // when the ordered side moved, so with 5 of 5 received an edit to 8 left
+    // status='Received' and back_order=0 — three units outstanding on an order
+    // that read as closed, invisible to every back-order report. Reducing below
+    // what has already arrived is refused outright: those units are on the
+    // shelf, and taking them back is a job for the arrival correction, which
+    // moves the stock with it.
+    if ('quantity' in snakeBody) {
+      const current = await query('SELECT quantity, qty_received, status FROM orders WHERE id = $1', [id]);
+      if (current.rows.length === 0) {
+        return res.status(404).json({ error: 'Order not found' });
+      }
+      const outcome = quantityEditOutcome(current.rows[0], snakeBody.quantity);
+      if (outcome.error) {
+        return res.status(400).json({ error: outcome.error });
+      }
+      // back_order is derived, so the derived value wins over anything sent.
+      // The status is only set when the caller did not state one, so an edit
+      // that deliberately changes the status is still respected.
+      snakeBody.back_order = outcome.derived.back_order;
+      if (outcome.derived.status && !('status' in snakeBody)) {
+        snakeBody.status = outcome.derived.status;
+      }
     }
 
     const keys = Object.keys(snakeBody);
