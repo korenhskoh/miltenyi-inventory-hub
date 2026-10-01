@@ -87,7 +87,9 @@ exports.up = (pgm) => {
   // ── Pending Approvals ──
   pgm.createTable('pending_approvals', {
     id: { type: 'varchar(50)', primaryKey: true },
-    order_id: { type: 'varchar(50)' },
+    // A batch approval stores every order it covers as a comma-separated
+    // list, so this cannot be a bounded varchar — see server/schema.sql.
+    order_id: { type: 'text' },
     order_type: { type: 'varchar(20)' },
     description: { type: 'text' },
     requested_by: { type: 'varchar(100)' },
