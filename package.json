@@ -14,7 +14,8 @@
     "prepare": "husky",
     "migrate": "node-pg-migrate",
     "migrate:up": "node-pg-migrate up",
-    "migrate:down": "node-pg-migrate down"
+    "migrate:down": "node-pg-migrate down",
+    "test:e2e": "node scripts/e2e-scenario.mjs"
   },
   "dependencies": {
     "@number-flow/react": "^0.6.2",

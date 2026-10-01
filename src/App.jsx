@@ -10825,6 +10825,24 @@ export default function App() {
                     </button>
                     <button
                       onClick={() => {
+                        // Lowering the ordered quantity below what has already
+                        // arrived is not an edit, it is a goods-in correction:
+                        // those units are on the shelf with a stock movement
+                        // behind them. The server refuses it; say so here so the
+                        // answer names the screen that can actually do it.
+                        const stored = orders.find((o) => o.id === editingOrder.id);
+                        const alreadyReceivedQty = Number(stored?.qtyReceived) || 0;
+                        if (
+                          editingOrder.status !== ORDER_STATUS.RECEIVED &&
+                          Number(editingOrder.quantity) < alreadyReceivedQty
+                        ) {
+                          notify(
+                            'Correct the Arrival First',
+                            `${alreadyReceivedQty} unit(s) have already been received against ${editingOrder.id}, so the order cannot be cut to ${editingOrder.quantity}. Change the received quantity in Part Arrival — that moves the stock with it — then edit the order.`,
+                            'warning',
+                          );
+                          return;
+                        }
                         // If manually set to Received, auto-fill arrival fields so it skips Part Arrival
                         const isManualReceived = editingOrder.status === ORDER_STATUS.RECEIVED;
                         const finalOrder = isManualReceived

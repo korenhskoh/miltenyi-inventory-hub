@@ -8,6 +8,7 @@ import { requireAdmin } from '../middleware/auth.js';
 import logger from '../logger.js';
 import { notifyEvent } from '../notify.js';
 import { requirePermission, userHasPermission } from '../middleware/permissions.js';
+import { quantityEditOutcome } from '../quantityEdit.js';
 
 const router = Router();
 
@@ -757,6 +758,34 @@ router.put('/:id', requirePermission('orders', 'bulkOrders', 'delivery', 'approv
       }
       // Unchanged: harmless to drop, and keeps a no-op echo from failing.
       delete snakeBody.qty_received;
+    }
+
+    // Changing the ordered quantity changes the two figures read off it.
+    //
+    // back_order and status are derived from ordered-vs-received. The arrival
+    // endpoint keeps them in step when the received side moves; nothing did
+    // when the ordered side moved, so with 5 of 5 received an edit to 8 left
+    // status='Received' and back_order=0 — three units outstanding on an order
+    // that read as closed, invisible to every back-order report. Reducing below
+    // what has already arrived is refused outright: those units are on the
+    // shelf, and taking them back is a job for the arrival correction, which
+    // moves the stock with it.
+    if ('quantity' in snakeBody) {
+      const current = await query('SELECT quantity, qty_received, status FROM orders WHERE id = $1', [id]);
+      if (current.rows.length === 0) {
+        return res.status(404).json({ error: 'Order not found' });
+      }
+      const outcome = quantityEditOutcome(current.rows[0], snakeBody.quantity);
+      if (outcome.error) {
+        return res.status(400).json({ error: outcome.error });
+      }
+      // back_order is derived, so the derived value wins over anything sent.
+      // The status is only set when the caller did not state one, so an edit
+      // that deliberately changes the status is still respected.
+      snakeBody.back_order = outcome.derived.back_order;
+      if (outcome.derived.status && !('status' in snakeBody)) {
+        snakeBody.status = outcome.derived.status;
+      }
     }
 
     const keys = Object.keys(snakeBody);
