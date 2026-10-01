@@ -174,8 +174,20 @@ ALTER TABLE notif_log
 ALTER COLUMN id TYPE VARCHAR(50);
 ALTER TABLE pending_approvals
 ALTER COLUMN id TYPE VARCHAR(50);
-ALTER TABLE pending_approvals
-ALTER COLUMN order_id TYPE VARCHAR(50);
+-- pending_approvals.order_id is deliberately NOT narrowed here.
+--
+-- It held `ALTER COLUMN order_id TYPE VARCHAR(50)`, and further down this file
+-- a later migration widens the same column to TEXT because a batch approval
+-- stores every order it covers as a comma-separated list. On an empty database
+-- the pair was harmless: narrow, then widen. Once a batch approval of three or
+-- more orders existed, the narrowing became impossible — and because the whole
+-- file is executed as one batch, it aborted BEFORE reaching the widening that
+-- would have fixed it. applySchema threw, the server refused to start, and
+-- production sat in a crash loop whose cause was a row written days earlier
+-- rather than anything in the deploy that happened to trigger the reboot.
+-- (Observed: one 152-character row, a six-order batch approval.)
+--
+-- The widening below is the only statement that should set this column's type.
 -- Migration: Extend machines table for full Service module
 ALTER TABLE machines
 ADD COLUMN IF NOT EXISTS serial_number VARCHAR(100);

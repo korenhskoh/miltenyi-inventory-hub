@@ -1,5 +1,6 @@
 import pool, { query } from './db.js';
 import logger from './logger.js';
+import { splitSqlStatements, describeStatement } from './sqlStatements.js';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -32,6 +33,34 @@ const SCHEMA_LOCK_ID = 725101;
  * turns instead of deadlocking, and a lock_timeout, so a blocked statement
  * gives up in seconds rather than holding the queue.
  */
+/**
+ * Replay the schema one statement at a time to find the one that fails.
+ *
+ * Diagnostic only, and only on the failure path. It runs inside a transaction
+ * that is always rolled back, so finding the culprit changes nothing.
+ */
+async function findFailingStatement(client, schemaSql) {
+  const statements = splitSqlStatements(schemaSql);
+  await client.query('BEGIN');
+  try {
+    for (let i = 0; i < statements.length; i++) {
+      try {
+        await client.query(statements[i]);
+      } catch (e) {
+        return {
+          statement: describeStatement(statements[i]),
+          index: i + 1,
+          total: statements.length,
+          reason: e.message,
+        };
+      }
+    }
+    return null;
+  } finally {
+    await client.query('ROLLBACK').catch(() => {});
+  }
+}
+
 async function applySchema(schemaSql) {
   const client = await pool.connect();
   try {
@@ -42,6 +71,19 @@ async function applySchema(schemaSql) {
     await client.query('SELECT pg_advisory_lock($1)', [SCHEMA_LOCK_ID]);
     try {
       await client.query(schemaSql);
+    } catch (err) {
+      // The batch reports only the message — "value too long for type character
+      // varying(50)" with no hint which of a hundred-odd statements produced
+      // it. That cost a full investigation against production data while the
+      // service sat in a crash loop, so name the culprit before giving up.
+      const culprit = await findFailingStatement(client, schemaSql).catch(() => null);
+      if (culprit) {
+        logger.error(
+          { statement: culprit.statement, index: culprit.index, total: culprit.total, reason: culprit.reason },
+          'Schema statement failed — this is the statement to fix',
+        );
+      }
+      throw err;
     } finally {
       await client.query('SELECT pg_advisory_unlock($1)', [SCHEMA_LOCK_ID]);
     }
