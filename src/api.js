@@ -389,6 +389,55 @@ async function createOrder(order, { historical = false } = {}) {
  * is deliberately separate so the truthiness contract of `createOrder` is
  * untouched.
  */
+/**
+ * Update an order, reporting WHY the server refused.
+ *
+ * `updateOrder` collapses every failure to null, so the caller could tell the
+ * user something went wrong but not what — and the screen kept the optimistic
+ * change. The reason matters here: "You can only edit your own orders" is the
+ * common one, and it is actionable.
+ */
+async function updateOrderReporting(id, updates) {
+  try {
+    const res = handleResponse(
+      await fetch(`${BASE}/api/orders/${id}`, {
+        method: 'PUT',
+        headers: authHeaders(),
+        body: JSON.stringify(updates),
+      }),
+    );
+    if (!res.ok) {
+      const reason = await res
+        .json()
+        .then((j) => j?.error)
+        .catch(() => null);
+      return { ok: false, error: reason || `HTTP ${res.status}` };
+    }
+    return { ok: true, order: await res.json() };
+  } catch (e) {
+    return { ok: false, error: e?.message || 'Network error' };
+  }
+}
+
+/** Delete an order, reporting why if the server refused. */
+async function deleteOrderReporting(id) {
+  try {
+    const res = handleResponse(
+      await fetch(`${BASE}/api/orders/${id}`, { method: 'DELETE', headers: authHeadersGet() }),
+    );
+    if (!res.ok) {
+      const reason = await res
+        .json()
+        .then((j) => j?.error)
+        .catch(() => null);
+      return { ok: false, error: reason || `HTTP ${res.status}` };
+    }
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e?.message || 'Network error' };
+  }
+}
+
 async function createOrderReporting(order, { historical = false } = {}) {
   try {
     const res = handleResponse(
@@ -1472,6 +1521,8 @@ const api = {
   getOrderStats,
   createOrder,
   createOrderReporting,
+  updateOrderReporting,
+  deleteOrderReporting,
   updateOrder,
   deleteOrder,
   bulkUpdateOrderStatus,

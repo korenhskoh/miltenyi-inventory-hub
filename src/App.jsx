@@ -142,6 +142,7 @@ import { getCatalogPrice, getEffectiveUnitPrice, getEffectiveTotal } from './lib
 import { computeArrival, arrivalDelta, arrivalCondition } from './lib/arrival.js';
 import { ORDER_STATUS, approvalTransition } from './lib/approvals.js';
 import { allSelected, nextSelection } from './lib/selection.js';
+import { deletionWarning, writeFailed, failureReason } from './lib/orderChanges.js';
 import SettingsPage from './pages/SettingsPage.jsx';
 import WhatsAppPage from './pages/WhatsAppPage.jsx';
 import DeliveryPage from './pages/DeliveryPage.jsx';
@@ -357,6 +358,45 @@ export default function App() {
     setNotifs((prev) => [...prev, { id, title, message, type }]);
     setTimeout(() => setNotifs((prev) => prev.filter((n) => n.id !== id)), 4000);
   }, []);
+
+  /**
+   * A write whose optimistic UI change is undone if the server refuses it.
+   *
+   * `dbSync` below reports a failure in a toast but leaves the optimistic state
+   * in place, so a refused write left the screen showing something that was
+   * never saved. An engineer editing an order they do not own gets 403 "You can
+   * only edit your own orders", yet the Orders page and Part Arrival both went
+   * on showing the new quantity until a reload snapped it back — which reads as
+   * "Part Arrival is not reflecting my change" when in fact the change never
+   * happened.
+   *
+   * On failure this puts the previous state back and then re-reads the orders
+   * from the server, so the screen ends up showing what is actually stored
+   * rather than a guess.
+   */
+  const dbSyncOrRollback = useCallback(
+    (promise, { rollback, message }) => {
+      const fail = (detail) => {
+        if (typeof rollback === 'function') rollback();
+        notify(
+          'Not Saved',
+          detail || message || 'The server refused the change — the screen has been put back.',
+          'error',
+        );
+        // Re-read the authoritative state; a rollback restores what we had, a
+        // refetch proves it.
+        Promise.resolve(api.getOrders())
+          .then((o) => {
+            if (Array.isArray(o)) setOrders(o);
+          })
+          .catch(() => {});
+      };
+      Promise.resolve(promise)
+        .then((r) => (writeFailed(r) ? fail(failureReason(r, message)) : undefined))
+        .catch((e) => fail(e?.message || message));
+    },
+    [notify],
+  );
 
   // DB sync wrapper: shows toast on API failure (non-blocking)
   const dbSync = useCallback(
@@ -2243,12 +2283,21 @@ export default function App() {
 
   // Batch Actions — Orders
   const batchDeleteOrders = () => {
-    if (!selOrders.size || !window.confirm(`Delete ${selOrders.size} selected order(s)?`)) return;
-    const ids = [...selOrders];
+    if (!selOrders.size) return;
     const deletedOrders = orders.filter((o) => selOrders.has(o.id));
+    // Say what else the deletion touches — stock already booked in, batch
+    // tallies, batches about to be emptied — rather than just "Delete 3?".
+    if (!window.confirm(deletionWarning(deletedOrders, orders))) return;
+    const ids = [...selOrders];
+    const previousOrders = orders;
     const remainingOrders = orders.filter((o) => !selOrders.has(o.id));
     setOrders(remainingOrders);
-    ids.forEach((id) => dbSync(api.deleteOrder(id), 'Order delete not saved'));
+    ids.forEach((id) =>
+      dbSyncOrRollback(api.deleteOrderReporting(id), {
+        rollback: () => setOrders(previousOrders),
+        message: `${id} was not deleted.`,
+      }),
+    );
     // Recalculate affected bulk group totals
     const affectedBgIds = [...new Set(deletedOrders.map((o) => o.bulkGroupId).filter(Boolean))];
     if (affectedBgIds.length) recalcBulkGroupForMonths(affectedBgIds, remainingOrders);
@@ -2303,7 +2352,15 @@ export default function App() {
 
   // Batch Actions — Bulk Groups
   const batchDeleteBulk = () => {
-    if (!selBulk.size || !window.confirm(`Delete ${selBulk.size} bulk group(s) and their orders?`)) return;
+    if (!selBulk.size) return;
+    const doomedOrders = orders.filter((o) => selBulk.has(o.bulkGroupId));
+    if (
+      !window.confirm(
+        `Delete ${selBulk.size} bulk batch(es) and the ${doomedOrders.length} order(s) inside them?\n\n` +
+          deletionWarning(doomedOrders, orders).split('\n').slice(1).join('\n'),
+      )
+    )
+      return;
     const ids = [...selBulk];
     // Cascade delete orders linked to these bulk groups
     const orphanedOrders = orders.filter((o) => o.bulkGroupId && selBulk.has(o.bulkGroupId));
@@ -6825,10 +6882,14 @@ export default function App() {
                                 <button
                                   onClick={(e) => {
                                     e.stopPropagation();
-                                    if (window.confirm(`Delete order ${o.id}?`)) {
+                                    if (window.confirm(deletionWarning([o], orders))) {
+                                      const previousOrders = orders;
                                       const remaining = orders.filter((x) => x.id !== o.id);
                                       setOrders(remaining);
-                                      dbSync(api.deleteOrder(o.id), 'Order delete not saved');
+                                      dbSyncOrRollback(api.deleteOrderReporting(o.id), {
+                                        rollback: () => setOrders(previousOrders),
+                                        message: `${o.id} was not deleted.`,
+                                      });
                                       if (o.bulkGroupId) recalcBulkGroupForMonths([o.bulkGroupId], remaining);
                                       notify('Deleted', o.id, 'success');
                                     }
@@ -7168,7 +7229,13 @@ export default function App() {
                             {hasPermission('deleteBulkOrders') && (
                               <button
                                 onClick={() => {
-                                  if (window.confirm(`Delete bulk group ${g.id} and its linked orders?`)) {
+                                  const linked = orders.filter((o) => o.bulkGroupId === g.id);
+                                  if (
+                                    window.confirm(
+                                      `Delete bulk batch ${g.id} and its ${linked.length} linked order(s)?\n\n` +
+                                        deletionWarning(linked, orders).split('\n').slice(1).join('\n'),
+                                    )
+                                  ) {
                                     const orphaned = orders.filter((o) => o.bulkGroupId === g.id);
                                     if (orphaned.length) {
                                       setOrders((prev) => prev.filter((o) => o.bulkGroupId !== g.id));
@@ -7492,10 +7559,17 @@ export default function App() {
                                     <button
                                       onClick={(e) => {
                                         e.stopPropagation();
-                                        if (window.confirm(`Delete ${o.id}?`)) {
+                                        // Removing one line out of a batch: the warning
+                                        // names the stock already booked in against it
+                                        // and what happens to the batch tally.
+                                        if (window.confirm(deletionWarning([o], orders))) {
+                                          const previousOrders = orders;
                                           const remaining = orders.filter((x) => x.id !== o.id);
                                           setOrders(remaining);
-                                          dbSync(api.deleteOrder(o.id), 'Order delete not saved');
+                                          dbSyncOrRollback(api.deleteOrderReporting(o.id), {
+                                            rollback: () => setOrders(previousOrders),
+                                            message: `${o.id} was not deleted.`,
+                                          });
                                           if (o.bulkGroupId) recalcBulkGroupForMonths([o.bulkGroupId], remaining);
                                           notify('Deleted', o.id, 'success');
                                         }
@@ -10709,6 +10783,7 @@ export default function App() {
                               approvalStatus: 'approved',
                             }
                           : editingOrder;
+                        const previousOrders = orders;
                         const updatedOrders = orders.map((o) => (o.id === editingOrder.id ? finalOrder : o));
                         setOrders(updatedOrders);
                         const { qtyReceived, backOrder, arrivalDate, ...editFields } = finalOrder;
@@ -10732,7 +10807,13 @@ export default function App() {
                           : qtyChanged
                             ? { ...editFields, backOrder }
                             : editFields;
-                        dbSync(api.updateOrder(editingOrder.id, payload), 'Order edit not saved');
+                        // Rolled back if the server refuses: otherwise the edit screen
+                        // and Part Arrival both went on showing a quantity that was
+                        // never saved, until a reload quietly put the old one back.
+                        dbSyncOrRollback(api.updateOrderReporting(editingOrder.id, payload), {
+                          rollback: () => setOrders(previousOrders),
+                          message: `${editingOrder.id} was not saved.`,
+                        });
                         if (isManualReceived) {
                           const alreadyIn = Number(originalOrder?.qtyReceived) || 0;
                           const target = Number(finalOrder.quantity) || 0;
