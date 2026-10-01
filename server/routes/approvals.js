@@ -1,11 +1,13 @@
 import { Router } from 'express';
-import { query } from '../db.js';
+import { query, withTransaction } from '../db.js';
 import { snakeToCamel, camelToSnake } from '../utils.js';
 import { pickAllowed, sanitizeDates } from '../validation.js';
 import { paginate, envelope, limitClause } from '../pagination.js';
 import { asyncHandler } from '../middleware/errorHandler.js';
 import { requireAdmin } from '../middleware/auth.js';
 import { requirePermission } from '../middleware/permissions.js';
+import { supersededApprovalIds } from '../approvalSupersede.js';
+import logger from '../logger.js';
 
 const router = Router();
 
@@ -63,6 +65,13 @@ router.get(
 );
 
 // POST / - create pending approval
+//
+// Resending an approval request supersedes any still-open request covering the
+// same orders. Without that, every resend left its predecessor behind and the
+// same orders sat under two open approvals, so a decision taken on the stale
+// one silently overwrote the decision already taken on the current one — a
+// rejection on an old row flipped two already-approved orders to Rejected.
+// See server/approvalSupersede.js for the verified reproduction.
 router.post('/', async (req, res) => {
   try {
     const snakeBody = sanitizeDates(pickAllowed(camelToSnake(req.body), APPROVAL_FIELDS), APPROVAL_DATE_FIELDS);
@@ -71,9 +80,34 @@ router.post('/', async (req, res) => {
     const values = Object.values(snakeBody);
     const placeholders = keys.map((_, i) => `$${i + 1}`);
 
-    const sql = `INSERT INTO pending_approvals (${keys.join(', ')}) VALUES (${placeholders.join(', ')}) RETURNING *`;
-    const result = await query(sql, values);
-    res.status(201).json(snakeToCamel(result.rows[0]));
+    const result = await withTransaction(async (client) => {
+      const inserted = await client.query(
+        `INSERT INTO pending_approvals (${keys.join(', ')}) VALUES (${placeholders.join(', ')}) RETURNING *`,
+        values,
+      );
+      const row = inserted.rows[0];
+
+      // Read the open rows inside the same transaction, so a second send
+      // arriving at the same moment cannot slip past between the read and the
+      // update and leave two open rows behind after all.
+      const open = await client.query(
+        `SELECT id, status, order_id, order_ids FROM pending_approvals WHERE status = 'pending' FOR UPDATE`,
+      );
+      const stale = supersededApprovalIds(open.rows, row);
+      if (stale.length) {
+        await client.query(
+          `UPDATE pending_approvals SET status = 'superseded', action_date = CURRENT_DATE WHERE id = ANY($1::text[])`,
+          [stale],
+        );
+        logger.info(
+          { approval: row.id, superseded: stale },
+          'Resent approval superseded the open request(s) for the same orders',
+        );
+      }
+      return { row, stale };
+    });
+
+    res.status(201).json({ ...snakeToCamel(result.row), supersededApprovals: result.stale });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

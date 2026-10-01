@@ -434,9 +434,29 @@ export default function App() {
   const addApproval = useCallback(
     (entry) => {
       setPendingApprovals((prev) => [entry, ...prev]);
-      dbSync(api.createApproval(entry), 'Approval not saved');
+      // A resend supersedes the still-open request for the same orders, server
+      // side, and reports which rows it closed. Apply that locally too, or the
+      // list keeps showing both until the next reload — and acting on the stale
+      // one is what used to flip already-approved orders back to Rejected.
+      Promise.resolve(api.createApproval(entry))
+        .then((saved) => {
+          if (!saved) {
+            notify('Save Failed', 'Approval not saved', 'error');
+            return;
+          }
+          const closed = Array.isArray(saved.supersededApprovals) ? saved.supersededApprovals : [];
+          if (!closed.length) return;
+          const closedSet = new Set(closed);
+          setPendingApprovals((prev) => prev.map((a) => (closedSet.has(a.id) ? { ...a, status: 'superseded' } : a)));
+          notify(
+            'Earlier Request Closed',
+            `${closed.length} earlier approval request(s) for the same order(s) were superseded by this one.`,
+            'info',
+          );
+        })
+        .catch(() => notify('Save Failed', 'Approval not saved', 'error'));
     },
-    [dbSync],
+    [notify],
   );
   const logAction = useCallback(
     (action, entityType, entityId, details) => {
@@ -9784,7 +9804,32 @@ export default function App() {
                                         title="Remove from group"
                                         onClick={() => {
                                           if (bulkLocked) return;
-                                          if (!window.confirm(`Remove ${o.id} from this bulk group?`)) return;
+                                          // Removing a line is not only a change to this modal: the
+                                          // batch's item count and total value are recalculated, and
+                                          // anything already booked in against the order stays in
+                                          // Local Inventory. Say so before doing it.
+                                          const siblings = orders.filter(
+                                            (ord) => ord.bulkGroupId === selectedBulkGroup.id,
+                                          );
+                                          const lastOne = siblings.length <= 1;
+                                          const received = Number(o.qtyReceived) || 0;
+                                          const warning = [
+                                            `Remove ${o.id} from batch ${selectedBulkGroup.id}?`,
+                                            '',
+                                            `\u2022 The batch's item count and total value will be recalculated${
+                                              lastOne ? ' — this is its last line, so the batch will be left empty' : ''
+                                            }.`,
+                                            received > 0
+                                              ? `\u2022 ${received} unit(s) are already booked into Local Inventory against this order; removing it from the batch does NOT take them back out of stock.`
+                                              : null,
+                                            '',
+                                            'The order itself is kept — it just stops belonging to this batch.',
+                                          ]
+                                            .filter(Boolean)
+                                            .join('\n');
+                                          if (!window.confirm(warning)) return;
+                                          const previousOrders = orders;
+                                          const previousDraft = bulkDraft;
                                           const updatedOrders = orders.map((ord) =>
                                             ord.id === o.id ? { ...ord, bulkGroupId: null } : ord,
                                           );
@@ -9795,10 +9840,17 @@ export default function App() {
                                             return next;
                                           });
                                           recalcBulkGroupForMonths([selectedBulkGroup.id], updatedOrders);
-                                          dbSync(
-                                            api.updateOrder(o.id, { bulkGroupId: null }),
-                                            'Remove from group failed',
-                                          );
+                                          // The row used to disappear from the modal whether or not the
+                                          // server accepted it, so a refused removal came back on the
+                                          // next reload and the batch kept reading its old item count.
+                                          dbSyncOrRollback(api.updateOrderReporting(o.id, { bulkGroupId: null }), {
+                                            rollback: () => {
+                                              setOrders(previousOrders);
+                                              setBulkDraft(previousDraft);
+                                              recalcBulkGroupForMonths([selectedBulkGroup.id], previousOrders);
+                                            },
+                                            message: `${o.id} could not be removed from the batch.`,
+                                          });
                                           notify('Item Removed', `${o.id} removed from group`, 'info');
                                         }}
                                         style={{

@@ -79,6 +79,25 @@ export function isApprovalReset(body) {
  * orders somebody else raised. That is what the `delivery` permission is for,
  * so an arrival-only write is judged on that instead of on who owns the order.
  */
+/**
+ * Order fields that an update may deliberately CLEAR by sending null.
+ *
+ * Everything else keeps the drop-nulls behaviour, so a stray null cannot blank
+ * a quantity, a price or a status. `bulk_group_id` is the one that matters most
+ * day to day: removing a line from a batch is exactly "set this to null", and
+ * while nulls were dropped that request arrived empty and was refused.
+ */
+const NULLABLE_ORDER_FIELDS = new Set([
+  'bulk_group_id',
+  'arrival_date',
+  'arrival_checked_by',
+  'approval_sent_date',
+  'remark',
+  'engineer',
+  'email_full',
+  'email_back',
+]);
+
 const ARRIVAL_FIELDS = new Set(['qty_received', 'back_order', 'arrival_date', 'arrival_checked_by', 'status']);
 
 function isArrivalOnlyWrite(body) {
@@ -666,7 +685,10 @@ router.post(
 router.put('/:id', requirePermission('orders', 'bulkOrders', 'delivery', 'approvals'), async (req, res) => {
   try {
     const { id } = req.params;
-    const snakeBody = sanitizeDates(pickAllowed(camelToSnake(req.body), ORDER_FIELDS), ORDER_DATE_FIELDS);
+    const snakeBody = sanitizeDates(
+      pickAllowed(camelToSnake(req.body), ORDER_FIELDS, { nullable: NULLABLE_ORDER_FIELDS }),
+      ORDER_DATE_FIELDS,
+    );
 
     if (
       (isApprovalDecision(snakeBody) || isApprovalReset(snakeBody)) &&
