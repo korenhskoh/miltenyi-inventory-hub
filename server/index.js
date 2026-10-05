@@ -21,6 +21,7 @@ import { extractText, isDirectChat } from './waMessage.js';
 import { setWaContext as setNotifyWaContext } from './notify.js';
 import { errorHandler } from './middleware/errorHandler.js';
 import { startScheduler, reloadScheduler, runScheduledReport, resetTransporter, stopScheduler } from './scheduler.js';
+import { corsOrigins, corsIsOpen } from './corsOrigins.js';
 
 // API Routes
 import ordersRouter from './routes/orders.js';
@@ -54,14 +55,16 @@ app.set('trust proxy', Number(process.env.TRUST_PROXY_HOPS || 1));
 
 // Security Middleware
 app.use(helmet({ contentSecurityPolicy: false })); // CSP off for SPA inline styles
-if (process.env.NODE_ENV === 'production' && !process.env.FRONTEND_URL) {
+if (process.env.NODE_ENV === 'production' && corsIsOpen(process.env.FRONTEND_URL)) {
   logger.warn(
     'SECURITY: FRONTEND_URL is not set — CORS is falling back to reflecting the request origin (any origin allowed). Set FRONTEND_URL to lock down CORS.',
   );
 }
 app.use(
   cors({
-    origin: process.env.FRONTEND_URL || true,
+    // One or more origins, comma-separated: a desktop on the office network is
+    // legitimately reached by computer name, by address and over the VPN.
+    origin: corsOrigins(process.env.FRONTEND_URL),
     credentials: true,
   }),
 );

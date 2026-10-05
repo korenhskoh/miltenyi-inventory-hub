@@ -9,3 +9,7 @@ docs/
 nul
 server/node_modules
 server/auth_session
+scripts/windows/server.env
+logs/
+backups/
+migration-dumps/

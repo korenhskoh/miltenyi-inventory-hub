@@ -1,4 +1,5 @@
 import pg from 'pg';
+import { databaseSsl } from './dbSsl.js';
 const { Pool, types } = pg;
 
 // Return DATE columns as plain 'YYYY-MM-DD' strings instead of JS Date objects.
@@ -9,7 +10,7 @@ types.setTypeParser(1082, (v) => v);
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
+  ssl: databaseSsl(process.env),
   max: 10,
   idleTimeoutMillis: 30000,
   connectionTimeoutMillis: 10000,
